@@ -5,6 +5,7 @@ import {
   MIGRATION_V1_BASELINE,
   MIGRATION_V2_EVENT_DEFINITIONS,
   MIGRATION_V3_EVENT_RECORDS,
+  MIGRATION_V4_CYCLE,
 } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { MigrationError } from '@/domain/errors';
@@ -37,7 +38,7 @@ describe('迁移清单校验', () => {
 
   it('当前仓库的迁移清单是合法的', () => {
     expect(() => validateMigrations(MIGRATIONS)).not.toThrow();
-    expect(LATEST_SCHEMA_VERSION).toBe(3);
+    expect(LATEST_SCHEMA_VERSION).toBe(4);
   });
 });
 
@@ -55,11 +56,14 @@ describe('runMigrations', () => {
   it('全新数据库：建表并提升 user_version', async () => {
     const result = await runMigrations(db, MIGRATIONS);
 
-    expect(result).toEqual({ from: 0, to: 3, applied: [1, 2, 3] });
-    expect(await readSchemaVersion(db)).toBe(3);
+    expect(result).toEqual({ from: 0, to: 4, applied: [1, 2, 3, 4] });
+    expect(await readSchemaVersion(db)).toBe(4);
     expect(tableExists(db, 'app_meta')).toBe(true);
     expect(tableExists(db, 'event_definitions')).toBe(true);
     expect(tableExists(db, 'event_records')).toBe(true);
+    expect(tableExists(db, 'cycle_definitions')).toBe(true);
+    expect(tableExists(db, 'cycle_instances')).toBe(true);
+    expect(tableExists(db, 'cycle_entries')).toBe(true);
   });
 
   it('app_meta 结构符合预期（主键约束生效）', () => {
@@ -79,7 +83,7 @@ describe('runMigrations', () => {
     await runMigrations(db, MIGRATIONS);
     const second = await runMigrations(db, MIGRATIONS);
 
-    expect(second).toEqual({ from: 3, to: 3, applied: [] });
+    expect(second).toEqual({ from: 4, to: 4, applied: [] });
   });
 
   it('数据库版本高于应用支持版本时拒绝启动，且不破坏数据', async () => {
@@ -257,7 +261,7 @@ describe('v2 事件定义结构', () => {
     ).toThrow();
   });
 
-  it('从已含 v1 数据的旧库升级：只跑 v2、v3，旧数据不丢', async () => {
+  it('从已含 v1 数据的旧库升级：只跑 v2、v3、v4，旧数据不丢', async () => {
     const legacy = createTestDatabase();
     try {
       await runMigrations(legacy, [MIGRATION_V1_BASELINE]);
@@ -265,11 +269,12 @@ describe('v2 事件定义结构', () => {
 
       const result = await runMigrations(legacy, MIGRATIONS);
 
-      expect(result).toEqual({ from: 1, to: 3, applied: [2, 3] });
-      expect(await readSchemaVersion(legacy)).toBe(3);
+      expect(result).toEqual({ from: 1, to: 4, applied: [2, 3, 4] });
+      expect(await readSchemaVersion(legacy)).toBe(4);
       expect(legacy.rawGet("SELECT value FROM app_meta WHERE key = 'keep'")).toEqual({ value: 'me' });
       expect(tableExists(legacy, 'event_definitions')).toBe(true);
       expect(tableExists(legacy, 'event_records')).toBe(true);
+      expect(tableExists(legacy, 'cycle_instances')).toBe(true);
     } finally {
       legacy.close();
     }
@@ -358,6 +363,118 @@ describe('v3 事件历史结构', () => {
         fresh.rawExec(statement);
       }
       expect(tableExists(fresh, 'event_records')).toBe(true);
+    } finally {
+      fresh.close();
+    }
+  });
+});
+
+describe('v4 周期结构', () => {
+  let db: TestDatabase;
+
+  beforeEach(async () => {
+    db = createTestDatabase();
+    await runMigrations(db, MIGRATIONS);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function insertDefinition(id = 'cd1'): void {
+    db.rawExec(
+      `INSERT INTO cycle_definitions (id, name, created_at, updated_at)
+       VALUES ('${id}', '生理期', 'now', 'now')`,
+    );
+  }
+
+  function insertInstance(id = 'ci1', startDate = '2026-10-01', endDate: string | null = null): void {
+    const end = endDate === null ? 'NULL' : `'${endDate}'`;
+    db.rawExec(
+      `INSERT INTO cycle_instances (id, definition_id, start_date, end_date, created_at, updated_at)
+       VALUES ('${id}', 'cd1', '${startDate}', ${end}, 'now', 'now')`,
+    );
+  }
+
+  function insertEntry(id = 'ce1', date = '2026-10-02'): void {
+    db.rawExec(
+      `INSERT INTO cycle_entries (id, instance_id, date, created_at, updated_at)
+       VALUES ('${id}', 'ci1', '${date}', 'now', 'now')`,
+    );
+  }
+
+  it('三张表都建了出来', () => {
+    expect(tableExists(db, 'cycle_definitions')).toBe(true);
+    expect(tableExists(db, 'cycle_instances')).toBe(true);
+    expect(tableExists(db, 'cycle_entries')).toBe(true);
+  });
+
+  it('结束日不能早于开始日（CHECK 兜底）', () => {
+    insertDefinition();
+    expect(() => insertInstance('ci1', '2026-10-05', '2026-10-01')).toThrow();
+  });
+
+  it('平均长度必须是正数（CHECK 兜底）', () => {
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO cycle_definitions (id, name, average_cycle_length_days, created_at, updated_at)
+         VALUES ('bad', 'x', 0, 'now', 'now')`,
+      ),
+    ).toThrow();
+  });
+
+  it('同一天只能有一条记录（UNIQUE 兜底）', () => {
+    insertDefinition();
+    insertInstance();
+    insertEntry('ce1', '2026-10-02');
+    expect(() => insertEntry('ce2', '2026-10-02')).toThrow();
+    // 不同日期可以
+    expect(() => insertEntry('ce3', '2026-10-03')).not.toThrow();
+  });
+
+  it('外键生效：实例必须指向存在的定义', () => {
+    expect(() => insertInstance('ci1')).toThrow();
+  });
+
+  it('删除实例会级联删除它的记录', () => {
+    insertDefinition();
+    insertInstance();
+    insertEntry('ce1', '2026-10-02');
+    insertEntry('ce2', '2026-10-03');
+
+    db.rawExec("DELETE FROM cycle_instances WHERE id = 'ci1'");
+
+    expect(db.rawAll('SELECT id FROM cycle_entries')).toEqual([]);
+  });
+
+  it('删除周期定义会级联删除它的实例与记录', () => {
+    insertDefinition();
+    insertInstance();
+    insertEntry('ce1', '2026-10-02');
+
+    db.rawExec("DELETE FROM cycle_definitions WHERE id = 'cd1'");
+
+    expect(db.rawAll('SELECT id FROM cycle_instances')).toEqual([]);
+    expect(db.rawAll('SELECT id FROM cycle_entries')).toEqual([]);
+  });
+
+  it('记录与实例独立：删除某一天的记录不影响实例', () => {
+    insertDefinition();
+    insertInstance();
+    insertEntry('ce1', '2026-10-02');
+
+    db.rawExec("DELETE FROM cycle_entries WHERE id = 'ce1'");
+
+    expect(db.rawGet("SELECT id FROM cycle_instances WHERE id = 'ci1'")).toEqual({ id: 'ci1' });
+  });
+
+  it('v4 语句本身可独立建表', () => {
+    const fresh = createTestDatabase();
+    try {
+      for (const statement of MIGRATION_V4_CYCLE.statements ?? []) {
+        fresh.rawExec(statement);
+      }
+      expect(tableExists(fresh, 'cycle_entries')).toBe(true);
     } finally {
       fresh.close();
     }

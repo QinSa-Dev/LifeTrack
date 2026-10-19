@@ -136,11 +136,69 @@ export const MIGRATION_V3_EVENT_RECORDS: Migration = {
   ],
 };
 
+/**
+ * v4：周期（第二阶段·周期事件）。
+ *
+ * 三张表对应 03 里定义的三个领域概念，**实例与记录独立建模**：
+ * - `cycle_definitions`：周期定义（例如「生理期」）+ 预测用的平均长度。
+ * - `cycle_instances`：一段真实的周期区间；`end_date` 为空表示仍在进行中。
+ * - `cycle_entries`：周期内某一天的记录（症状 / 阶段 / 感受 / 备注）。
+ *
+ * 规则落点：
+ * - **边界修改不得静默删除越界记录**：这条由仓储层保证——更新边界前先查
+ *   `cycle_entries` 里落在新区间外的日期，有就抛 ConflictError，绝不偷偷删。
+ *   SQL 层只加 `CHECK (end_date IS NULL OR end_date >= start_date)` 兜住明显错误。
+ * - **一天一条**：`UNIQUE (instance_id, date)` 从结构上保证同一天不会写两条。
+ * - 实例删除会级联删掉它的记录（`ON DELETE CASCADE`）：记录只对所属实例有意义；
+ *   界面上的永久删除有二次确认。
+ */
+export const MIGRATION_V4_CYCLE: Migration = {
+  version: 4,
+  name: 'cycle_definitions_instances_entries',
+  statements: [
+    `CREATE TABLE cycle_definitions (
+       id                         TEXT    PRIMARY KEY NOT NULL,
+       name                       TEXT    NOT NULL,
+       average_cycle_length_days  INTEGER CHECK (average_cycle_length_days IS NULL OR average_cycle_length_days > 0),
+       average_period_length_days INTEGER CHECK (average_period_length_days IS NULL OR average_period_length_days > 0),
+       is_archived                INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
+       created_at                 TEXT    NOT NULL,
+       updated_at                 TEXT    NOT NULL
+     );`,
+    `CREATE TABLE cycle_instances (
+       id            TEXT    PRIMARY KEY NOT NULL,
+       definition_id TEXT    NOT NULL REFERENCES cycle_definitions(id) ON DELETE CASCADE,
+       start_date    TEXT    NOT NULL,
+       end_date      TEXT,
+       note          TEXT,
+       created_at    TEXT    NOT NULL,
+       updated_at    TEXT    NOT NULL,
+       CHECK (end_date IS NULL OR end_date >= start_date)
+     );`,
+    `CREATE TABLE cycle_entries (
+       id          TEXT    PRIMARY KEY NOT NULL,
+       instance_id TEXT    NOT NULL REFERENCES cycle_instances(id) ON DELETE CASCADE,
+       date        TEXT    NOT NULL,
+       phase       TEXT,
+       symptoms    TEXT    NOT NULL DEFAULT '[]',
+       feelings    TEXT,
+       note        TEXT,
+       created_at  TEXT    NOT NULL,
+       updated_at  TEXT    NOT NULL
+     );`,
+    // 一天一条记录：从结构上避免同一天写两遍
+    `CREATE UNIQUE INDEX idx_cycle_entries_instance_date ON cycle_entries(instance_id, date);`,
+    `CREATE INDEX idx_cycle_instances_definition_id ON cycle_instances(definition_id);`,
+    `CREATE INDEX idx_cycle_instances_start_date ON cycle_instances(start_date DESC);`,
+  ],
+};
+
 /** 全部迁移，顺序即执行顺序。 */
 export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V1_BASELINE,
   MIGRATION_V2_EVENT_DEFINITIONS,
   MIGRATION_V3_EVENT_RECORDS,
+  MIGRATION_V4_CYCLE,
 ];
 
 /** 当前应用支持的 schema 版本。 */
