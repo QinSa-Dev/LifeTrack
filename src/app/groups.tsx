@@ -123,12 +123,7 @@ export default function GroupsScreen() {
               key={group.id}
               title={group.name}
               right={
-                <Button
-                  label="删除"
-                  tone="danger"
-                  onPress={() => confirmRemove(group)}
-                  disabled={busy}
-                />
+                <Button label="删除" tone="danger" onPress={() => confirmRemove(group)} disabled={busy} />
               }
             />
           ))

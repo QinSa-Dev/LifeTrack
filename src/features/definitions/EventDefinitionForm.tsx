@@ -76,9 +76,7 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
   }, [db]);
 
   const toggleTag = (id: string) => {
-    setTagIds((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-    );
+    setTagIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
   };
 
   const updateOption = (index: number, patch: Partial<QuickOptionRow>) => {

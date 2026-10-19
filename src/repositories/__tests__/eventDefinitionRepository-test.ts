@@ -123,9 +123,9 @@ describe('EventDefinitionRepository', () => {
 
     // 数据库里旧的子表行确实没了
     expect(db.rawAll('SELECT id FROM quick_options WHERE definition_id = ?', created.id)).toHaveLength(1);
-    expect(db.rawAll('SELECT tag_id FROM event_definition_tags WHERE definition_id = ?', created.id)).toEqual([
-      { tag_id: tagB.id },
-    ]);
+    expect(db.rawAll('SELECT tag_id FROM event_definition_tags WHERE definition_id = ?', created.id)).toEqual(
+      [{ tag_id: tagB.id }],
+    );
   });
 
   it('更新不存在的定义抛 NotFoundError', async () => {
@@ -164,9 +164,9 @@ describe('EventDefinitionRepository', () => {
 
     expect(await definitions.getById(created.id)).toBeNull();
     expect(db.rawAll('SELECT id FROM quick_options WHERE definition_id = ?', created.id)).toEqual([]);
-    expect(db.rawAll('SELECT definition_id FROM event_definition_tags WHERE definition_id = ?', created.id)).toEqual(
-      [],
-    );
+    expect(
+      db.rawAll('SELECT definition_id FROM event_definition_tags WHERE definition_id = ?', created.id),
+    ).toEqual([]);
     expect(await groups.getById(group.id)).not.toBeNull();
     expect(await tags.getById(tag.id)).not.toBeNull();
   });
@@ -194,9 +194,9 @@ describe('EventDefinitionRepository', () => {
 
   it('空名 / 非法类型 / 非法快捷选项取值都会被拒绝', async () => {
     await expect(definitions.create(counterDraft({ name: '  ' }))).rejects.toThrow(ValidationError);
-    await expect(
-      definitions.create(counterDraft({ kind: 'count' as unknown as 'counter' })),
-    ).rejects.toThrow(ValidationError);
+    await expect(definitions.create(counterDraft({ kind: 'count' as unknown as 'counter' }))).rejects.toThrow(
+      ValidationError,
+    );
     await expect(
       definitions.create(counterDraft({ quickOptions: [{ label: '半次', value: 0.5 }] })),
     ).rejects.toThrow(ValidationError);
@@ -221,7 +221,10 @@ describe('EventDefinitionRepository', () => {
 
     // 用一个不存在的标签 id 触发外键错误 → 事务回滚
     await expect(
-      definitions.update(created.id, counterDraft({ name: '改了', tagIds: ['missing-tag'], quickOptions: [] })),
+      definitions.update(
+        created.id,
+        counterDraft({ name: '改了', tagIds: ['missing-tag'], quickOptions: [] }),
+      ),
     ).rejects.toThrow(StorageError);
 
     const after = await definitions.getById(created.id);

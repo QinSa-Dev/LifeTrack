@@ -122,9 +122,7 @@ export default function TagsScreen() {
             <ListRow
               key={tag.id}
               title={tag.name}
-              right={
-                <Button label="删除" tone="danger" onPress={() => confirmRemove(tag)} disabled={busy} />
-              }
+              right={<Button label="删除" tone="danger" onPress={() => confirmRemove(tag)} disabled={busy} />}
             />
           ))
         )}

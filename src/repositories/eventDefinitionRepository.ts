@@ -126,10 +126,7 @@ async function loadQuickOptions(
 }
 
 /** 批量读取「定义 → 标签」关联，按定义分组。 */
-async function loadTagIds(
-  db: SqlExecutor,
-  definitionIds: readonly string[],
-): Promise<Map<string, string[]>> {
+async function loadTagIds(db: SqlExecutor, definitionIds: readonly string[]): Promise<Map<string, string[]>> {
   const grouped = new Map<string, string[]>();
   if (definitionIds.length === 0) {
     return grouped;
@@ -150,7 +147,10 @@ async function loadTagIds(
 }
 
 /** 校验并规整快捷选项输入。 */
-function normalizeQuickOptions(kind: EventDefinitionKind, inputs: readonly QuickOptionInput[]): QuickOptionInput[] {
+function normalizeQuickOptions(
+  kind: EventDefinitionKind,
+  inputs: readonly QuickOptionInput[],
+): QuickOptionInput[] {
   return inputs.map((input) => ({
     id: input.id,
     label: requireName(input.label, '快捷选项名称'),
@@ -337,9 +337,7 @@ export class EventDefinitionRepository {
       loadQuickOptions(this.db, ids),
       loadTagIds(this.db, ids),
     ]);
-    return rows.map((row) =>
-      toDefinition(row, quickOptions.get(row.id) ?? [], tagIds.get(row.id) ?? []),
-    );
+    return rows.map((row) => toDefinition(row, quickOptions.get(row.id) ?? [], tagIds.get(row.id) ?? []));
   }
 
   private async readOne(id: string): Promise<EventDefinition | null> {

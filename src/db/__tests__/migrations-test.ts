@@ -169,7 +169,13 @@ describe('v2 事件定义结构', () => {
   }
 
   it('五张表都建了出来', () => {
-    for (const table of ['event_groups', 'tags', 'event_definitions', 'quick_options', 'event_definition_tags']) {
+    for (const table of [
+      'event_groups',
+      'tags',
+      'event_definitions',
+      'quick_options',
+      'event_definition_tags',
+    ]) {
       expect(tableExists(db, table)).toBe(true);
     }
   });
@@ -211,17 +217,13 @@ describe('v2 事件定义结构', () => {
       `INSERT INTO event_groups (id, name, sort_order, created_at, updated_at)
        VALUES ('g1', '健康', 0, 'now', 'now')`,
     );
-    db.rawExec(
-      `INSERT INTO tags (id, name, created_at, updated_at) VALUES ('t1', '早晨', 'now', 'now')`,
-    );
+    db.rawExec(`INSERT INTO tags (id, name, created_at, updated_at) VALUES ('t1', '早晨', 'now', 'now')`);
     insertDefinition('d1', { groupId: 'g1' });
     db.rawExec(
       `INSERT INTO quick_options (id, definition_id, label, value, sort_order)
        VALUES ('q1', 'd1', '一杯', 1, 0)`,
     );
-    db.rawExec(
-      `INSERT INTO event_definition_tags (definition_id, tag_id) VALUES ('d1', 't1')`,
-    );
+    db.rawExec(`INSERT INTO event_definition_tags (definition_id, tag_id) VALUES ('d1', 't1')`);
 
     db.rawExec("DELETE FROM event_definitions WHERE id = 'd1'");
 

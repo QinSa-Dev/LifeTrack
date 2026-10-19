@@ -102,11 +102,7 @@ export default function EditEventScreen() {
     return (
       <Screen scroll contentStyle={styles.content}>
         <Header title="编辑事件" onBack={() => router.back()} />
-        <EmptyState
-          title="找不到这个事件"
-          description="它可能已经被删除。"
-          footnote={error ?? undefined}
-        />
+        <EmptyState title="找不到这个事件" description="它可能已经被删除。" footnote={error ?? undefined} />
       </Screen>
     );
   }
@@ -116,7 +112,13 @@ export default function EditEventScreen() {
       <Header
         title="编辑事件"
         onBack={() => router.back()}
-        right={definition.isArchived ? <AppText variant="label" color={palette.warning}>已归档</AppText> : undefined}
+        right={
+          definition.isArchived ? (
+            <AppText variant="label" color={palette.warning}>
+              已归档
+            </AppText>
+          ) : undefined
+        }
       />
 
       <EventDefinitionForm

@@ -42,19 +42,14 @@ export class TagRepository {
 
   async list(): Promise<Tag[]> {
     return guard('读取标签', async () => {
-      const rows = await this.db.getAllAsync<TagRow>(
-        `SELECT ${SELECT_COLUMNS} FROM tags ORDER BY name ASC`,
-      );
+      const rows = await this.db.getAllAsync<TagRow>(`SELECT ${SELECT_COLUMNS} FROM tags ORDER BY name ASC`);
       return rows.map(toTag);
     });
   }
 
   async getById(id: string): Promise<Tag | null> {
     return guard('读取标签', async () => {
-      const row = await this.db.getFirstAsync<TagRow>(
-        `SELECT ${SELECT_COLUMNS} FROM tags WHERE id = ?`,
-        id,
-      );
+      const row = await this.db.getFirstAsync<TagRow>(`SELECT ${SELECT_COLUMNS} FROM tags WHERE id = ?`, id);
       return row ? toTag(row) : null;
     });
   }
@@ -92,10 +87,7 @@ export class TagRepository {
       if (result.changes === 0) {
         throw new NotFoundError(`标签不存在：${id}`);
       }
-      const row = await this.db.getFirstAsync<TagRow>(
-        `SELECT ${SELECT_COLUMNS} FROM tags WHERE id = ?`,
-        id,
-      );
+      const row = await this.db.getFirstAsync<TagRow>(`SELECT ${SELECT_COLUMNS} FROM tags WHERE id = ?`, id);
       if (!row) {
         throw new NotFoundError(`标签不存在：${id}`);
       }
