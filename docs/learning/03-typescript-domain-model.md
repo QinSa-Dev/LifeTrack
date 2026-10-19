@@ -588,6 +588,7 @@ npm test                             # 全部测试
 **下一阶段会用到哪些已学知识**
 
 - 第二阶段第 1 项要给 `event_definitions`、`event_groups`、`tags`、`quick_options` 建表，并写「数据库行 → 领域对象」的映射。映射时必须用**守卫函数**校验 `kind`，不能用 `as`（见 4.4、7）。
+  **（现状：已完成，`kind` 的读回守卫见 `src/repositories/eventDefinitionRepository.ts` 的 `toKind`）**
 - 第 2、3 项生成记录主键时直接用 `newId()`；要记住 ID 不是时间来源，排序和统计一律用 `occurredAt`。
 - 第 4 项「撤销删除」直接靠 `deletedAt` + `isVisibleRecord`。
 - 第 8 项「导入合并」在边界处会大量用到 `assertUuidV7` 和 `toAppError`，所以 `IMPORT` 这个错误码现在就已经留好了。

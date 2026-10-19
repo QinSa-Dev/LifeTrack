@@ -733,6 +733,7 @@ $ADB shell sqlite3 /data/data/host.exp.exponent/files/SQLite/lifetrack.db "SELEC
 **下一阶段会用到哪些已学知识**
 
 - 第二阶段第 1 项要**追加 v2 迁移**，给 `event_groups` / `tags` / `event_definitions` / `quick_options` 建表。必须遵守本文 3.4 的三条规矩：只追加、版本连续、必须有名字，并同步更新 `LATEST_SCHEMA_VERSION` 的推导（它从 `MIGRATIONS` 自动算出，不用手改）。
+  **（现状：已完成，见 `src/db/schema.ts` 的 `MIGRATION_V2_EVENT_DEFINITIONS` 与 [08](./08-event-definitions.md)）**
 - 新的仓储（`EventRepository` 等）要照 `metaRepository.ts` 的样板写：只依赖 `SqlExecutor`、SQL 参数化、每个方法用 `guard` 包起来、时间作为带默认值的参数。
 - 「归档」是 `UPDATE ... SET is_archived = 1`，**不删任何行**；「软删除」是写 `deleted_at`，配合 [03](./03-typescript-domain-model.md) 的 `isVisibleRecord`。
 - **写计数/累加类逻辑时不要再抄 `incrementLaunchCount` 的读-改-写**（见 4.6），要用一条原子 SQL 或事务。

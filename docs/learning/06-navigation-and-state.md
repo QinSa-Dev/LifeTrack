@@ -25,13 +25,20 @@
 这是**路由层（导航骨架）**。它决定「应用由哪些页面组成、谁包含谁」。
 它位于最外层：根布局包住所有页面，标签布局包住三个标签页。
 
-**本次范围内明确没有实现什么**
+**本次范围内明确没有实现什么（第一阶段当时的状态）**
 
-- **没有页面间的参数传递**。三个阶段的所有页面都是独立页面，没有「从列表点进详情」这种带参数的跳转（第二阶段会加，例如 `events/[id]`）。
+> 说明：本文写于第一阶段。第二阶段第 1 项已补齐下面大部分缺口（见 [08](./08-event-definitions.md)）；
+> 每条后括注「现状」。
+
+- **没有页面间的参数传递**。三个阶段的所有页面都是独立页面，没有「从列表点进详情」这种带参数的跳转
+  （第二阶段会加，例如 `events/[id]`）。**（现状：已实现，见 `src/app/events/[id].tsx`）**
 - **没有 Stack 内的多级页面**。现在的 `Stack` 里只有一个 `(tabs)`。第二阶段会出现「列表 → 详情 → 编辑」这种栈式导航。
+  **（现状：已实现，`/events/new`、`/events/[id]`、`/groups`、`/tags` 作为 Stack 里的二级页面）**
 - **没有深链接（deep link）的实际用途**。`app.json` 里配了 `"scheme": "lifetrack"`，但没有任何业务代码用它。
 - **没有未匹配路由的处理**。没有 `+not-found.tsx`，所以跳到不存在的路径会显示 expo-router 的默认提示页。
+  **（现状：已新增 `src/app/+not-found.tsx`）**
 - **没有全局状态库**（Redux / Zustand 等）。第一阶段只有「数据库连接」这一个需要共享的东西，用 Context 足够。
+  **（现状：仍然只用 Context）**
 
 ## 2. 修改了哪些文件
 
@@ -197,7 +204,7 @@ router.push('/setting');     // ❌ tsc 报错：不在合法路径联合类型�
 
 - `.expo/types/router.d.ts` 是**自动生成的**，别手改，也别提交。
 - 新增路由文件后，类型**需要重新生成**（开发服务器跑起来时会做）。所以「刚加的文件路径在 `tsc` 里报类型错误」时，先确认开发服务器是否在跑、必要时重启。
-- 目前项目里**没有任何 `router.push` / `<Link>` 的使用**，所以这个能力目前「配好了但还没用上」。它会在第二阶段真正发挥作用。
+- 目前项目里**已经用上了 `router.push` / `useLocalSearchParams`**（列表 → 编辑带参跳转，见 `src/app/(tabs)/definitions.tsx` 与 `src/app/events/[id].tsx`）；`<Link>` 组件仍未使用。
 
 ### 3.8 `ComponentProps` 提取第三方组件的 prop 类型
 
@@ -334,6 +341,9 @@ export default function TabsLayout() {
 
 ### 4.3 页面组件：必须默认导出，且「只描述界面」
 
+> 下面引用的是**第一阶段**的 `definitions.tsx`（占位版）。第二阶段第 1 项已把它替换成真实列表页，
+> 现版本见 `src/app/(tabs)/definitions.tsx` 与 [08](./08-event-definitions.md)。此处的要点（默认导出、命名约定）依然成立。
+
 ```tsx
 export default function DefinitionsScreen() {
   return (
@@ -356,8 +366,10 @@ export default function DefinitionsScreen() {
 
 - **`export default`** 是硬要求（见 4.1 的说明）。
 - 组件名叫 `DefinitionsScreen`，与文件名 `definitions.tsx` 对应但不强求一致。**约定**：页面组件统一以 `Screen` 结尾，便于和 `src/components/` 里的通用组件区分。
-- 页面**没有 props**：expo-router 渲染它时不传参数。要接收参数得用 `useLocalSearchParams()`（本项目还没用到）。
+- 页面**没有 props**：expo-router 渲染它时不传参数；要接收参数得用 `useLocalSearchParams()`。
+  **（现状：`src/app/events/[id].tsx` 已用它读取 `id`）**
 - 这一屏里**没有任何数据读取**，是纯静态内容——所以即使数据库出问题（Gate 挡在前面），它也永远不会在错误状态下被渲染。
+  **（现状：现版本的 `definitions.tsx` 会读数据，因此它也依赖 Gate 先放行）**
 
 ### 4.4 状态与导航的交互：为什么「切标签不会重新加载数据」
 
@@ -377,11 +389,12 @@ export default function DefinitionsScreen() {
 
 ### 4.5 既有问题：没有 `+not-found` 与「路由文件里的非路由代码」（诚实记录）
 
-**问题 1：没有未匹配路由页面**。跳到不存在的路径时，用户会看到 expo-router 的**英文默认提示**，与应用的视觉风格和语言都不一致。
+**问题 1：没有未匹配路由页面**（**现状：已在第二阶段第 1 项修复**）。跳到不存在的路径时，用户会看到 expo-router 的**英文默认提示**，与应用的视觉风格和语言都不一致。
 
 **影响**：现在没有 `router.push`，所以用户几乎不会走到这里。但第二阶段的「导入数据后跳转」「从通知打开」都可能产生意外路径。
 
-**改进方案**：加一个 `src/app/+not-found.tsx`，用 `Screen` + `EmptyState` 渲染中文提示并提供「回到时间轴」的按钮。**建议在第二阶段开始做跳转时就补上**。
+**改进方案**：加一个 `src/app/+not-found.tsx`，用 `Screen` + `EmptyState` 渲染中文提示并提供「回到时间轴」的按钮。
+**（现状：已按此方案实现 `src/app/+not-found.tsx`）**
 
 **问题 2：`src/app/(tabs)/_layout.tsx` 里的 `iconName` 辅助函数**。它目前是**布局文件里的局部函数**。严格说，它是「非路由代码」放在路由目录里。虽然文件名以 `_` 开头不会被当成路由（`_layout.tsx` 本身就是特殊文件），所以**不影响功能**。
 但如果以后要在别处复用「实心/描边图标」逻辑，就应该把它提到 `src/components/` 或一个 `src/navigation/` 目录下。**现在只有一处使用，就地实现是更务实的选择**——记录在这里是为了说明「什么时候该抽取」的判断标准，而不是说现在写错了。
@@ -548,7 +561,12 @@ npm start            # 肉眼验证导航
 
 **下一阶段会用到哪些已学知识**
 
+> 下面几条在**第二阶段第 1 项已经落地**（详见 [08](./08-event-definitions.md)），保留原文以便对照「计划 → 实现」。
+
 - 第二阶段第 1 项会在标签页里做「事件定义列表」，从列表点进「编辑」需要**栈式导航**：会在 `src/app/` 下新增非标签的路由（例如 `events/new.tsx`、`events/[id].tsx`），并开始使用 `Link` / `router.push` 与 `useLocalSearchParams`。
-- 那时需要**新增一个 `+not-found.tsx`**（见 4.5），并重新生成路由类型。
+  **（现状：已实现 `events/new.tsx`、`events/[id].tsx`，用 `router.push` + `useLocalSearchParams`；`Link` 未用）**
+- 那时需要**新增一个 `+not-found.tsx`**（见 4.5），并重新生成路由类型。**（现状：已新增）**
 - 「编辑完返回上一页并刷新」会用到 `useFocusEffect` 或返回参数，这是导航与状态真正的交汇点。
+  **（现状：列表页用 `useFocusEffect` 在返回时刷新）**
 - 如果「当前编辑中的事件定义」需要被多个页面共享，就要按 3.9 的标准评估：优先 `Context + useReducer`，而不是直接引入第三方状态库。
+  **（现状：暂不需要，编辑状态只在单个页面内）**

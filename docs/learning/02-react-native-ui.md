@@ -489,5 +489,6 @@ npm start           # 肉眼验证渲染
 **下一阶段会用到哪些已学知识**
 
 - 第二阶段第 1 项要做的「事件定义列表」会复用 `Card` / `EmptyState` / `Button`，并**首次**引入 `TextInput`（表单）与 `FlatList`（长列表）。
+  **（现状：列表与表单已实现，`TextInput` 已引入；但列表用的是 `ScrollView` + `map`，`FlatList` 仍未使用。见 [08](./08-event-definitions.md)）**
 - 「归档」按钮会用 `Button` 的 `tone` 区分语义（例如 `secondary`），「永久删除」会用 `danger` + 二次确认。
 - 列表中的数据来源是仓储层（见 [04](./04-sqlite-and-repository.md)），界面层依旧不写 SQL。

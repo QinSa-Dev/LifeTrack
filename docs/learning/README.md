@@ -11,7 +11,7 @@
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | 第一阶段 | 工程基线：Expo 工程、导航骨架、领域模型类型、统一错误、UUID 方案、SQLite 初始化、版本化迁移、Repository 层、主题与基础 UI、检查与测试命令 | **已完成并已验证** |
-| 第二阶段第 1 项 | 事件定义 / 分组 / 标签 / 快捷选项 / 归档 | 未开始 |
+| 第二阶段第 1 项 | 事件定义 / 分组 / 标签 / 快捷选项 / 归档 | **已完成**（本文档 `08`） |
 | 第二阶段第 2–8 项 | counter、quantity、补录与撤销、周期、时间轴与统计、导入导出、永久删除一致性 | 未开始 |
 
 第一阶段「已完成」的含义是：下面的命令都真实跑过并且通过了。
@@ -23,8 +23,18 @@ npm test            # Jest：4 个套件 / 32 个用例
 npm run doctor      # expo-doctor：20/20
 ```
 
+第二阶段第 1 项完成后（`npm test` 为 8 个套件 / 83 个用例），新增命令同样跑过：
+
+```bash
+npm run typecheck                        # 通过
+npm run lint                             # 通过（0 error / 0 warning）
+npm test                                 # 8 个套件 / 83 个用例
+npx expo export --platform ios           # 打包通过（1242 modules）
+```
+
 运行验证（模拟器，不是真机）：iOS Simulator（iPhone 17 Pro / iOS 26.3 / Expo Go 58.0.4）与 Android 模拟器
 （Pixel 9 / API 36 / Expo Go 58.0.4）都能打开应用、渲染三个标签页，并且 SQLite 数据能跨重启保留。
+**第二阶段第 1 项尚未在模拟器/真机上手动走过**，只做了静态检查、单元测试与打包验证——这一点如实记录。
 
 ## 二、已完成功能 → 对应文档
 
@@ -37,12 +47,13 @@ npm run doctor      # expo-doctor：20/20
 | 「启动次数 +1」这个最小持久化闭环：从界面动作到落盘再到回读 | [05-business-logic-and-data-flow.md](./05-business-logic-and-data-flow.md) |
 | 底部三个标签页、页面之间怎么跳、状态怎么在组件间传递 | [06-navigation-and-state.md](./06-navigation-and-state.md) |
 | 怎么跑检查与测试、测试覆盖了什么、遇到问题怎么查 | [07-testing-and-debugging.md](./07-testing-and-debugging.md) |
+| 事件定义 / 分组 / 标签 / 快捷选项 / 归档：v2 迁移、表单、二级路由、多表聚合 | [08-event-definitions.md](./08-event-definitions.md) |
 
-### 为什么暂时没有 08、09
+### 为什么暂时没有 09
 
 建议目录里还列了 `08-data-backup-and-restore.md` 和 `09-architecture-and-future-extension.md`。
-它们对应的功能（JSON/CSV 导入导出、整体架构演进）属于第二阶段第 7 项及之后，**代码还不存在**。
-按照「不以文件名和猜测充数、不制造空文档」的原则，这两篇会在功能落地时再写。
+`08` 已用于实现落地的事件定义功能；导入导出（JSON/CSV）与整体架构演进仍属于第二阶段第 7 项及之后，
+**代码还不存在**。按照「不以文件名和猜测充数、不制造空文档」的原则，它们会在功能落地时再写。
 
 `06-navigation-and-state.md` 提前写了，是因为「目录结构与基础导航」本身就是第一阶段的交付物，
 而且状态管理（Context + Hook）在第一阶段就已经有了真实代码可讲。
@@ -58,8 +69,10 @@ npm run doctor      # expo-doctor：20/20
 5. **[05 业务逻辑与数据流](./05-business-logic-and-data-flow.md)** —— 把上面四篇串起来，走一遍「启动次数」这个真实的最小闭环。
 6. **[06 导航与状态](./06-navigation-and-state.md)** —— 页面之间怎么连、状态怎么流。
 7. **[07 测试与调试](./07-testing-and-debugging.md)** —— 怎么证明代码是对的，出问题怎么排查。
+8. **[08 事件定义](./08-event-definitions.md)** —— 第二阶段第 1 项：从 v2 迁移到表单、二级路由与多表聚合的前后端闭环。
 
-如果只想快速走读一遍项目，读 **01 → 05 → 06** 这三篇就够；03、04 是用来建立类型与数据层认知的。
+如果只想快速走读一遍项目，读 **01 → 05 → 06** 这三篇就够；03、04 是用来建立类型与数据层认知的，
+08 用来了解业务功能是怎么一步步搭起来的。
 
 ## 四、已经接触过的技术概念
 
@@ -89,48 +102,62 @@ npm run doctor      # expo-doctor：20/20
 | 文件即路由、`_layout.tsx`、Stack / Tabs、类型化路由 | expo-router | 06 |
 | Jest：`describe` / `it` / `expect`、fixture、真实依赖 vs mock | 测试 | 07 |
 | `tsc` / ESLint / Prettier 三者分工 | 工程 | 07 |
+| 表单受控输入（`TextInput` + `useState`）、多选与可选中 Chip | React / RN | 08 |
+| `Alert` 二次确认、`router.push` 带参跳转、typed routes 与动态段 `[id]` | React Native / expo-router | 08 |
+| 仓储聚合根：一张「定义」背后三张表、批量读取避免 N+1、`withExclusiveTransactionAsync` 多表写入 | 架构 / SQLite | 08 |
+| 外键行为：`ON DELETE SET NULL` vs `ON DELETE CASCADE` 的语义差异 | SQLite | 08 |
 
 ## 五、还没有学到的内容
 
 这些会在对应功能落地后才讲，现在不提前堆术语：
 
-- 表单与输入（`TextInput`、受控组件、输入校验）—— 第二阶段第 1 项会用到。
-- 长列表性能（`FlatList`）与列表交互 —— 第二阶段时间轴会用到。
+- 表单与输入（`TextInput`、受控组件、输入校验）—— 已在 [08](./08-event-definitions.md) 引入，不再是「未学到」。
+- 长列表性能（`FlatList`）与列表交互 —— 目前事件列表用 `ScrollView` + `map` 就够；第二阶段时间轴数据多了会用到。
 - 日期与时间的处理策略（`occurredAt` / `recordedAt` / 时区）—— 第二阶段补录会用到。
 - 软删除与撤销（`deletedAt`、undo 栈）—— 第二阶段第 4 项。
 - JSON / CSV 导入导出、冲突合并、事务一致性校验 —— 第二阶段第 7、8 项。
 - 深链接与通知跳转 —— 目前只有 `scheme: "lifetrack"` 配置，没有业务用途。
 - 深色主题 —— `theme/index.ts` 里留了 `useTheme()` 的接口，但还没接。
 
-## 六、当前整体架构（第一阶段）
+## 六、当前整体架构（第一阶段 + 第二阶段第 1 项）
 
 ```
                       ┌─────────────────────────────────────┐
    src/app/           │ expo-router 文件路由（每个文件=一屏）  │
                       │ _layout.tsx  →  Stack                │
                       │  (tabs)/_layout.tsx → Tabs（三标签）  │
+                      │  events/new.tsx / events/[id].tsx     │
+                      │  groups.tsx / tags.tsx / +not-found   │
                       └───────────────┬─────────────────────┘
-                                      │ 屏里只用通用组件 + Hook
+                                      │ 通用组件 + 功能组件 + Hook
                       ┌───────────────▼─────────────────────┐
-   src/components/    │ AppText / Badge / Button / Card      │
-                      │ Screen / EmptyState                  │
-                      │ DatabaseGate（数据库门禁）             │
+   src/components/    │ 基础 UI：AppText / Badge / Button     │
+                      │ Card / Screen / EmptyState            │
+                      │ 表单与导航：TextField / Chip / Header │
+                      │ ListRow / DatabaseGate（数据库门禁）  │
+                      ├─────────────────────────────────────┤
+   src/features/      │ definitions/：EventDefinitionForm     │
+                      │ （具体功能组件，非通用 UI）            │
                       └───────────────┬─────────────────────┘
                                       │ 只读 Hook，不写 SQL
                       ┌───────────────▼─────────────────────┐
    src/db/            │ DatabaseProvider（Context：状态机）   │
                       │ client.ts（唯一连接入口 + PRAGMA）    │
                       │ migrations.ts（user_version + 事务）  │
-                      │ schema.ts（迁移清单）                 │
+                      │ schema.ts（迁移清单 v1 / v2）         │
                       │ types.ts（SqlExecutor 抽象）          │
                       └───────────────┬─────────────────────┘
                                       │ 仓储是唯一写 SQL 的地方
                       ┌───────────────▼─────────────────────┐
    src/repositories/  │ MetaRepository（app_meta 读写）       │
+                      │ EventGroupRepository（分组）           │
+                      │ TagRepository（标签）                  │
+                      │ EventDefinitionRepository（定义聚合）  │
                       └───────────────┬─────────────────────┘
                                       │
                       ┌───────────────▼─────────────────────┐
    src/domain/        │ models.ts 领域模型                    │
+                      │ validation.ts 输入类型与校验规则      │
                       │ errors.ts 统一错误（AppError + code） │
                       │ id.ts     UUID v7                    │
                       └─────────────────────────────────────┘
@@ -138,11 +165,12 @@ npm run doctor      # expo-doctor：20/20
                               SQLite 文件 lifetrack.db
 ```
 
-职责边界（这是本项目的硬约定，第二阶段也要遵守）：
+职责边界（这是本项目的硬约定，后续阶段也要遵守）：
 
 - **界面层** 只负责展示与交互，不出现 SQL。
+- **功能组件层（`src/features/`）** 放只服务于某个功能的组合组件（如事件定义表单）；通用 UI 仍在 `src/components/`。
 - **仓储层** 是唯一写 SQL 的地方，对外只暴露业务语义方法。
-- **领域层** 定义类型与规则，不依赖 React、也不依赖数据库。
+- **领域层** 定义类型与规则（含输入校验），不依赖 React、也不依赖数据库。
 - **数据库基础设施层** 负责连接、PRAGMA、迁移、错误归一。
 
 ## 七、文档写作约定
