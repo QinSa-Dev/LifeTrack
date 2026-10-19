@@ -1,5 +1,10 @@
 import { readSchemaVersion, runMigrations, validateMigrations, type Migration } from '@/db/migrations';
-import { LATEST_SCHEMA_VERSION, MIGRATIONS, MIGRATION_V1_BASELINE } from '@/db/schema';
+import {
+  LATEST_SCHEMA_VERSION,
+  MIGRATIONS,
+  MIGRATION_V1_BASELINE,
+  MIGRATION_V2_EVENT_DEFINITIONS,
+} from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { MigrationError } from '@/domain/errors';
 
@@ -31,7 +36,7 @@ describe('迁移清单校验', () => {
 
   it('当前仓库的迁移清单是合法的', () => {
     expect(() => validateMigrations(MIGRATIONS)).not.toThrow();
-    expect(LATEST_SCHEMA_VERSION).toBe(1);
+    expect(LATEST_SCHEMA_VERSION).toBe(2);
   });
 });
 
@@ -49,9 +54,10 @@ describe('runMigrations', () => {
   it('全新数据库：建表并提升 user_version', async () => {
     const result = await runMigrations(db, MIGRATIONS);
 
-    expect(result).toEqual({ from: 0, to: 1, applied: [1] });
-    expect(await readSchemaVersion(db)).toBe(1);
+    expect(result).toEqual({ from: 0, to: 2, applied: [1, 2] });
+    expect(await readSchemaVersion(db)).toBe(2);
     expect(tableExists(db, 'app_meta')).toBe(true);
+    expect(tableExists(db, 'event_definitions')).toBe(true);
   });
 
   it('app_meta 结构符合预期（主键约束生效）', () => {
@@ -71,7 +77,7 @@ describe('runMigrations', () => {
     await runMigrations(db, MIGRATIONS);
     const second = await runMigrations(db, MIGRATIONS);
 
-    expect(second).toEqual({ from: 1, to: 1, applied: [] });
+    expect(second).toEqual({ from: 2, to: 2, applied: [] });
   });
 
   it('数据库版本高于应用支持版本时拒绝启动，且不破坏数据', async () => {
@@ -139,5 +145,140 @@ describe('runMigrations', () => {
 
     const result = await runMigrations(db, chain);
     expect(result).toEqual({ from: 1, to: 2, applied: [2] });
+  });
+});
+
+describe('v2 事件定义结构', () => {
+  let db: TestDatabase;
+
+  beforeEach(async () => {
+    db = createTestDatabase();
+    await runMigrations(db, MIGRATIONS);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** 插入最小可用的定义行，返回其 id */
+  function insertDefinition(id: string, overrides: { groupId?: string | null } = {}): void {
+    db.rawExec(
+      `INSERT INTO event_definitions (id, name, kind, group_id, is_archived, sort_order, created_at, updated_at)
+       VALUES ('${id}', '喝水', 'counter', ${overrides.groupId ? `'${overrides.groupId}'` : 'NULL'}, 0, 0, 'now', 'now')`,
+    );
+  }
+
+  it('五张表都建了出来', () => {
+    for (const table of ['event_groups', 'tags', 'event_definitions', 'quick_options', 'event_definition_tags']) {
+      expect(tableExists(db, table)).toBe(true);
+    }
+  });
+
+  it('kind 只接受 counter / quantity', () => {
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, created_at, updated_at)
+         VALUES ('x', 'n', 'count', 'now', 'now')`,
+      ),
+    ).toThrow();
+  });
+
+  it('is_archived 只接受 0 / 1', () => {
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, is_archived, created_at, updated_at)
+         VALUES ('x', 'n', 'counter', 2, 'now', 'now')`,
+      ),
+    ).toThrow();
+  });
+
+  it('删除分组把定义的 group_id 置空，而不是删除定义', () => {
+    db.rawExec(
+      `INSERT INTO event_groups (id, name, sort_order, created_at, updated_at)
+       VALUES ('g1', '健康', 0, 'now', 'now')`,
+    );
+    insertDefinition('d1', { groupId: 'g1' });
+
+    db.rawExec("DELETE FROM event_groups WHERE id = 'g1'");
+
+    expect(db.rawGet("SELECT group_id FROM event_definitions WHERE id = 'd1'")).toEqual({
+      group_id: null,
+    });
+  });
+
+  it('删除定义级联清理快捷选项与标签关联，但保留标签与分组本身', () => {
+    db.rawExec(
+      `INSERT INTO event_groups (id, name, sort_order, created_at, updated_at)
+       VALUES ('g1', '健康', 0, 'now', 'now')`,
+    );
+    db.rawExec(
+      `INSERT INTO tags (id, name, created_at, updated_at) VALUES ('t1', '早晨', 'now', 'now')`,
+    );
+    insertDefinition('d1', { groupId: 'g1' });
+    db.rawExec(
+      `INSERT INTO quick_options (id, definition_id, label, value, sort_order)
+       VALUES ('q1', 'd1', '一杯', 1, 0)`,
+    );
+    db.rawExec(
+      `INSERT INTO event_definition_tags (definition_id, tag_id) VALUES ('d1', 't1')`,
+    );
+
+    db.rawExec("DELETE FROM event_definitions WHERE id = 'd1'");
+
+    expect(db.rawAll("SELECT id FROM quick_options WHERE definition_id = 'd1'")).toEqual([]);
+    expect(db.rawAll("SELECT definition_id FROM event_definition_tags WHERE definition_id = 'd1'")).toEqual(
+      [],
+    );
+    // 分组与标签是独立配置，不受定义删除影响
+    expect(db.rawGet("SELECT id FROM event_groups WHERE id = 'g1'")).toEqual({ id: 'g1' });
+    expect(db.rawGet("SELECT id FROM tags WHERE id = 't1'")).toEqual({ id: 't1' });
+  });
+
+  it('外键生效：快捷选项不能指向不存在的定义', () => {
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO quick_options (id, definition_id, label, value, sort_order)
+         VALUES ('q1', 'missing', '一杯', 1, 0)`,
+      ),
+    ).toThrow();
+  });
+
+  it('事件定义与标签是多对多，同一组合不能重复', () => {
+    db.rawExec("INSERT INTO tags (id, name, created_at, updated_at) VALUES ('t1', '早晨', 'now', 'now')");
+    insertDefinition('d1');
+    db.rawExec("INSERT INTO event_definition_tags (definition_id, tag_id) VALUES ('d1', 't1')");
+
+    expect(() =>
+      db.rawExec("INSERT INTO event_definition_tags (definition_id, tag_id) VALUES ('d1', 't1')"),
+    ).toThrow();
+  });
+
+  it('从已含 v1 数据的旧库升级：只跑 v2，旧数据不丢', async () => {
+    const legacy = createTestDatabase();
+    try {
+      await runMigrations(legacy, [MIGRATION_V1_BASELINE]);
+      legacy.rawExec("INSERT INTO app_meta (key, value, updated_at) VALUES ('keep', 'me', 'now')");
+
+      const result = await runMigrations(legacy, MIGRATIONS);
+
+      expect(result).toEqual({ from: 1, to: 2, applied: [2] });
+      expect(await readSchemaVersion(legacy)).toBe(2);
+      expect(legacy.rawGet("SELECT value FROM app_meta WHERE key = 'keep'")).toEqual({ value: 'me' });
+      expect(tableExists(legacy, 'event_definitions')).toBe(true);
+    } finally {
+      legacy.close();
+    }
+  });
+
+  it('v2 语句本身可独立建表（不依赖 v1）', () => {
+    const fresh = createTestDatabase();
+    try {
+      for (const statement of MIGRATION_V2_EVENT_DEFINITIONS.statements ?? []) {
+        fresh.rawExec(statement);
+      }
+      expect(tableExists(fresh, 'quick_options')).toBe(true);
+    } finally {
+      fresh.close();
+    }
   });
 });
