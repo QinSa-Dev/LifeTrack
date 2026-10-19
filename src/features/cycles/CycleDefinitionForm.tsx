@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { StyleSheet } from 'react-native';
+
 import { AppText, Button, Card, TextField } from '@/components';
 import type { CycleDefinition } from '@/domain/models';
 import type { CycleDefinitionInput } from '@/domain/validation';
@@ -93,8 +95,8 @@ export function CycleDefinitionForm({ initial, submitLabel, onSubmit }: CycleDef
   );
 }
 
-const styles = {
+const styles = StyleSheet.create({
   error: {
     marginBottom: spacing.md,
   },
-} as const;
+});
