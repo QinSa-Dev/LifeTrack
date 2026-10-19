@@ -99,8 +99,49 @@ export const MIGRATION_V2_EVENT_DEFINITIONS: Migration = {
   ],
 };
 
+/**
+ * v3：事件历史记录（第二阶段第 2 项）。
+ *
+ * 关键设计：`event_records` **故意不建指向 `event_definitions` 的外键**。
+ * 领域规则是「删改定义不影响已产生的历史」，若加了 `ON DELETE CASCADE`，
+ * 永久删除定义会把历史一起抹掉；若加 `RESTRICT`，又会让定义无法删除。
+ * 因此这里用「定义 id + 完整快照」的方式保存历史：定义没了，历史仍能独立展示。
+ *
+ * 快照字段（`snapshot_*`）在「记录的那一刻」写入，之后永不更新。
+ * `snapshot_tag_ids` 存 JSON 数组文本（快照要自洽，不想再依赖 tags 表）。
+ * `source` 区分手动 / 快捷 / 补录；`deleted_at` 供后续「撤销/软删除」使用。
+ */
+export const MIGRATION_V3_EVENT_RECORDS: Migration = {
+  version: 3,
+  name: 'event_records',
+  statements: [
+    `CREATE TABLE event_records (
+       id                 TEXT    PRIMARY KEY NOT NULL,
+       definition_id      TEXT    NOT NULL,
+       kind               TEXT    NOT NULL CHECK (kind IN ('counter', 'quantity')),
+       value              REAL    NOT NULL,
+       unit               TEXT,
+       occurred_at        TEXT    NOT NULL,
+       recorded_at        TEXT    NOT NULL,
+       note               TEXT,
+       source             TEXT    NOT NULL CHECK (source IN ('manual', 'quick', 'backfill')),
+       deleted_at         TEXT,
+       snapshot_name      TEXT    NOT NULL,
+       snapshot_unit      TEXT,
+       snapshot_group_id  TEXT,
+       snapshot_tag_ids   TEXT    NOT NULL DEFAULT '[]'
+     );`,
+    `CREATE INDEX idx_event_records_occurred_at ON event_records(occurred_at DESC);`,
+    `CREATE INDEX idx_event_records_definition_id ON event_records(definition_id);`,
+  ],
+};
+
 /** 全部迁移，顺序即执行顺序。 */
-export const MIGRATIONS: readonly Migration[] = [MIGRATION_V1_BASELINE, MIGRATION_V2_EVENT_DEFINITIONS];
+export const MIGRATIONS: readonly Migration[] = [
+  MIGRATION_V1_BASELINE,
+  MIGRATION_V2_EVENT_DEFINITIONS,
+  MIGRATION_V3_EVENT_RECORDS,
+];
 
 /** 当前应用支持的 schema 版本。 */
 export const LATEST_SCHEMA_VERSION =

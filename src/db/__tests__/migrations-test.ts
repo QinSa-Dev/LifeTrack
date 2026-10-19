@@ -4,6 +4,7 @@ import {
   MIGRATIONS,
   MIGRATION_V1_BASELINE,
   MIGRATION_V2_EVENT_DEFINITIONS,
+  MIGRATION_V3_EVENT_RECORDS,
 } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { MigrationError } from '@/domain/errors';
@@ -36,7 +37,7 @@ describe('迁移清单校验', () => {
 
   it('当前仓库的迁移清单是合法的', () => {
     expect(() => validateMigrations(MIGRATIONS)).not.toThrow();
-    expect(LATEST_SCHEMA_VERSION).toBe(2);
+    expect(LATEST_SCHEMA_VERSION).toBe(3);
   });
 });
 
@@ -54,10 +55,11 @@ describe('runMigrations', () => {
   it('全新数据库：建表并提升 user_version', async () => {
     const result = await runMigrations(db, MIGRATIONS);
 
-    expect(result).toEqual({ from: 0, to: 2, applied: [1, 2] });
-    expect(await readSchemaVersion(db)).toBe(2);
+    expect(result).toEqual({ from: 0, to: 3, applied: [1, 2, 3] });
+    expect(await readSchemaVersion(db)).toBe(3);
     expect(tableExists(db, 'app_meta')).toBe(true);
     expect(tableExists(db, 'event_definitions')).toBe(true);
+    expect(tableExists(db, 'event_records')).toBe(true);
   });
 
   it('app_meta 结构符合预期（主键约束生效）', () => {
@@ -77,7 +79,7 @@ describe('runMigrations', () => {
     await runMigrations(db, MIGRATIONS);
     const second = await runMigrations(db, MIGRATIONS);
 
-    expect(second).toEqual({ from: 2, to: 2, applied: [] });
+    expect(second).toEqual({ from: 3, to: 3, applied: [] });
   });
 
   it('数据库版本高于应用支持版本时拒绝启动，且不破坏数据', async () => {
@@ -255,7 +257,7 @@ describe('v2 事件定义结构', () => {
     ).toThrow();
   });
 
-  it('从已含 v1 数据的旧库升级：只跑 v2，旧数据不丢', async () => {
+  it('从已含 v1 数据的旧库升级：只跑 v2、v3，旧数据不丢', async () => {
     const legacy = createTestDatabase();
     try {
       await runMigrations(legacy, [MIGRATION_V1_BASELINE]);
@@ -263,10 +265,11 @@ describe('v2 事件定义结构', () => {
 
       const result = await runMigrations(legacy, MIGRATIONS);
 
-      expect(result).toEqual({ from: 1, to: 2, applied: [2] });
-      expect(await readSchemaVersion(legacy)).toBe(2);
+      expect(result).toEqual({ from: 1, to: 3, applied: [2, 3] });
+      expect(await readSchemaVersion(legacy)).toBe(3);
       expect(legacy.rawGet("SELECT value FROM app_meta WHERE key = 'keep'")).toEqual({ value: 'me' });
       expect(tableExists(legacy, 'event_definitions')).toBe(true);
+      expect(tableExists(legacy, 'event_records')).toBe(true);
     } finally {
       legacy.close();
     }
@@ -279,6 +282,82 @@ describe('v2 事件定义结构', () => {
         fresh.rawExec(statement);
       }
       expect(tableExists(fresh, 'quick_options')).toBe(true);
+    } finally {
+      fresh.close();
+    }
+  });
+});
+
+describe('v3 事件历史结构', () => {
+  let db: TestDatabase;
+
+  beforeEach(async () => {
+    db = createTestDatabase();
+    await runMigrations(db, MIGRATIONS);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function insertRecord(id: string, overrides: { definitionId?: string } = {}): void {
+    db.rawExec(
+      `INSERT INTO event_records
+         (id, definition_id, kind, value, occurred_at, recorded_at, source, snapshot_name, snapshot_tag_ids)
+       VALUES ('${id}', '${overrides.definitionId ?? 'd1'}', 'counter', 1, 'now', 'now', 'manual', '喝水', '[]')`,
+    );
+  }
+
+  it('event_records 表建了出来', () => {
+    expect(tableExists(db, 'event_records')).toBe(true);
+  });
+
+  it('kind / source 都受 CHECK 约束', () => {
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO event_records (id, definition_id, kind, value, occurred_at, recorded_at, source, snapshot_name)
+         VALUES ('x', 'd1', 'count', 1, 'now', 'now', 'manual', 'n')`,
+      ),
+    ).toThrow();
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO event_records (id, definition_id, kind, value, occurred_at, recorded_at, source, snapshot_name)
+         VALUES ('x', 'd1', 'counter', 1, 'now', 'now', 'auto', 'n')`,
+      ),
+    ).toThrow();
+  });
+
+  it('历史记录不依赖事件定义：指向不存在的定义也能写入', () => {
+    // 没有外键约束，所以写一个不存在的 definition_id 不会失败
+    expect(() => insertRecord('r1', { definitionId: 'ghost' })).not.toThrow();
+    expect(db.rawGet("SELECT snapshot_name FROM event_records WHERE id = 'r1'")).toEqual({
+      snapshot_name: '喝水',
+    });
+  });
+
+  it('删除事件定义不会连带删除历史记录', () => {
+    db.rawExec(
+      `INSERT INTO event_definitions (id, name, kind, created_at, updated_at)
+       VALUES ('d1', '喝水', 'counter', 'now', 'now')`,
+    );
+    insertRecord('r1');
+
+    db.rawExec("DELETE FROM event_definitions WHERE id = 'd1'");
+
+    expect(db.rawAll('SELECT id FROM event_records')).toEqual([{ id: 'r1' }]);
+    // 快照仍在，历史可自证
+    expect(db.rawGet("SELECT snapshot_name FROM event_records WHERE id = 'r1'")).toEqual({
+      snapshot_name: '喝水',
+    });
+  });
+
+  it('v3 语句本身可独立建表', () => {
+    const fresh = createTestDatabase();
+    try {
+      for (const statement of MIGRATION_V3_EVENT_RECORDS.statements ?? []) {
+        fresh.rawExec(statement);
+      }
+      expect(tableExists(fresh, 'event_records')).toBe(true);
     } finally {
       fresh.close();
     }
