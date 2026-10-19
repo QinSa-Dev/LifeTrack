@@ -305,8 +305,9 @@ export function isRecordable(definition: EventDefinition): boolean {
 
 **为什么这两个函数放在领域层而不是仓储层**：它们是**纯函数**（不碰数据库、不碰 React），所以能被任何地方复用，也最容易测试。
 
-**现在的不足（诚实记录）**：这两个函数**还没有单元测试**。`domain/__tests__/` 目前只有 `id-test.ts` 和 `errors-test.ts`。
-它们逻辑很简单，风险低，但第二阶段一旦有地方改了 `deletedAt` 的语义（例如从 `undefined` 改成 `null`），没有测试就会静默出错。**建议第二阶段补上**。
+**现在的不足（诚实记录）**：这两个函数在第二阶段第 2 项之前**没有单元测试**。`domain/__tests__/` 当时只有 `id-test.ts` 和 `errors-test.ts`。
+**（现状：已补上 —— 见 `domain/__tests__/models-test.ts`，为 `isVisibleRecord` 覆盖了 `deletedAt === undefined` / 有值两个分支，也为
+`isRecordable` 与 `toDefinitionSnapshot` 补了用例。做「撤销」时顺手补的，因为那时 `deletedAt` 才第一次真的被写。）**
 
 ### 4.3 `uuidv7`：为什么不用 v4，以及「顺序」是怎么保证的
 
@@ -443,11 +444,11 @@ recordedAt: IsoDateTime;
 
 **为什么必须分开**：
 
-1. 「补录」功能（第二阶段第 4 项）的核心就是这两者不一致。
+1. 「补录」功能的核心就是这两者不一致。**（现状：已实现，见 [10 补录与撤销](./10-backfill-and-undo.md)；补录时 `occurredAt` 可以早于 `recordedAt`，但不能晚于它。）**
 2. 统计要按 `occurredAt` 算（「上周喝了多少水」）；而「这条数据是谁什么时候填的」要看 `recordedAt`。
 3. 将来做导入合并时，同一件事实被两台设备各录一次，靠 `occurredAt` 才能判断是不是重复。
 
-**容易误解的地方**：用 `recordedAt` 排序会让补录的记录跑到时间轴顶部，用户会觉得「时间轴乱序了」。所以时间轴必须按 `occurredAt` 排序、按 `recordedAt` 显示「补录于」标记。
+**容易误解的地方**：用 `recordedAt` 排序会让补录的记录跑到时间轴顶部，用户会觉得「时间轴乱序了」。所以时间轴必须按 `occurredAt` 排序、按 `recordedAt` 显示「补录于」标记。**（现状：两点都已落地，见 [10](./10-backfill-and-undo.md)。）**
 
 ## 5. 一次完整操作的数据流
 
@@ -510,8 +511,8 @@ npm test                             # 全部测试
 
 ### 没覆盖什么（诚实记录）
 
-- `models.ts` 的 `isVisibleRecord` / `isRecordable` **没有测试**。
-  **（现状：`isRecordable` 已通过「归档拒绝记录」的仓储用例间接覆盖；`isVisibleRecord` 仍未被直接测试。第 2 项引入了软删除列后，建议为它补一条用例。）**
+- `models.ts` 的 `isVisibleRecord` / `isRecordable` **当时没有测试**。
+  **（现状：已由 `domain/__tests__/models-test.ts` 直接覆盖，两个分支都测了；做「撤销」时补的。）**
 - `models.ts` 里所有 `interface` 的「形状」也没有测试。类型本身由 `tsc` 保证，不需要测试，但**基于这些类型的规则函数需要**。
 - 没有测试「从数据库读回来的 `kind` 经过 `isEventDefinitionKind` 校验」这条链——因为读库代码还不存在。
 

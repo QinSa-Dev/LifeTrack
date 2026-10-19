@@ -6,7 +6,7 @@
 - 平台：iOS / Android
 - 数据：**全部存在设备本地**，无独立后端、无账号系统、无云数据库
 
-> 当前进度：**第一阶段（工程基线）已完成**；**第二阶段第 1 项（事件定义 / 分组 / 标签 / 快捷选项 / 归档）已完成**；**第 2 项（counter / quantity 记录与时间轴）已完成**，其余核心业务尚未开始。
+> 当前进度：**第一阶段（工程基线）已完成**；**第二阶段第 1 项（事件定义 / 分组 / 标签 / 快捷选项 / 归档）已完成**；**第 2 项（counter / quantity 记录与时间轴）已完成**；**补录与撤销已完成**（无新增迁移，schema 仍为 v3），其余核心业务尚未开始。
 
 > 🤝 **接手 / 交接**：先读 [`HANDOFF.md`](./HANDOFF.md) —— 它记录当前状态、必须遵守的约定、已知问题与下一步任务；
 > 功能走读见 [`docs/learning/`](./docs/learning/README.md)。
@@ -70,7 +70,7 @@ src/
     (tabs)/               # 底部三标签：时间轴 / 事件 / 设置
     events/new.tsx        # 新建事件定义
     events/[id].tsx       # 编辑事件定义（归档 / 永久删除）
-    record/[id].tsx       # 记录一次事件（快捷 / 手动）
+    record/[id].tsx       # 记录一次事件（快捷 / 手动 / 补录）＋ 最近记录删除与撤销
     groups.tsx            # 分组管理
     tags.tsx              # 标签管理
     +not-found.tsx        # 兜底路由
@@ -78,7 +78,8 @@ src/
                           #          TextField / Chip / Header / ListRow / DatabaseGate）
   features/               # 非通用的功能组件（不属于每个页面都用的基础 UI）
     definitions/          # 事件定义表单 EventDefinitionForm + 展示文案
-    records/              # 记录展示的格式化（记录值 / 时间 / 来源）
+    records/              # format（记录值 / 时间 / 来源）、datetime（本地 ↔ UTC 补录时间）、
+                          # RecordRow（记录行）、UndoBar（软删除后的撤销条）
   db/                     # 数据库基础设施
     client.ts             # 唯一连接入口（PRAGMA、单例、失败不覆盖数据）
     migrations.ts         # 版本化迁移执行器（user_version + 独占事务）
@@ -94,7 +95,7 @@ src/
     eventGroupRepository.ts      # 分组
     tagRepository.ts             # 标签
     eventDefinitionRepository.ts # 事件定义聚合（定义 + 快捷选项 + 标签关联）
-    eventRecordRepository.ts     # 历史记录（记录时生成快照）
+    eventRecordRepository.ts     # 历史记录（记录时生成快照、软删除与撤销）
   theme/                  # 设计令牌（颜色 / 间距 / 字号）
 docs/
   learning/               # 中文开发指北（面向不熟悉 React / TS 的读者）
@@ -108,6 +109,7 @@ docs/
     07-testing-and-debugging.md
     08-event-definitions.md
     09-event-recording.md
+    10-backfill-and-undo.md
 ```
 
 ## 开发指北（学习文档）
@@ -119,7 +121,9 @@ docs/
 
 推荐顺序：`01 工程基线 → 05 业务与数据流 → 06 导航与状态`（快速走读），
 深入类型与数据层时再读 `03 领域模型 → 04 SQLite 与 Repository`，
-了解第二阶段第 1 项（事件定义）时读 `08 事件定义`。
+了解第二阶段第 1 项（事件定义）时读 `08 事件定义`，
+了解第 2 项（记录与时间轴）时读 `09 事件记录`，
+了解补录与撤销时读 `10 补录与撤销`。
 
 > 文档随功能同步更新；未实现的功能（备份恢复、整体架构演进）暂不写作，避免空文档。
 
@@ -180,6 +184,18 @@ docs/
 | `npm test` | 9 个套件 / 108 个用例通过 |
 | schema | v3 迁移（`event_records` + 2 个索引），无指向定义的外键，删定义不删历史 |
 | iOS 打包 | `npx expo export --platform ios` 通过（1245 modules） |
+| 模拟器 / 真机运行 | **尚未执行**（本次仅做静态检查、单测与打包验证） |
+
+## 第二阶段验收记录（补录与撤销）
+
+| 项目 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm run lint` | 通过（0 error / 0 warning） |
+| `npm test` | 11 个套件 / 137 个用例通过 |
+| schema | **无新增迁移**，仍为 v3（补录复用 `source: 'backfill'`，撤销复用已预留的 `deleted_at` 列） |
+| 领域规则 | 补录只能回到过去（`requireNotFuture`，按时间比较而非字符串）；软删除可撤销、幂等；永久删除才需二次确认 |
+| iOS 打包 | `npx expo export --platform ios` 通过（1248 modules） |
 | 模拟器 / 真机运行 | **尚未执行**（本次仅做静态检查、单测与打包验证） |
 
 ## 不在范围内（首版）

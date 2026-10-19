@@ -9,22 +9,22 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 技术栈：React Native + Expo SDK 58 + TypeScript + SQLite（expo-sqlite）。
 数据全部在设备本地，**无后端、无账号、无云同步**。
 
-## 1. 当前状态快照（写于第二阶段第 2 项完成时）
+## 1. 当前状态快照（写于「补录与撤销」完成时）
 
 - 分支：`main`；工作区干净。
-- 最新提交：`a79adde 第二阶段第 2 项：同步文档（README + 学习指北 + 新增 09）`
-- schema 版本：**v3**（`PRAGMA user_version = 3`）
+- 最新提交：用 `git log -1` 查看（本文件与「补录与撤销」的文档同步在同一批提交里）
+- schema 版本：**v3**（`PRAGMA user_version = 3`）；「补录与撤销」**没有新增迁移**
 - 验证状态（全部真实跑过）：
 
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 9 个套件 / 108 个用例通过
+npm test             # 11 个套件 / 137 个用例通过
 npm run format:check # 通过
-npx expo export --platform ios   # 通过（1245 modules）
+npx expo export --platform ios   # 通过（1248 modules）
 ```
 
-> ⚠️ **尚未在模拟器 / 真机上手动运行过第二阶段的功能**（第 1、2 项都只做了静态检查、单测与打包）。
+> ⚠️ **尚未在模拟器 / 真机上手动运行过第二阶段的功能**（第 1、2 项与补录/撤销都只做了静态检查、单测与打包）。
 > 接手后建议先用 `npm start` + Expo Go 实机走一遍，再动新代码。
 
 **远端提醒**：本地 `main` 追踪的 `origin/main` 已不存在（`git status` 会提示 upstream gone）。
@@ -88,18 +88,20 @@ src/theme/         设计令牌
 1. 事件定义与历史记录分离：改定义不影响历史（v3 无外键 + 快照）。
 2. 历史快照：记录时固化名称/单位/分组/标签。
 3. 归档只改 `is_archived`，不影响历史，只禁止新增记录。
-4. 永久删除必须**二次确认**（`Alert.alert`），多表写入用独占事务。
-5. 软删除用 `deleted_at`（列已就位，`list` 默认排除）。
-6. 统计从事实数据算（未实现，属后续项）。
+4. 补录只能回到过去：`occurredAt` ≤ `recordedAt`（`requireNotFuture`，按时间比较而非字符串）。
+5. 软删除用 `deleted_at`，`softDelete` / `restore` **幂等**，`list` 默认排除；**永久删除**才需二次确认。
+6. 永久删除必须**二次确认**（`Alert.alert`），多表写入用独占事务（定义已实现；记录的永久删除属后续项）。
+7. 统计从事实数据算（未实现，属后续项）。
 
 ## 6. 关键文件索引
 
 - 迁移与 schema：`src/db/schema.ts`、`src/db/migrations.ts`
 - 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`
-- 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot`）、`src/domain/validation.ts`
-- 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`
-- 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`、`src/app/record/[id].tsx`、`src/app/events/[id].tsx`
-- 走读文档：`docs/learning/08-event-definitions.md`、`docs/learning/09-event-recording.md`
+- 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `isVisibleRecord`）、`src/domain/validation.ts`（含 `requireNotFuture`）
+- 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / `softDelete` / `restore`）、`eventGroupRepository.ts`、`tagRepository.ts`
+- 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `datetime` / `RecordRow` / `UndoBar`）
+- 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴 + 撤销）、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/events/[id].tsx`
+- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`
 
 ## 7. 必须遵守的工作约定
 
@@ -114,63 +116,58 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ 静态检查、108 个单元用例（真实内存 SQLite）、iOS 打包。
+- ✅ 静态检查、137 个单元用例（真实内存 SQLite）、iOS 打包。
 - ❌ 模拟器 / 真机手动运行；界面交互的自动化测试（项目暂无组件测试）。
-- ❌ `source: 'backfill'`（补录）路径：类型与数据库就位，但无 UI、无用例。
 
-## 9. 下一步任务：第二阶段 —— 补录与撤销
+## 9. 下一步任务：第二阶段剩余项
 
-这是规划里紧接着要做的一项。目标：让用户**记录过去发生的事实**，并能**撤销最近一次操作**。
-本项会第一次真正用到已经预留好的 `deleted_at` 与 `source: 'backfill'`。
+「补录与撤销」已完成。剩下的候选按推荐顺序：
 
-### 9.1 补录（backfill）
+### 9.1（推荐）周期事件
 
-- **数据层已就绪**：`EventRecordRepository.record(...)` 已支持显式传入 `occurredAt`，
-  `requireIsoDateTime` 会校验 ISO-8601 格式；`source` 允许 `'backfill'`。
-- **要做的**：在 `/record/[id]` 增加「补录」入口，让用户选择过去的日期/时间。
-- **一个需要先决策的点**（写代码前先定）：
-  - 方案 A：用 `TextField` + 严格校验（如 `YYYY-MM-DD HH:mm`），**零新依赖，Expo Go 可直接跑**；
-  - 方案 B：引入 `@react-native-community/datetimepicker`，体验好但**不在 Expo Go 内置**，需要 development build。
-  - 按 AGENTS.md，优先方案 A 或先确认是否接受 dev build。
-- **注意**：`occurred_at` 与 `recorded_at` 必须分开（不要用「现在」盖掉事实时间）；时间轴已按 `occurred_at` 排序。
-  时区策略要明确（建议统一存 UTC ISO-8601，展示时转本地）。
+- 领域类型**已定义**（`CycleDefinition` / `CycleInstance` / `CycleEntry`，见 `src/domain/models.ts`），但**没有表、没有仓储、没有界面**。
+- 要做：v4 迁移（周期定义 / 实例 / 记录三张表）→ 仓储 → 界面（周期列表 + 日历式记录）。
+- 注意领域规则：**周期边界修改不得静默删除越界记录**（修改 `endDate` 时要显式处理落在区间外的 `CycleEntry`）。
+- 参考已有做法：迁移仿 v2（追加 + 同步 `migrations-test.ts`）；仓储仿 `eventDefinitionRepository` 的聚合根 + 独占事务。
 
-### 9.2 撤销（软删除）
+### 9.2 时间轴与统计
 
-- **数据层已就绪**：`event_records.deleted_at` 列；`EventRecordRepository.list` 默认 `deleted_at IS NULL`，
-  `includeDeleted` 可列出；`isVisibleRecord(record)` 判定可见性。
-- **要做的**：
-  - 给 `EventRecordRepository` 增加 `softDelete(id, now)` 与 `restore(id)`（UPDATE `deleted_at`，非真删）。
-  - 界面：时间轴/记录页提供「删除」，并给一个「撤销」入口（记录最近一次被软删的 id 即可，不必上第三方状态库）。
-  - 撤销用到的状态若跨页面，按 `docs/learning/06` 3.9 的标准评估：优先 `Context + useReducer`。
-- **边界**：软删除是「可撤销」，**永久删除是另一码事**（第 6 条规则，需二次确认，属后续「永久删除一致性」项）。
+- 统计**从事实数据算**（领域规则 7），不落冗余汇总表；查询必须过滤软删除（`deleted_at IS NULL` 或 `isVisibleRecord`）。
+- 需要按 `occurred_at` 分天/周聚合；数据变大时时间轴要从 `ScrollView` + `map` 换成 `FlatList`。
 
-### 9.3 建议的提交拆分（沿用本项目习惯）
+### 9.3 永久删除一致性（较小、可穿插）
 
-1. `补录：仓储与校验补充 + 用例`（若需要新增校验/方法）
-2. `补录：记录页界面`
-3. `撤销：软删除仓储与界面`
-4. `同步文档（README + 学习指北 + 新增 10-*）`
+- 现在定义可永久删除（二次确认 + 事务）；**记录的永久删除**还没有入口。
+- 需要为记录加永久删除（`Alert` 二次确认），并确认「软删除 → 撤销 → 永久删除」的状态转换没有漏洞。
+- 注意：删定义不删历史是**有意为之**，别顺手改成级联。
 
-每步跑 `npm run verify`；新增路由后记得重新生成 typed routes。
+### 9.4 导入导出
+
+- JSON / CSV 导入导出 + 冲突合并 + 事务一致性校验；领域规则是「导入失败不留半截数据」（整体事务）。
+
+### 提交与验证习惯
+
+沿用提交拆分：数据层（迁移/仓储 + 用例）→ 界面 → 文档同步（README + 学习指北 + 新增 `NN-*.md`）。
+每步跑 `npm run verify`；新增路由后重新生成 typed routes（见第 2 节）。
 
 ## 10. 已知问题 / 技术债（记录在案，别忽略也别顺手乱改）
 
 - **`MetaRepository.incrementLaunchCount` 是「读-改-写」，非原子**（`docs/learning/04` 4.6）。
   当前只用于启动计数，无实际损失；写真正的计数逻辑时不要照抄这个模式，改用原子 SQL 或事务。
-- **`isVisibleRecord` 仍未被直接单元测试**（`isRecordable` 已被「归档拒绝记录」间接覆盖）。
-  做撤销时顺手补一条正向/反向用例（注意它判断的是 `=== undefined`）。
 - **界面无自动化测试**：项目至今没有组件测试；若做复杂交互，考虑引入 `@testing-library/react-native`。
 - **列表用 `ScrollView` + `map`**：时间轴当前 `LIMIT 100`；数据变大要改 `FlatList` 虚拟化。
+- **撤销状态不跨页面**：离开页面后撤销入口消失（记录仍是软删除状态）。若要跨页面持久化，按 `docs/learning/06` 3.9 评估（优先 `Context + useReducer`，不要直接上第三方库）。
+- **补录采用的是文本输入而非原生日期选择器**：因为原生 picker 不在 Expo Go 内置，会强制引入 development build。
+  若将来接受 dev build，可再评估 `@react-native-community/datetimepicker`。
 
 ## 11. 快速自检清单（接手后第一件事）
 
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：9 套件 / 108 用例通过
+npm run verify             # 应为：11 套件 / 137 用例通过
 npx expo export --platform ios   # 应能打包
-npm start                  # Expo Go 扫码，手动走一遍：建事件 → 记录 → 看时间轴 → 归档/删除
+npm start                  # Expo Go 扫码，手动走一遍：建事件 → 记录 → 补录 → 看时间轴 → 删除并撤销 → 归档/删除定义
 ```
 
-走完之后，再按第 9 节开始「补录与撤销」。
+走完之后，再按第 9 节挑下一项开始。
