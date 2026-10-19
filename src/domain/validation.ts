@@ -154,6 +154,24 @@ export function requireIsoDateTime(value: string, field = '时间'): string {
   return value;
 }
 
+/**
+ * 「不能是未来」校验：补录（backfill）只能记录已经发生的事实。
+ *
+ * 为什么用 `Date.parse` 比较而不是字符串大小：ISO 文本可以带不同时区偏移
+ * （`+08:00` 与 `Z`），字典序并不等于时间先后。
+ */
+export function requireNotFuture(value: string, now: string, field = '发生时间'): string {
+  const target = Date.parse(value);
+  const reference = Date.parse(now);
+  if (!Number.isFinite(target) || !Number.isFinite(reference)) {
+    throw new ValidationError(`${field}不是可解析的时间：${value}`);
+  }
+  if (target > reference) {
+    throw new ValidationError(`${field}不能晚于当前时间（补录只能记录已发生的事实）`);
+  }
+  return value;
+}
+
 /** 去重并去掉空白标签 id，保持输入顺序。 */
 export function normalizeIdList(ids: readonly string[]): string[] {
   const seen = new Set<string>();

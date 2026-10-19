@@ -8,6 +8,8 @@
  * 2. **归档不可新增记录**：`isRecordable` 为假时抛 ConflictError，历史不受影响。
  * 3. **读用 `occurred_at` 排序**（事实发生时间），而不是 `recorded_at`（录入时间）——
  *    这样补录的旧记录会落在时间轴的正确位置。
+ * 4. **补录只能回到过去**：`occurredAt` 允许早于 `recordedAt`，但不允许晚于它
+ *    （未来还没发生，不构成事实）。
  *
  * 读取时 `kind` / `source` 都会再过一次守卫（泛型运行时不校验）。
  */
@@ -29,6 +31,7 @@ import {
   optionalText,
   requireId,
   requireIsoDateTime,
+  requireNotFuture,
   requireRecordSource,
   requireRecordValue,
   type EventRecordInput,
@@ -146,8 +149,13 @@ export class EventRecordRepository {
   async record(input: EventRecordInput, now: IsoDateTime = new Date().toISOString()): Promise<EventRecord> {
     const definitionId = requireId(input.definitionId, '事件定义 id');
     const source = requireRecordSource(input.source);
-    const occurredAt = requireIsoDateTime(input.occurredAt ?? now, '发生时间');
     const recordedAt = requireIsoDateTime(now, '录入时间');
+    // 补录只允许回到过去：`occurredAt` 可以早于 recordedAt，但不能晚于它。
+    const occurredAt = requireNotFuture(
+      requireIsoDateTime(input.occurredAt ?? recordedAt, '发生时间'),
+      recordedAt,
+      '发生时间',
+    );
     const note = optionalText(input.note);
     const id = newId();
 

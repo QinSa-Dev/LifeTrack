@@ -6,6 +6,7 @@ import {
   requireIsoDateTime,
   requireKind,
   requireName,
+  requireNotFuture,
   requireQuickOptionValue,
   requireRecordSource,
   requireRecordValue,
@@ -118,6 +119,25 @@ describe('校验与规整规则', () => {
     it('拒绝不合法的字符串', () => {
       expect(() => requireIsoDateTime('昨天')).toThrow(ValidationError);
       expect(() => requireIsoDateTime('2026-10-19')).toThrow(ValidationError);
+    });
+  });
+
+  describe('requireNotFuture', () => {
+    const now = '2026-10-19T08:00:00.000Z';
+
+    it('过去与当下都通过', () => {
+      expect(requireNotFuture('2026-10-18T08:00:00.000Z', now)).toBe('2026-10-18T08:00:00.000Z');
+      expect(requireNotFuture(now, now)).toBe(now);
+    });
+
+    it('未来被拒绝', () => {
+      expect(() => requireNotFuture('2026-10-20T00:00:00.000Z', now)).toThrow(ValidationError);
+    });
+
+    it('比较的是时间先后而不是字符串：带 +08:00 偏移也正确', () => {
+      // 2026-10-19T09:00:00+08:00 === 2026-10-19T01:00:00Z，早于 now
+      expect(() => requireNotFuture('2026-10-19T09:00:00+08:00', now)).not.toThrow();
+      expect(() => requireNotFuture('2026-10-19T20:00:00+08:00', now)).toThrow(ValidationError);
     });
   });
 

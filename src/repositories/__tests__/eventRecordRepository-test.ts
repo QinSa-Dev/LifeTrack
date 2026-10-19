@@ -134,6 +134,52 @@ describe('EventRecordRepository', () => {
     expect(await records.list()).toEqual([]);
   });
 
+  it('补录：把 occurredAt 设为过去，来源为 backfill', async () => {
+    const definition = await createCounter();
+    const earlier = '2026-10-18T21:30:00.000Z';
+    const record = await records.record(
+      { definitionId: definition.id, value: 2, source: 'backfill', occurredAt: earlier },
+      T1,
+    );
+
+    expect(record.occurredAt).toBe(earlier);
+    expect(record.recordedAt).toBe(T1);
+    expect(record.source).toBe('backfill');
+  });
+
+  it('补录的旧记录排在时间轴靠后（按发生时间而非录入时间排序）', async () => {
+    const definition = await createCounter();
+    const later = '2026-10-18T00:00:00.000Z';
+    const earlier = '2026-10-01T00:00:00.000Z';
+
+    await records.record({ definitionId: definition.id, value: 1, source: 'manual', occurredAt: later }, T1);
+    await records.record(
+      { definitionId: definition.id, value: 2, source: 'backfill', occurredAt: earlier },
+      T1,
+    );
+
+    expect((await records.list()).map((item) => item.occurredAt)).toEqual([later, earlier]);
+  });
+
+  it('补录不能指向未来：晚于录入时间被拒绝且不写库', async () => {
+    const definition = await createCounter();
+    const future = '2026-10-20T00:00:00.000Z'; // T1 = 2026-10-19T08:00:00.000Z
+
+    await expect(
+      records.record({ definitionId: definition.id, value: 1, source: 'backfill', occurredAt: future }, T1),
+    ).rejects.toThrow(ValidationError);
+    expect(await records.list()).toEqual([]);
+  });
+
+  it('occurredAt 恰好等于录入时间时允许（边界）', async () => {
+    const definition = await createCounter();
+    const record = await records.record(
+      { definitionId: definition.id, value: 1, source: 'manual', occurredAt: T1 },
+      T1,
+    );
+    expect(record.occurredAt).toBe(T1);
+  });
+
   it('快照不可篡改：之后改名/换单位/归档都不影响历史', async () => {
     const definition = await createCounter({ unit: '杯' });
     const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
