@@ -86,6 +86,16 @@ export interface CycleInstanceInput {
   note?: string;
 }
 
+/**
+ * 周期实例的边界与备注（更新用）。
+ * 实例**不会换定义**，所以这里没有 `definitionId`——避免「一个周期中途换了归属」这种含糊状态。
+ */
+export interface CycleInstanceUpdateInput {
+  startDate: string;
+  endDate?: string;
+  note?: string;
+}
+
 /** 周期内记录的输入（创建与更新共用）。 */
 export interface CycleEntryInput {
   date: string;
