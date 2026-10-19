@@ -1,0 +1,164 @@
+/**
+ * LifeTrack 领域模型（第一阶段：类型与规则边界，不含业务实现）。
+ *
+ * 已确认的领域规则（体现在类型设计里）：
+ * 1. 事件定义（Definition）与历史记录（Record）分离：删改定义不影响已产生的历史。
+ * 2. 历史记录保存「记录时刻的快照」，不随事件配置变化而变化。
+ * 3. 周期实例（Instance）与周期内记录（Entry）独立建模。
+ * 4. 归档只改 isArchived，不删除历史。
+ * 5. 删除历史用软删除（deletedAt），以便撤销最近操作。
+ */
+
+/** ISO-8601 带时区的时间戳，例如 2026-10-19T07:30:00.000Z */
+export type IsoDateTime = string;
+/** ISO-8601 日期，例如 2026-10-19 */
+export type IsoDate = string;
+
+/** 事件类型：纯计数 / 数量计量 */
+export type EventDefinitionKind = 'counter' | 'quantity';
+
+export const EVENT_DEFINITION_KINDS: readonly EventDefinitionKind[] = ['counter', 'quantity'];
+
+export function isEventDefinitionKind(value: unknown): value is EventDefinitionKind {
+  return value === 'counter' || value === 'quantity';
+}
+
+/** 记录的来源，用于区分手动录入 / 快捷记录 / 历史补录 */
+export type RecordSource = 'manual' | 'quick' | 'backfill';
+
+export const RECORD_SOURCES: readonly RecordSource[] = ['manual', 'quick', 'backfill'];
+
+/** 快捷选项：一键记录常用的取值 */
+export interface QuickOption {
+  id: string;
+  label: string;
+  /** counter：一次的增量（通常为 1）；quantity：数量 */
+  value: number;
+  /** 覆盖定义默认单位，例如「毫升」 */
+  unit?: string;
+  sortOrder: number;
+}
+
+/** 事件分组，例如「健康」「工作」 */
+export interface EventGroup {
+  id: string;
+  name: string;
+  color?: string;
+  sortOrder: number;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+/** 标签，例如「早晨」「运动后」 */
+export interface Tag {
+  id: string;
+  name: string;
+  color?: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+/** 事件定义：用户「可以记录什么」 */
+export interface EventDefinition {
+  id: string;
+  name: string;
+  kind: EventDefinitionKind;
+  /** quantity 的默认单位，例如「杯」「公里」 */
+  unit?: string;
+  groupId?: string;
+  color?: string;
+  /** 图标标识（前端映射），不存字形本身 */
+  icon?: string;
+  quickOptions: QuickOption[];
+  tagIds: string[];
+  /** 归档后不再出现在记录入口，但历史保留 */
+  isArchived: boolean;
+  sortOrder: number;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+/**
+ * 记录时刻的事件定义快照。
+ * 事件定义被改名、换单位、归档、甚至删除后，历史记录依然展示当初的样子。
+ */
+export interface EventDefinitionSnapshot {
+  definitionId: string;
+  name: string;
+  kind: EventDefinitionKind;
+  unit?: string;
+  groupId?: string;
+  tagIds: string[];
+}
+
+/** 历史记录：一次事实发生的记录 */
+export interface EventRecord {
+  id: string;
+  definitionId: string;
+  kind: EventDefinitionKind;
+  /** counter：本次增量；quantity：本次数量 */
+  value: number;
+  unit?: string;
+  /** 事实发生时间（补录时可能早于 recordedAt） */
+  occurredAt: IsoDateTime;
+  /** 录入时间 */
+  recordedAt: IsoDateTime;
+  note?: string;
+  source: RecordSource;
+  /** 记录时生效的标签，快照保存 */
+  tagIds: string[];
+  snapshot: EventDefinitionSnapshot;
+  /** 软删除标记：设置后视为已删除，可撤销恢复 */
+  deletedAt?: IsoDateTime;
+}
+
+/** 周期阶段：不写死枚举，允许自定义名称 */
+export type CyclePhase = string;
+
+/** 周期定义，例如「生理期」 */
+export interface CycleDefinition {
+  id: string;
+  name: string;
+  /** 用于预测下一次周期的平均长度（天），可为空表示不预测 */
+  averageCycleLengthDays?: number;
+  /** 平均持续时间（天），可为空 */
+  averagePeriodLengthDays?: number;
+  isArchived: boolean;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+/** 周期实例：一段真实的周期区间 */
+export interface CycleInstance {
+  id: string;
+  definitionId: string;
+  startDate: IsoDate;
+  /** 未结束时为空；修改边界不得静默删除已越界的记录 */
+  endDate?: IsoDate;
+  note?: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+/** 周期内记录：某一天的症状、阶段、感受与备注 */
+export interface CycleEntry {
+  id: string;
+  instanceId: string;
+  date: IsoDate;
+  phase?: CyclePhase;
+  symptoms: string[];
+  feelings?: string;
+  note?: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+/** 只有未软删除的记录参与展示与统计 */
+export function isVisibleRecord(record: EventRecord): boolean {
+  return record.deletedAt === undefined;
+}
+
+/** 归档不影响历史，只影响「能否新建记录」的入口 */
+export function isRecordable(definition: EventDefinition): boolean {
+  return !definition.isArchived;
+}
