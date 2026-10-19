@@ -39,6 +39,11 @@
 | `src/domain/__tests__/id-test.ts` | UUID v7 的单元测试 | 新建：格式、单调递增、不重复、非法输入共 7 个用例 | 直接验证 `id.ts` |
 | `src/domain/__tests__/errors-test.ts` | 错误体系的单元测试 | 新建：子类 `code` / `name`、`cause` 与 `details`、`isAppError`、`toAppError` 共 6 个用例 | 直接验证 `errors.ts` |
 
+> **后续新增（不在本文范围内）**：`src/domain/dates.ts`（纯日历日期运算）与
+> `src/domain/cycles.ts`（周期规则：越界日期、区间重叠、预测）是**周期事件**落地时加进来的；
+> `validation.ts` 也不止第一阶段的规模了（含 `requireNotFuture`、周期输入类型等）。
+> 这两篇的走读见 [11 周期事件](./11-cycle-tracking.md)。
+
 ## 3. 涉及哪些技术概念
 
 ### 3.1 `type` 与 `interface`

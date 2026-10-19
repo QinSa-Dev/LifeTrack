@@ -9,6 +9,7 @@
 **用户现在可以做什么**
 
 - 应用底部有三个标签页：**时间轴**、**事件**、**设置**，点击即可切换。
+  **（现状：已增至四个，多了「周期」，见 [11](./11-cycle-tracking.md)）**
 - 每个标签页有自己的标题栏（标题分别是「时间轴」「事件」「设置」）。
 - 选中的标签会变色并显示**实心图标**，未选中显示**描边图标**。
 - 应用启动时先出现数据库准备界面，就绪后才显示标签栏（数据库没就绪时**看不到**导航，见 [05](./05-business-logic-and-data-flow.md)）。
@@ -23,7 +24,8 @@
 **在整个 LifeTrack 中处于什么位置**
 
 这是**路由层（导航骨架）**。它决定「应用由哪些页面组成、谁包含谁」。
-它位于最外层：根布局包住所有页面，标签布局包住三个标签页。
+它位于最外层：根布局包住所有页面，标签布局包住三个标签页。**（现状：标签页为四个；Stack 里也多了
+`cycles/`、`cycle-instances/` 两组二级页面，路由总览见 [11](./11-cycle-tracking.md) 3.7 节）**
 
 **本次范围内明确没有实现什么（第一阶段当时的状态）**
 
@@ -47,7 +49,7 @@
 | `package.json` | 应用入口 | `"main": "expo-router/entry"` | **这一行是路由能工作的前提**：它让 expo-router 接管入口，去扫描 `src/app/` |
 | `app.json` | 应用配置 | `"scheme": "lifetrack"`、`"plugins": ["expo-router", ...]`、`"experiments": { "typedRoutes": true }` | 提供深链接协议、注册路由插件、开启路由类型生成 |
 | `src/app/_layout.tsx` | **根布局**：最外层的导航器 | 新建：`DatabaseProvider` → `DatabaseGate` → `Stack` | 决定「Stack 里有什么」，是路由树的根 |
-| `src/app/(tabs)/_layout.tsx` | **标签布局**：定义底部三个标签 | 新建：`iconName()` 辅助函数、`Tabs` + 三个 `Tabs.Screen`、统一的 `screenOptions` | 被根 Stack 作为 `(tabs)` 这一屏渲染 |
+| `src/app/(tabs)/_layout.tsx` | **标签布局**：定义底部三个标签 | 新建：`iconName()` 辅助函数、`Tabs` + 三个 `Tabs.Screen`、统一的 `screenOptions` | 被根 Stack 作为 `(tabs)` 这一屏渲染；**现状：四个 `Tabs.Screen`（多了「周期」）** |
 | `src/app/(tabs)/index.tsx` | 时间轴页面 | 新建：`TimelineScreen`（说明卡片 + 空状态） | 对应标签「时间轴」（默认标签） |
 | `src/app/(tabs)/definitions.tsx` | 事件页面 | 新建：`DefinitionsScreen`（说明卡片 + 空状态） | 对应标签「事件」 |
 | `src/app/(tabs)/settings.tsx` | 设置页面 | 新建：`SettingsScreen`（四张卡片，读数据库诊断） | 对应标签「设置」；既属于路由层，也用 [05](./05-business-logic-and-data-flow.md) 的状态模式 |

@@ -14,7 +14,8 @@
 | 第二阶段第 1 项 | 事件定义 / 分组 / 标签 / 快捷选项 / 归档 | **已完成**（本文档 `08`） |
 | 第二阶段第 2 项 | counter / quantity 记录与时间轴 | **已完成**（本文档 `09`） |
 | 第二阶段（补录与撤销） | 补录过去发生的事实、软删除与撤销 | **已完成**（本文档 `10`） |
-| 第二阶段剩余项 | 周期、时间轴统计、导入导出、永久删除一致性 | 未开始 |
+| 第二阶段（周期事件） | 周期定义 / 周期实例 / 周期内记录、区间规则 | **已完成**（本文档 `11`） |
+| 第二阶段剩余项 | 时间轴统计、导入导出、永久删除一致性 | 未开始 |
 
 第一阶段「已完成」的含义是：下面的命令都真实跑过并且通过了。
 
@@ -25,18 +26,20 @@ npm test            # Jest：4 个套件 / 32 个用例
 npm run doctor      # expo-doctor：20/20
 ```
 
-第二阶段第 1、2 项以及「补录与撤销」完成后（`npm test` 为 11 个套件 / 137 个用例），新增命令同样跑过：
+第二阶段各项完成后（目前 `npm test` 为 16 个套件 / 209 个用例），新增命令同样跑过：
 
 ```bash
 npm run typecheck                        # 通过
 npm run lint                             # 通过（0 error / 0 warning）
-npm test                                 # 11 个套件 / 137 个用例
-npx expo export --platform ios           # 打包通过（1248 modules）
+npm test                                 # 16 个套件 / 209 个用例
+npm run format:check                     # 通过
+npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
 ```
 
 运行验证（模拟器，不是真机）：iOS Simulator（iPhone 17 Pro / iOS 26.3 / Expo Go 58.0.4）与 Android 模拟器
-（Pixel 9 / API 36 / Expo Go 58.0.4）都能打开应用、渲染三个标签页，并且 SQLite 数据能跨重启保留。
-**第二阶段第 1、2 项与「补录与撤销」尚未在模拟器/真机上手动走过**，只做了静态检查、单元测试与打包验证——这一点如实记录。
+（Pixel 9 / API 36 / Expo Go 58.0.4）都能打开应用、渲染标签页，并且 SQLite 数据能跨重启保留。
+**第二阶段的功能（事件定义、记录、补录与撤销、周期）尚未在模拟器/真机上手动走过**，
+只做了静态检查、单元测试与打包验证——这一点如实记录。
 
 ## 二、已完成功能 → 对应文档
 
@@ -47,17 +50,18 @@ npx expo export --platform ios           # 打包通过（1248 modules）
 | 领域模型（事件定义 / 记录 / 快照 / 周期）、统一错误、UUID v7 主键 | [03-typescript-domain-model.md](./03-typescript-domain-model.md) |
 | SQLite 初始化、版本化迁移、Repository 写入读取 | [04-sqlite-and-repository.md](./04-sqlite-and-repository.md) |
 | 「启动次数 +1」这个最小持久化闭环：从界面动作到落盘再到回读 | [05-business-logic-and-data-flow.md](./05-business-logic-and-data-flow.md) |
-| 底部三个标签页、页面之间怎么跳、状态怎么在组件间传递 | [06-navigation-and-state.md](./06-navigation-and-state.md) |
+| 底部标签页（现为时间轴 / 事件 / 周期 / 设置）、页面之间怎么跳、状态怎么在组件间传递 | [06-navigation-and-state.md](./06-navigation-and-state.md) |
 | 怎么跑检查与测试、测试覆盖了什么、遇到问题怎么查 | [07-testing-and-debugging.md](./07-testing-and-debugging.md) |
 | 事件定义 / 分组 / 标签 / 快捷选项 / 归档：v2 迁移、表单、二级路由、多表聚合 | [08-event-definitions.md](./08-event-definitions.md) |
 | 记录一次事件（counter / quantity）、快照、时间轴：v3 迁移、发生时间 vs 录入时间 | [09-event-recording.md](./09-event-recording.md) |
 | 补录与撤销：本地时间 ↔ UTC、日期解析与溢出、软删除的幂等与撤销 | [10-backfill-and-undo.md](./10-backfill-and-undo.md) |
+| 周期事件：日历日期运算、区间重叠、边界修改「不静默删除」、一天一条的 UPSERT | [11-cycle-tracking.md](./11-cycle-tracking.md) |
 
-### 为什么暂时没有 11
+### 为什么还缺几篇编号
 
-建议目录里还列了 `08-data-backup-and-restore.md` 和 `09-architecture-and-future-extension.md`。
-`08`–`10` 已分别用于实现落地的事件定义、事件记录、补录与撤销；导入导出（JSON/CSV）与整体架构演进仍属于
-第二阶段后续项，**代码还不存在**。按照「不以文件名和猜测充数、不制造空文档」的原则，它们会在功能落地时再写。
+建议目录里还列了和「数据备份恢复」「整体架构演进」对应的篇章。
+按「不以文件名和猜测充数、不制造空文档」的原则，它们会在功能真正落地时再写——
+导入导出（JSON/CSV）与架构演进仍属于第二阶段后续项，**代码还不存在**。
 
 `06-navigation-and-state.md` 提前写了，是因为「目录结构与基础导航」本身就是第一阶段的交付物，
 而且状态管理（Context + Hook）在第一阶段就已经有了真实代码可讲。
@@ -76,9 +80,10 @@ npx expo export --platform ios           # 打包通过（1248 modules）
 8. **[08 事件定义](./08-event-definitions.md)** —— 第二阶段第 1 项：从 v2 迁移到表单、二级路由与多表聚合的前后端闭环。
 9. **[09 事件记录](./09-event-recording.md)** —— 第二阶段第 2 项：v3 迁移、快照写入、occurredAt/recordedAt 与时间轴。
 10. **[10 补录与撤销](./10-backfill-and-undo.md)** —— 补录（本地时间 ↔ UTC、日期解析）与软删除/撤销（幂等）。
+11. **[11 周期事件](./11-cycle-tracking.md)** —— 周期定义 / 实例 / 每日记录：日历日期运算、区间规则，以及「改边界不悄悄删记录」。
 
 如果只想快速走读一遍项目，读 **01 → 05 → 06** 这三篇就够；03、04 是用来建立类型与数据层认知的，
-08、09、10 用来了解业务功能是怎么一步步搭起来的。
+08–11 用来了解业务功能是怎么一步步搭起来的。
 
 ## 四、已经接触过的技术概念
 
@@ -119,6 +124,13 @@ npx expo export --platform ios           # 打包通过（1248 modules）
 | 补录的「不能是未来」校验：为什么用 `Date.parse` 而非字符串比较 | 领域设计 | 10 |
 | 幂等写入（重复软删除不覆盖原时间、重复恢复不报错） | 领域设计 / SQLite | 10 |
 | 乐观撤销（先删再给撤销入口）vs `Alert` 二次确认：各自适用场景 | 交互 / React Native | 10 |
+| 纯日历日期（`IsoDate`）与「时刻」的区别、用 `Date.UTC` 做日历加减 | 领域设计 / JavaScript | 11 |
+| 字典序即时间序：定长 `YYYY-MM-DD` 字符串可直接比较 | JavaScript / SQL | 11 |
+| `ConflictError` vs `ValidationError`：输入不合法 vs 输入合法但与现有数据冲突 | 领域设计 | 11 |
+| 「不许静默丢数据」：把规则做成一次会拒绝的校验，并在报错里带上下文（`details`） | 领域设计 / 架构 | 11 |
+| 区间重叠判定（进行中 = 开区间）、`UNIQUE(instance_id, date)` + UPSERT 表达「一天一条」 | SQL / 领域设计 | 11 |
+| 三层下钻路由（标签页 → 定义详情 → 实例详情）与新增路由后的 typed routes 重新生成 | expo-router | 11 |
+| 反向断言测试：不只验证「被拒绝」，还验证「被拒绝后数据一条没少」 | 测试 | 11 |
 
 ## 五、还没有学到的内容
 
@@ -127,58 +139,66 @@ npx expo export --platform ios           # 打包通过（1248 modules）
 - 表单与输入（`TextInput`、受控组件、输入校验）—— 已在 [08](./08-event-definitions.md) 引入，不再是「未学到」。
 - 长列表性能（`FlatList`）与列表交互 —— 目前时间轴用 `ScrollView` + `map` 并限制 100 条；数据再多会用到。
 - 统计与汇总（按天/周聚合、环比）—— 领域规则要求「从事实数据算」，第二阶段后续项。
-- 周期事件（`CycleDefinition` / `CycleInstance` / `CycleEntry` 类型已定义，但没有表、没有仓储、没有界面）。
-- 永久删除与一致性（软删除已就位且可撤销；真删需要二次确认 + 跨表事务，属后续项）。
+- 日历式界面（可点选的月视图、按症状统计）—— 周期已能记录与回看，但还没有日历与统计视图。
+- 记录的**永久删除**与一致性（软删除已就位且可撤销；记录的真删入口属后续项；
+  周期与定义的永久删除已实现，都带二次确认 + 事务）。
 - JSON / CSV 导入导出、冲突合并、事务一致性校验 —— 第二阶段后续项。
 - 深链接与通知跳转 —— 目前只有 `scheme: "lifetrack"` 配置，没有业务用途。
 - 深色主题 —— `theme/index.ts` 里留了 `useTheme()` 的接口，但还没接。
 
-## 六、当前整体架构（第一阶段 + 第二阶段第 1、2 项 + 补录与撤销）
+## 六、当前整体架构（第一阶段 + 第二阶段已完成的各项）
 
 ```
-                      ┌─────────────────────────────────────┐
-   src/app/           │ expo-router 文件路由（每个文件=一屏）  │
-                      │ _layout.tsx  →  Stack                │
-                      │  (tabs)/_layout.tsx → Tabs（三标签）  │
-                      │  events/new.tsx / events/[id].tsx     │
-                      │  record/[id].tsx（记录 / 补录 / 删除）  │
-                      │  groups.tsx / tags.tsx / +not-found   │
-                      └───────────────┬─────────────────────┘
+                      ┌─────────────────────────────────────────────┐
+   src/app/           │ expo-router 文件路由（每个文件=一屏）          │
+                      │ _layout.tsx  →  Stack                        │
+                      │  (tabs)/_layout.tsx → Tabs（四标签）          │
+                      │  events/new.tsx / events/[id].tsx             │
+                      │  record/[id].tsx（记录 / 补录 / 删除）          │
+                      │  cycles/new.tsx / cycles/[id].tsx（周期定义）  │
+                      │  cycle-instances/[id].tsx（一段周期 + 每日记录）│
+                      │  groups.tsx / tags.tsx / +not-found           │
+                      └───────────────┬─────────────────────────────┘
                                       │ 通用组件 + 功能组件 + Hook
-                      ┌───────────────▼─────────────────────┐
-   src/components/    │ 基础 UI：AppText / Badge / Button     │
-                      │ Card / Screen / EmptyState            │
-                      │ 表单与导航：TextField / Chip / Header │
-                      │ ListRow / DatabaseGate（数据库门禁）  │
-                      ├─────────────────────────────────────┤
-   src/features/      │ definitions/：EventDefinitionForm     │
-                      │ records/：format / datetime /         │
-                      │   RecordRow / UndoBar                 │
-                      └───────────────┬─────────────────────┘
+                      ┌───────────────▼─────────────────────────────┐
+   src/components/    │ 基础 UI：AppText / Badge / Button             │
+                      │ Card / Screen / EmptyState                    │
+                      │ 表单与导航：TextField / Chip / Header          │
+                      │ ListRow / DatabaseGate（数据库门禁）           │
+                      ├─────────────────────────────────────────────┤
+   src/features/      │ definitions/：EventDefinitionForm             │
+                      │ records/：format / RecordRow / UndoBar        │
+                      │ cycles/：labels / CycleDefinitionForm         │
+                      │ common/：datetime（本地时间 ↔ UTC）            │
+                      └───────────────┬─────────────────────────────┘
                                       │ 只读 Hook，不写 SQL
-                      ┌───────────────▼─────────────────────┐
-   src/db/            │ DatabaseProvider（Context：状态机）   │
-                      │ client.ts（唯一连接入口 + PRAGMA）    │
-                      │ migrations.ts（user_version + 事务）  │
-                      │ schema.ts（迁移清单 v1 / v2 / v3）    │
-                      │ types.ts（SqlExecutor 抽象）          │
-                      └───────────────┬─────────────────────┘
+                      ┌───────────────▼─────────────────────────────┐
+   src/db/            │ DatabaseProvider（Context：状态机）            │
+                      │ client.ts（唯一连接入口 + PRAGMA）             │
+                      │ migrations.ts（user_version + 事务）           │
+                      │ schema.ts（迁移清单 v1 / v2 / v3 / v4）        │
+                      │ types.ts（SqlExecutor 抽象）                   │
+                      └───────────────┬─────────────────────────────┘
                                       │ 仓储是唯一写 SQL 的地方
-                      ┌───────────────▼─────────────────────┐
-   src/repositories/  │ MetaRepository（app_meta 读写）       │
-                      │ EventGroupRepository（分组）           │
-                      │ TagRepository（标签）                  │
-                      │ EventDefinitionRepository（定义聚合）  │
-                      │ EventRecordRepository（历史 + 快照）   │
-                      │   └ 补录写入 / 软删除 softDelete / 恢复 │
-                      └───────────────┬─────────────────────┘
+                      ┌───────────────▼─────────────────────────────┐
+   src/repositories/  │ MetaRepository（app_meta 读写）                │
+                      │ EventGroupRepository（分组）                    │
+                      │ TagRepository（标签）                           │
+                      │ EventDefinitionRepository（定义聚合）           │
+                      │ EventRecordRepository（历史 + 快照 + 软删除）    │
+                      │ CycleDefinitionRepository（周期定义）           │
+                      │ CycleInstanceRepository（周期实例 + 边界规则）   │
+                      │ CycleEntryRepository（每天一条，UPSERT）        │
+                      └───────────────┬─────────────────────────────┘
                                       │
-                      ┌───────────────▼─────────────────────┐
-   src/domain/        │ models.ts 领域模型 + 快照生成         │
-                      │ validation.ts 输入类型与校验规则      │
-                      │ errors.ts 统一错误（AppError + code） │
-                      │ id.ts     UUID v7                    │
-                      └─────────────────────────────────────┘
+                      ┌───────────────▼─────────────────────────────┐
+   src/domain/        │ models.ts 领域模型 + 快照生成                  │
+                      │ validation.ts 输入类型与校验规则               │
+                      │ dates.ts  纯日历日期运算（不沾时区）            │
+                      │ cycles.ts 周期规则（越界 / 重叠 / 预测）        │
+                      │ errors.ts 统一错误（AppError + code）          │
+                      │ id.ts     UUID v7                             │
+                      └─────────────────────────────────────────────┘
                                       │
                               SQLite 文件 lifetrack.db
 ```
