@@ -5,11 +5,14 @@ import { palette, radius, spacing, typography } from '@/theme';
 import { AppText } from './AppText';
 
 export type ButtonTone = 'primary' | 'secondary' | 'danger';
+export type ButtonSize = 'md' | 'sm';
 
 export interface ButtonProps {
   label: string;
   onPress: () => void;
   tone?: ButtonTone;
+  /** 尺寸：`md` 是常规按钮，`sm` 用于列表行内等紧凑位置 */
+  size?: ButtonSize;
   disabled?: boolean;
   testID?: string;
   style?: ViewStyle;
@@ -21,8 +24,22 @@ const TONES: Record<ButtonTone, { background: string; text: string; border: stri
   danger: { background: palette.dangerSoft, text: palette.danger, border: palette.danger },
 };
 
-export function Button({ label, onPress, tone = 'primary', disabled = false, testID, style }: ButtonProps) {
+const SIZES: Record<ButtonSize, { minHeight: number; paddingHorizontal: number; fontSize: number }> = {
+  md: { minHeight: 44, paddingHorizontal: spacing.lg, fontSize: 14 },
+  sm: { minHeight: 32, paddingHorizontal: spacing.md, fontSize: 13 },
+};
+
+export function Button({
+  label,
+  onPress,
+  tone = 'primary',
+  size = 'md',
+  disabled = false,
+  testID,
+  style,
+}: ButtonProps) {
   const colors = TONES[tone];
+  const dimensions = SIZES[size];
 
   return (
     <Pressable
@@ -34,6 +51,8 @@ export function Button({ label, onPress, tone = 'primary', disabled = false, tes
       style={({ pressed }) => [
         styles.base,
         {
+          minHeight: dimensions.minHeight,
+          paddingHorizontal: dimensions.paddingHorizontal,
           backgroundColor: colors.background,
           borderColor: colors.border,
           opacity: disabled ? 0.45 : pressed ? 0.75 : 1,
@@ -41,15 +60,13 @@ export function Button({ label, onPress, tone = 'primary', disabled = false, tes
         style,
       ]}
     >
-      <AppText style={[styles.label, { color: colors.text }]}>{label}</AppText>
+      <AppText style={[styles.label, { color: colors.text, fontSize: dimensions.fontSize }]}>{label}</AppText>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   base: {
-    minHeight: 44,
-    paddingHorizontal: spacing.lg,
     borderRadius: radius.md,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
@@ -57,6 +74,5 @@ const styles = StyleSheet.create({
   },
   label: {
     ...typography.label,
-    fontSize: 14,
   },
 });

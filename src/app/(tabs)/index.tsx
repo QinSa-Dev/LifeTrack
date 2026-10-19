@@ -2,10 +2,12 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-import { AppText, Badge, Card, EmptyState, ListRow, Screen } from '@/components';
+import { AppText, Card, EmptyState, Screen } from '@/components';
 import { useReadyDatabase } from '@/db';
 import type { EventRecord } from '@/domain/models';
-import { formatOccurredAt, formatRecordValue, isBackfilled, sourceLabel } from '@/features/records/format';
+import { describeRecord } from '@/features/records/format';
+import { RecordRow } from '@/features/records/RecordRow';
+import { UndoBar } from '@/features/records/UndoBar';
 import { EventRecordRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
@@ -17,11 +19,17 @@ export default function TimelineScreen() {
   const [records, setRecords] = useState<EventRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 最近一次被软删除的记录：有值时显示「撤销」提示条
+  const [undoTarget, setUndoTarget] = useState<EventRecord | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
+  const load = useCallback(
+    (showSpinner: boolean) => {
       let cancelled = false;
-      setLoading(true);
+      if (showSpinner) {
+        setLoading(true);
+      }
       new EventRecordRepository(db)
         .list({ limit: RECENT_LIMIT })
         .then((loaded) => {
@@ -43,17 +51,71 @@ export default function TimelineScreen() {
       return () => {
         cancelled = true;
       };
-    }, [db]),
+    },
+    [db],
   );
+
+  // 每次回到这个标签页都重新读一次，这样从记录页返回后能立刻看到新记录
+  useFocusEffect(
+    useCallback(() => {
+      return load(true);
+    }, [load]),
+  );
+
+  const remove = (record: EventRecord) => {
+    setDeletingId(record.id);
+    setError(null);
+    new EventRecordRepository(db)
+      .softDelete(record.id)
+      .then(() => {
+        setUndoTarget(record);
+        load(false);
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        setDeletingId(null);
+      });
+  };
+
+  const undoRemove = () => {
+    if (!undoTarget) {
+      return;
+    }
+    setRestoring(true);
+    setError(null);
+    new EventRecordRepository(db)
+      .restore(undoTarget.id)
+      .then(() => {
+        setUndoTarget(null);
+        load(false);
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        setRestoring(false);
+      });
+  };
 
   return (
     <Screen scroll contentStyle={styles.content}>
       {error ? (
-        <Card title="读取失败" style={styles.spaced}>
+        <Card title="操作失败" style={styles.spaced}>
           <AppText variant="body" color={palette.danger}>
             {error}
           </AppText>
         </Card>
+      ) : null}
+
+      {undoTarget ? (
+        <UndoBar
+          message={`已删除：${describeRecord(undoTarget)}`}
+          onUndo={undoRemove}
+          onDismiss={() => setUndoTarget(null)}
+          busy={restoring}
+        />
       ) : null}
 
       {loading ? (
@@ -69,16 +131,11 @@ export default function TimelineScreen() {
       ) : (
         <Card title="时间轴" subtitle={`最近 ${records.length} 条，按发生时间倒序`} style={styles.spaced}>
           {records.map((record) => (
-            <ListRow
+            <RecordRow
               key={record.id}
-              title={record.snapshot.name}
-              subtitle={`${formatOccurredAt(record.occurredAt)} · ${sourceLabel(record.source)}`}
-              right={
-                <>
-                  {isBackfilled(record) ? <Badge label="补录" tone="warning" /> : null}
-                  <AppText variant="subtitle">{formatRecordValue(record)}</AppText>
-                </>
-              }
+              record={record}
+              onDelete={() => remove(record)}
+              deleting={deletingId === record.id}
             />
           ))}
         </Card>

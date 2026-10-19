@@ -2,21 +2,18 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-import {
-  AppText,
-  Badge,
-  Button,
-  Card,
-  Chip,
-  EmptyState,
-  Header,
-  ListRow,
-  Screen,
-  TextField,
-} from '@/components';
+import { AppText, Button, Card, Chip, EmptyState, Header, Screen, TextField } from '@/components';
 import { useReadyDatabase } from '@/db';
 import type { EventDefinition, EventRecord, RecordSource } from '@/domain/models';
-import { formatOccurredAt, formatRecordValue, sourceLabel } from '@/features/records/format';
+import {
+  localDateText,
+  localTimeText,
+  parseLocalDateTime,
+  shiftLocalDays,
+} from '@/features/records/datetime';
+import { describeRecord, formatOccurredAt, sourceLabel } from '@/features/records/format';
+import { RecordRow } from '@/features/records/RecordRow';
+import { UndoBar } from '@/features/records/UndoBar';
 import { EventDefinitionRepository, EventRecordRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
@@ -32,9 +29,16 @@ export default function RecordScreen() {
   const [recent, setRecent] = useState<EventRecord[]>([]);
   const [manualValue, setManualValue] = useState('1');
   const [note, setNote] = useState('');
+  // 补录：开启后填写过去的日期与时间
+  const [backfill, setBackfill] = useState(false);
+  const [dateText, setDateText] = useState(() => localDateText(new Date()));
+  const [timeText, setTimeText] = useState(() => localTimeText(new Date()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+  const [undoTarget, setUndoTarget] = useState<EventRecord | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
 
   const load = useCallback(() => {
     let cancelled = false;
@@ -62,7 +66,7 @@ export default function RecordScreen() {
 
   useEffect(() => load(), [load]);
 
-  const save = (value: number, unit: string | undefined, source: RecordSource) => {
+  const save = (value: number, unit: string | undefined, source: RecordSource, occurredAt?: string) => {
     if (!definition || busy) {
       return;
     }
@@ -70,9 +74,9 @@ export default function RecordScreen() {
     setError(null);
     setFlash(null);
     new EventRecordRepository(db)
-      .record({ definitionId: definition.id, value, unit, note, source })
+      .record({ definitionId: definition.id, value, unit, note, source, occurredAt })
       .then((created) => {
-        setFlash(`已记录：${created.snapshot.name} ${formatRecordValue(created)}`);
+        setFlash(`${created.source === 'backfill' ? '已补录' : '已记录'}：${describeRecord(created)}`);
         setNote('');
         load();
       })
@@ -81,6 +85,60 @@ export default function RecordScreen() {
       })
       .finally(() => {
         setBusy(false);
+      });
+  };
+
+  const submitManual = () => {
+    if (!definition) {
+      return;
+    }
+    if (!backfill) {
+      save(Number(manualValue.trim()), undefined, 'manual');
+      return;
+    }
+    const occurredAt = parseLocalDateTime(dateText, timeText);
+    if (occurredAt === null) {
+      setError('日期或时间格式不正确，日期应形如 2026-10-19，时间应形如 08:30。');
+      return;
+    }
+    save(Number(manualValue.trim()), undefined, 'backfill', occurredAt);
+  };
+
+  const removeRecord = (record: EventRecord) => {
+    setDeletingId(record.id);
+    setError(null);
+    setFlash(null);
+    new EventRecordRepository(db)
+      .softDelete(record.id)
+      .then(() => {
+        setUndoTarget(record);
+        load();
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        setDeletingId(null);
+      });
+  };
+
+  const undoRemove = () => {
+    if (!undoTarget) {
+      return;
+    }
+    setRestoring(true);
+    setError(null);
+    new EventRecordRepository(db)
+      .restore(undoTarget.id)
+      .then(() => {
+        setUndoTarget(null);
+        load();
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        setRestoring(false);
       });
   };
 
@@ -141,6 +199,17 @@ export default function RecordScreen() {
         </Card>
       ) : null}
 
+      {undoTarget ? (
+        <View style={styles.spaced}>
+          <UndoBar
+            message={`已删除：${describeRecord(undoTarget)}`}
+            onUndo={undoRemove}
+            onDismiss={() => setUndoTarget(null)}
+            busy={restoring}
+          />
+        </View>
+      ) : null}
+
       {!archived && definition.quickOptions.length > 0 ? (
         <Card title="快捷记录" subtitle="点一下即可记录" style={styles.spaced}>
           <View style={styles.chipRow}>
@@ -178,9 +247,49 @@ export default function RecordScreen() {
             placeholder="例如：运动后"
             multiline
           />
+
+          <View style={styles.toggleRow}>
+            <Chip label="补录时间" selected={backfill} onPress={() => setBackfill((value) => !value)} />
+            <AppText variant="caption" color={palette.textMuted} style={styles.toggleHint}>
+              开启后可填写过去发生的时间
+            </AppText>
+          </View>
+
+          {backfill ? (
+            <View>
+              <View style={styles.chipRow}>
+                <Chip label="今天" onPress={() => setDateText(localDateText(new Date()))} />
+                <Chip
+                  label="昨天"
+                  onPress={() => setDateText(localDateText(shiftLocalDays(new Date(), -1)))}
+                />
+                <Chip
+                  label="前天"
+                  onPress={() => setDateText(localDateText(shiftLocalDays(new Date(), -2)))}
+                />
+              </View>
+              <TextField
+                label="日期"
+                value={dateText}
+                onChangeText={setDateText}
+                placeholder="2026-10-19"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TextField
+                label="时间"
+                value={timeText}
+                onChangeText={setTimeText}
+                placeholder="08:30"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+          ) : null}
+
           <Button
-            label={busy ? '记录中…' : '记录'}
-            onPress={() => save(Number(manualValue.trim()), undefined, 'manual')}
+            label={busy ? '处理中…' : backfill ? '补录' : '记录'}
+            onPress={submitManual}
             disabled={busy}
           />
         </Card>
@@ -193,18 +302,15 @@ export default function RecordScreen() {
           </AppText>
         ) : (
           recent.map((record) => (
-            <ListRow
+            <RecordRow
               key={record.id}
+              record={record}
               title={formatOccurredAt(record.occurredAt)}
               subtitle={
                 record.note ? `${sourceLabel(record.source)} · ${record.note}` : sourceLabel(record.source)
               }
-              right={
-                <>
-                  {record.occurredAt !== record.recordedAt ? <Badge label="补录" tone="warning" /> : null}
-                  <AppText variant="subtitle">{formatRecordValue(record)}</AppText>
-                </>
-              }
+              onDelete={() => removeRecord(record)}
+              deleting={deletingId === record.id}
             />
           ))
         )}
@@ -228,5 +334,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  toggleHint: {
+    flexShrink: 1,
   },
 });
