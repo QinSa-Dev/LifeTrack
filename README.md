@@ -6,7 +6,7 @@
 - 平台：iOS / Android
 - 数据：**全部存在设备本地**，无独立后端、无账号系统、无云数据库
 
-> 当前进度：**第一阶段（工程基线）已完成**；**第二阶段第 1 项（事件定义 / 分组 / 标签 / 快捷选项 / 归档）已完成**，其余核心业务尚未开始。
+> 当前进度：**第一阶段（工程基线）已完成**；**第二阶段第 1 项（事件定义 / 分组 / 标签 / 快捷选项 / 归档）已完成**；**第 2 项（counter / quantity 记录与时间轴）已完成**，其余核心业务尚未开始。
 
 ---
 
@@ -67,6 +67,7 @@ src/
     (tabs)/               # 底部三标签：时间轴 / 事件 / 设置
     events/new.tsx        # 新建事件定义
     events/[id].tsx       # 编辑事件定义（归档 / 永久删除）
+    record/[id].tsx       # 记录一次事件（快捷 / 手动）
     groups.tsx            # 分组管理
     tags.tsx              # 标签管理
     +not-found.tsx        # 兜底路由
@@ -74,14 +75,15 @@ src/
                           #          TextField / Chip / Header / ListRow / DatabaseGate）
   features/               # 非通用的功能组件（不属于每个页面都用的基础 UI）
     definitions/          # 事件定义表单 EventDefinitionForm + 展示文案
+    records/              # 记录展示的格式化（记录值 / 时间 / 来源）
   db/                     # 数据库基础设施
     client.ts             # 唯一连接入口（PRAGMA、单例、失败不覆盖数据）
     migrations.ts         # 版本化迁移执行器（user_version + 独占事务）
-    schema.ts             # schema 与迁移清单（v1 app_meta / v2 事件定义）
+    schema.ts             # schema 与迁移清单（v1 app_meta / v2 事件定义 / v3 历史记录）
     types.ts              # SqlExecutor 抽象（便于用内存 SQLite 测试）
     testing/              # 测试专用：node:sqlite 适配器
   domain/                 # 领域层
-    models.ts             # 事件定义 / 记录 / 周期等领域模型
+    models.ts             # 事件定义 / 记录 / 周期等领域模型 + 快照生成
     validation.ts         # 输入类型与校验规则（表单与仓储共用）
     errors.ts             # 统一错误类型（AppError + code）
     id.ts                 # UUID v7 主键方案
@@ -89,6 +91,7 @@ src/
     eventGroupRepository.ts      # 分组
     tagRepository.ts             # 标签
     eventDefinitionRepository.ts # 事件定义聚合（定义 + 快捷选项 + 标签关联）
+    eventRecordRepository.ts     # 历史记录（记录时生成快照）
   theme/                  # 设计令牌（颜色 / 间距 / 字号）
 docs/
   learning/               # 中文开发指北（面向不熟悉 React / TS 的读者）
@@ -101,6 +104,7 @@ docs/
     06-navigation-and-state.md
     07-testing-and-debugging.md
     08-event-definitions.md
+    09-event-recording.md
 ```
 
 ## 开发指北（学习文档）
@@ -162,6 +166,17 @@ docs/
 | `npm test` | 8 个套件 / 83 个用例通过 |
 | schema | v2 迁移（5 张表 + 3 个索引），从 v1 升级只跑 v2、旧数据不丢 |
 | iOS 打包 | `npx expo export --platform ios` 通过（1242 modules） |
+| 模拟器 / 真机运行 | **尚未执行**（本次仅做静态检查、单测与打包验证） |
+
+## 第二阶段第 2 项验收记录（记录与时间轴）
+
+| 项目 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm run lint` | 通过（0 error / 0 warning） |
+| `npm test` | 9 个套件 / 108 个用例通过 |
+| schema | v3 迁移（`event_records` + 2 个索引），无指向定义的外键，删定义不删历史 |
+| iOS 打包 | `npx expo export --platform ios` 通过（1245 modules） |
 | 模拟器 / 真机运行 | **尚未执行**（本次仅做静态检查、单测与打包验证） |
 
 ## 不在范围内（首版）

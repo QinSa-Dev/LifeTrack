@@ -473,7 +473,7 @@ flowchart TD
 3. **规则检查（`isRecordable`）发生在写库之前**。如果已经归档，要在业务层就拒绝，而不是写进去再后悔。
 4. **展示时读 `snapshot`**，不 JOIN 定义表——这正是「历史不可篡改」的实现方式。
 
-注意这是**第二阶段**的流程，现在还没实现。现在真实存在的是 [05](./05-business-logic-and-data-flow.md) 里的「启动次数」闭环。
+注意这是**第二阶段**的流程。**（现状：第 2 项已实现，见 [09](./09-event-recording.md)；第一阶段当时真实存在的是 [05](./05-business-logic-and-data-flow.md) 里的「启动次数」闭环。）**
 
 ## 6. 如何验证
 
@@ -511,6 +511,7 @@ npm test                             # 全部测试
 ### 没覆盖什么（诚实记录）
 
 - `models.ts` 的 `isVisibleRecord` / `isRecordable` **没有测试**。
+  **（现状：`isRecordable` 已通过「归档拒绝记录」的仓储用例间接覆盖；`isVisibleRecord` 仍未被直接测试。第 2 项引入了软删除列后，建议为它补一条用例。）**
 - `models.ts` 里所有 `interface` 的「形状」也没有测试。类型本身由 `tsc` 保证，不需要测试，但**基于这些类型的规则函数需要**。
 - 没有测试「从数据库读回来的 `kind` 经过 `isEventDefinitionKind` 校验」这条链——因为读库代码还不存在。
 

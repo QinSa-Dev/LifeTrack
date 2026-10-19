@@ -12,7 +12,8 @@
 | --- | --- | --- |
 | 第一阶段 | 工程基线：Expo 工程、导航骨架、领域模型类型、统一错误、UUID 方案、SQLite 初始化、版本化迁移、Repository 层、主题与基础 UI、检查与测试命令 | **已完成并已验证** |
 | 第二阶段第 1 项 | 事件定义 / 分组 / 标签 / 快捷选项 / 归档 | **已完成**（本文档 `08`） |
-| 第二阶段第 2–8 项 | counter、quantity、补录与撤销、周期、时间轴与统计、导入导出、永久删除一致性 | 未开始 |
+| 第二阶段第 2 项 | counter / quantity 记录与时间轴 | **已完成**（本文档 `09`） |
+| 第二阶段剩余项 | 补录与撤销、周期、时间轴统计、导入导出、永久删除一致性 | 未开始 |
 
 第一阶段「已完成」的含义是：下面的命令都真实跑过并且通过了。
 
@@ -23,18 +24,18 @@ npm test            # Jest：4 个套件 / 32 个用例
 npm run doctor      # expo-doctor：20/20
 ```
 
-第二阶段第 1 项完成后（`npm test` 为 8 个套件 / 83 个用例），新增命令同样跑过：
+第二阶段第 1、2 项完成后（`npm test` 为 9 个套件 / 108 个用例），新增命令同样跑过：
 
 ```bash
 npm run typecheck                        # 通过
 npm run lint                             # 通过（0 error / 0 warning）
-npm test                                 # 8 个套件 / 83 个用例
-npx expo export --platform ios           # 打包通过（1242 modules）
+npm test                                 # 9 个套件 / 108 个用例
+npx expo export --platform ios           # 打包通过（1245 modules）
 ```
 
 运行验证（模拟器，不是真机）：iOS Simulator（iPhone 17 Pro / iOS 26.3 / Expo Go 58.0.4）与 Android 模拟器
 （Pixel 9 / API 36 / Expo Go 58.0.4）都能打开应用、渲染三个标签页，并且 SQLite 数据能跨重启保留。
-**第二阶段第 1 项尚未在模拟器/真机上手动走过**，只做了静态检查、单元测试与打包验证——这一点如实记录。
+**第二阶段第 1、2 项尚未在模拟器/真机上手动走过**，只做了静态检查、单元测试与打包验证——这一点如实记录。
 
 ## 二、已完成功能 → 对应文档
 
@@ -48,12 +49,13 @@ npx expo export --platform ios           # 打包通过（1242 modules）
 | 底部三个标签页、页面之间怎么跳、状态怎么在组件间传递 | [06-navigation-and-state.md](./06-navigation-and-state.md) |
 | 怎么跑检查与测试、测试覆盖了什么、遇到问题怎么查 | [07-testing-and-debugging.md](./07-testing-and-debugging.md) |
 | 事件定义 / 分组 / 标签 / 快捷选项 / 归档：v2 迁移、表单、二级路由、多表聚合 | [08-event-definitions.md](./08-event-definitions.md) |
+| 记录一次事件（counter / quantity）、快照、时间轴：v3 迁移、发生时间 vs 录入时间 | [09-event-recording.md](./09-event-recording.md) |
 
-### 为什么暂时没有 09
+### 为什么暂时没有 10
 
 建议目录里还列了 `08-data-backup-and-restore.md` 和 `09-architecture-and-future-extension.md`。
-`08` 已用于实现落地的事件定义功能；导入导出（JSON/CSV）与整体架构演进仍属于第二阶段第 7 项及之后，
-**代码还不存在**。按照「不以文件名和猜测充数、不制造空文档」的原则，它们会在功能落地时再写。
+`08` 与 `09` 已分别用于实现落地的事件定义、事件记录功能；导入导出（JSON/CSV）与整体架构演进仍属于
+第二阶段后续项，**代码还不存在**。按照「不以文件名和猜测充数、不制造空文档」的原则，它们会在功能落地时再写。
 
 `06-navigation-and-state.md` 提前写了，是因为「目录结构与基础导航」本身就是第一阶段的交付物，
 而且状态管理（Context + Hook）在第一阶段就已经有了真实代码可讲。
@@ -70,9 +72,10 @@ npx expo export --platform ios           # 打包通过（1242 modules）
 6. **[06 导航与状态](./06-navigation-and-state.md)** —— 页面之间怎么连、状态怎么流。
 7. **[07 测试与调试](./07-testing-and-debugging.md)** —— 怎么证明代码是对的，出问题怎么排查。
 8. **[08 事件定义](./08-event-definitions.md)** —— 第二阶段第 1 项：从 v2 迁移到表单、二级路由与多表聚合的前后端闭环。
+9. **[09 事件记录](./09-event-recording.md)** —— 第二阶段第 2 项：v3 迁移、快照写入、occurredAt/recordedAt 与时间轴。
 
 如果只想快速走读一遍项目，读 **01 → 05 → 06** 这三篇就够；03、04 是用来建立类型与数据层认知的，
-08 用来了解业务功能是怎么一步步搭起来的。
+08、09 用来了解业务功能是怎么一步步搭起来的。
 
 ## 四、已经接触过的技术概念
 
@@ -106,20 +109,23 @@ npx expo export --platform ios           # 打包通过（1242 modules）
 | `Alert` 二次确认、`router.push` 带参跳转、typed routes 与动态段 `[id]` | React Native / expo-router | 08 |
 | 仓储聚合根：一张「定义」背后三张表、批量读取避免 N+1、`withExclusiveTransactionAsync` 多表写入 | 架构 / SQLite | 08 |
 | 外键行为：`ON DELETE SET NULL` vs `ON DELETE CASCADE` 的语义差异 | SQLite | 08 |
+| 历史快照不可篡改：记录时固化定义，删改定义不影响历史 | 领域设计 | 09 |
+| `occurredAt`（事实发生）与 `recordedAt`（录入）分离、时间轴按 `occurred_at` 排序 | 领域设计 / SQL | 09 |
+| 软删除（`deleted_at` + `isVisibleRecord`）与「无外键保历史」的取舍 | SQLite / 架构 | 09 |
 
 ## 五、还没有学到的内容
 
 这些会在对应功能落地后才讲，现在不提前堆术语：
 
 - 表单与输入（`TextInput`、受控组件、输入校验）—— 已在 [08](./08-event-definitions.md) 引入，不再是「未学到」。
-- 长列表性能（`FlatList`）与列表交互 —— 目前事件列表用 `ScrollView` + `map` 就够；第二阶段时间轴数据多了会用到。
-- 日期与时间的处理策略（`occurredAt` / `recordedAt` / 时区）—— 第二阶段补录会用到。
-- 软删除与撤销（`deletedAt`、undo 栈）—— 第二阶段第 4 项。
+- 长列表性能（`FlatList`）与列表交互 —— 目前时间轴用 `ScrollView` + `map` 并限制 100 条；数据再多会用到。
+- 补录的时区策略（`occurredAt` 与 `recordedAt` 已分离，见 [09](./09-event-recording.md)；补录录入本身仍待做）。
+- 软删除与撤销（`deletedAt` 列已就位、`list` 默认排除，但「撤销最近操作」的 UI 与栈仍属后续项）。
 - JSON / CSV 导入导出、冲突合并、事务一致性校验 —— 第二阶段第 7、8 项。
 - 深链接与通知跳转 —— 目前只有 `scheme: "lifetrack"` 配置，没有业务用途。
 - 深色主题 —— `theme/index.ts` 里留了 `useTheme()` 的接口，但还没接。
 
-## 六、当前整体架构（第一阶段 + 第二阶段第 1 项）
+## 六、当前整体架构（第一阶段 + 第二阶段第 1、2 项）
 
 ```
                       ┌─────────────────────────────────────┐
@@ -127,6 +133,7 @@ npx expo export --platform ios           # 打包通过（1242 modules）
                       │ _layout.tsx  →  Stack                │
                       │  (tabs)/_layout.tsx → Tabs（三标签）  │
                       │  events/new.tsx / events/[id].tsx     │
+                      │  record/[id].tsx（记录一次事件）       │
                       │  groups.tsx / tags.tsx / +not-found   │
                       └───────────────┬─────────────────────┘
                                       │ 通用组件 + 功能组件 + Hook
@@ -137,14 +144,14 @@ npx expo export --platform ios           # 打包通过（1242 modules）
                       │ ListRow / DatabaseGate（数据库门禁）  │
                       ├─────────────────────────────────────┤
    src/features/      │ definitions/：EventDefinitionForm     │
-                      │ （具体功能组件，非通用 UI）            │
+                      │ records/：记录展示格式化              │
                       └───────────────┬─────────────────────┘
                                       │ 只读 Hook，不写 SQL
                       ┌───────────────▼─────────────────────┐
    src/db/            │ DatabaseProvider（Context：状态机）   │
                       │ client.ts（唯一连接入口 + PRAGMA）    │
                       │ migrations.ts（user_version + 事务）  │
-                      │ schema.ts（迁移清单 v1 / v2）         │
+                      │ schema.ts（迁移清单 v1 / v2 / v3）    │
                       │ types.ts（SqlExecutor 抽象）          │
                       └───────────────┬─────────────────────┘
                                       │ 仓储是唯一写 SQL 的地方
@@ -153,10 +160,11 @@ npx expo export --platform ios           # 打包通过（1242 modules）
                       │ EventGroupRepository（分组）           │
                       │ TagRepository（标签）                  │
                       │ EventDefinitionRepository（定义聚合）  │
+                      │ EventRecordRepository（历史 + 快照）   │
                       └───────────────┬─────────────────────┘
                                       │
                       ┌───────────────▼─────────────────────┐
-   src/domain/        │ models.ts 领域模型                    │
+   src/domain/        │ models.ts 领域模型 + 快照生成         │
                       │ validation.ts 输入类型与校验规则      │
                       │ errors.ts 统一错误（AppError + code） │
                       │ id.ts     UUID v7                    │
