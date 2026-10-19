@@ -7,8 +7,15 @@
  * 避免「界面校验一套、写库再校验一套」的重复与不一致。
  */
 
+import { isValidIsoDate } from './dates';
 import { ValidationError } from './errors';
-import { isEventDefinitionKind, isRecordSource, type EventDefinitionKind, type RecordSource } from './models';
+import {
+  isEventDefinitionKind,
+  isRecordSource,
+  type EventDefinitionKind,
+  type IsoDate,
+  type RecordSource,
+} from './models';
 
 /** 事件分组的输入（创建与更新共用） */
 export interface EventGroupInput {
@@ -60,6 +67,32 @@ export interface EventRecordInput {
   occurredAt?: string;
   note?: string;
   source: RecordSource;
+}
+
+/** 周期定义的输入（创建与更新共用）。 */
+export interface CycleDefinitionInput {
+  name: string;
+  /** 平均周期长度（天），用于预测下次开始日；省略表示不预测 */
+  averageCycleLengthDays?: number;
+  /** 平均经期长度（天），仅作参考 */
+  averagePeriodLengthDays?: number;
+}
+
+/** 周期实例的输入（创建与更新共用）。`endDate` 省略表示仍在进行中。 */
+export interface CycleInstanceInput {
+  definitionId: string;
+  startDate: string;
+  endDate?: string;
+  note?: string;
+}
+
+/** 周期内记录的输入（创建与更新共用）。 */
+export interface CycleEntryInput {
+  date: string;
+  phase?: string;
+  symptoms?: string[];
+  feelings?: string;
+  note?: string;
 }
 
 /** 名称类字段：去首尾空白后必须非空。 */
@@ -185,4 +218,63 @@ export function normalizeIdList(ids: readonly string[]): string[] {
     result.push(id);
   }
   return result;
+}
+
+/** 去空白、去重（按原样比较）、保持输入顺序的文本列表，例如症状名。 */
+export function normalizeTextList(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of values) {
+    const text = raw.trim();
+    if (text.length === 0 || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    result.push(text);
+  }
+  return result;
+}
+
+/** 日历日期：必须是真实存在的 `YYYY-MM-DD`（2 月 31 日这类不算）。 */
+export function requireIsoDate(value: string, field = '日期'): IsoDate {
+  const trimmed = value.trim();
+  if (!isValidIsoDate(trimmed)) {
+    throw new ValidationError(`${field}不是合法的日历日期（应为 YYYY-MM-DD）：${value}`);
+  }
+  return trimmed;
+}
+
+/** 可选日历日期：空串 / 空白 / undefined 都归为 undefined。 */
+export function optionalIsoDate(value: string | undefined | null, field = '日期'): IsoDate | undefined {
+  const text = optionalText(value);
+  return text === undefined ? undefined : requireIsoDate(text, field);
+}
+
+/** 可选正整数：用于「平均周期长度」这类配置；缺省表示不配置。 */
+export function optionalPositiveInteger(value: number | undefined, field = '数值'): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new ValidationError(`${field}必须是正整数`);
+  }
+  return value;
+}
+
+/**
+ * 日期区间：结束日不得早于开始日。
+ * 返回规整后的区间，供仓储直接使用。
+ */
+export function requireDateRange(
+  startDate: string,
+  endDate?: string | null,
+  startField = '开始日期',
+  endField = '结束日期',
+): { startDate: IsoDate; endDate?: IsoDate } {
+  const start = requireIsoDate(startDate, startField);
+  const end = optionalIsoDate(endDate, endField);
+  if (end !== undefined && end < start) {
+    throw new ValidationError(`${endField}不能早于${startField}`);
+  }
+  return { startDate: start, endDate: end };
 }

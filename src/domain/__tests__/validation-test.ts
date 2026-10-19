@@ -1,8 +1,13 @@
 import { ValidationError } from '@/domain/errors';
 import {
   normalizeIdList,
+  normalizeTextList,
+  optionalIsoDate,
+  optionalPositiveInteger,
   optionalText,
+  requireDateRange,
   requireId,
+  requireIsoDate,
   requireIsoDateTime,
   requireKind,
   requireName,
@@ -119,6 +124,54 @@ describe('校验与规整规则', () => {
     it('拒绝不合法的字符串', () => {
       expect(() => requireIsoDateTime('昨天')).toThrow(ValidationError);
       expect(() => requireIsoDateTime('2026-10-19')).toThrow(ValidationError);
+    });
+  });
+
+  describe('requireIsoDate / optionalIsoDate / requireDateRange', () => {
+    it('接受真实存在的日期并去空白', () => {
+      expect(requireIsoDate(' 2026-10-19 ')).toBe('2026-10-19');
+    });
+
+    it('拒绝格式错误与不存在的日期', () => {
+      expect(() => requireIsoDate('2026/10/19')).toThrow(ValidationError);
+      expect(() => requireIsoDate('2026-02-31')).toThrow(ValidationError);
+    });
+
+    it('optionalIsoDate 把空白归为 undefined', () => {
+      expect(optionalIsoDate('   ')).toBeUndefined();
+      expect(optionalIsoDate(undefined)).toBeUndefined();
+      expect(optionalIsoDate('2026-10-19')).toBe('2026-10-19');
+    });
+
+    it('requireDateRange 拒绝结束日早于开始日', () => {
+      expect(requireDateRange('2026-10-01', '2026-10-05')).toEqual({
+        startDate: '2026-10-01',
+        endDate: '2026-10-05',
+      });
+      expect(requireDateRange('2026-10-01', undefined)).toEqual({
+        startDate: '2026-10-01',
+        endDate: undefined,
+      });
+      expect(() => requireDateRange('2026-10-05', '2026-10-01')).toThrow(ValidationError);
+    });
+  });
+
+  describe('optionalPositiveInteger', () => {
+    it('缺省返回 undefined，正整数通过', () => {
+      expect(optionalPositiveInteger(undefined)).toBeUndefined();
+      expect(optionalPositiveInteger(28)).toBe(28);
+    });
+
+    it('0、负数、小数都被拒绝', () => {
+      expect(() => optionalPositiveInteger(0)).toThrow(ValidationError);
+      expect(() => optionalPositiveInteger(-1)).toThrow(ValidationError);
+      expect(() => optionalPositiveInteger(1.5)).toThrow(ValidationError);
+    });
+  });
+
+  describe('normalizeTextList', () => {
+    it('去空白、去重、保持顺序', () => {
+      expect(normalizeTextList([' 头痛 ', '乏力', '头痛', '  '])).toEqual(['头痛', '乏力']);
     });
   });
 
