@@ -54,8 +54,8 @@ export default function DefinitionsScreen() {
   const active = definitions.filter((definition) => !definition.isArchived);
   const archived = definitions.filter((definition) => definition.isArchived);
 
-  const openDefinition = (id: string) => {
-    router.push({ pathname: '/events/[id]', params: { id } });
+  const openRecord = (id: string) => {
+    router.push({ pathname: '/record/[id]', params: { id } });
   };
 
   const renderRow = (definition: EventDefinition, muted = false) => (
@@ -63,7 +63,7 @@ export default function DefinitionsScreen() {
       key={definition.id}
       title={definition.name}
       subtitle={describeDefinition(definition.kind, definition.unit, groupName(definition.groupId))}
-      onPress={() => openDefinition(definition.id)}
+      onPress={() => openRecord(definition.id)}
       right={
         <>
           {definition.quickOptions.length > 0 ? (
@@ -82,6 +82,9 @@ export default function DefinitionsScreen() {
         <Button label="分组" tone="secondary" onPress={() => router.push('/groups')} />
         <Button label="标签" tone="secondary" onPress={() => router.push('/tags')} />
       </View>
+      <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
+        点按事件即可记录；在事件内页可编辑定义、归档或永久删除。
+      </AppText>
 
       {error ? (
         <Card title="读取失败" style={styles.spaced}>
@@ -131,6 +134,9 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  hint: {
     marginBottom: spacing.md,
   },
   grow: {
