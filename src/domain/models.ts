@@ -28,6 +28,10 @@ export type RecordSource = 'manual' | 'quick' | 'backfill';
 
 export const RECORD_SOURCES: readonly RecordSource[] = ['manual', 'quick', 'backfill'];
 
+export function isRecordSource(value: unknown): value is RecordSource {
+  return value === 'manual' || value === 'quick' || value === 'backfill';
+}
+
 /** 快捷选项：一键记录常用的取值 */
 export interface QuickOption {
   id: string;
@@ -161,4 +165,21 @@ export function isVisibleRecord(record: EventRecord): boolean {
 /** 归档不影响历史，只影响「能否新建记录」的入口 */
 export function isRecordable(definition: EventDefinition): boolean {
   return !definition.isArchived;
+}
+
+/**
+ * 把事件定义在「记录的这一刻」固化成一个快照。
+ *
+ * 这是「历史不可篡改」的实现手段：快照一旦写入记录就永不更新，
+ * 之后定义改名、换单位、归档甚至被永久删除，历史都不受影响。
+ */
+export function toDefinitionSnapshot(definition: EventDefinition): EventDefinitionSnapshot {
+  return {
+    definitionId: definition.id,
+    name: definition.name,
+    kind: definition.kind,
+    unit: definition.unit,
+    groupId: definition.groupId,
+    tagIds: [...definition.tagIds],
+  };
 }

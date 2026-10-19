@@ -2,9 +2,13 @@ import { ValidationError } from '@/domain/errors';
 import {
   normalizeIdList,
   optionalText,
+  requireId,
+  requireIsoDateTime,
   requireKind,
   requireName,
   requireQuickOptionValue,
+  requireRecordSource,
+  requireRecordValue,
   requireSortOrder,
 } from '@/domain/validation';
 
@@ -80,6 +84,52 @@ describe('校验与规整规则', () => {
   describe('normalizeIdList', () => {
     it('去空、去重、保持顺序', () => {
       expect(normalizeIdList(['b', 'a', 'b', '  ', 'c'])).toEqual(['b', 'a', 'c']);
+    });
+  });
+
+  describe('requireId', () => {
+    it('去空白后非空通过', () => {
+      expect(requireId('  abc  ')).toBe('abc');
+    });
+
+    it('空串抛 ValidationError 并带字段名', () => {
+      expect(() => requireId('  ', '事件定义 id')).toThrow(/事件定义 id/);
+    });
+  });
+
+  describe('requireRecordSource', () => {
+    it('接受 manual / quick / backfill', () => {
+      expect(requireRecordSource('manual')).toBe('manual');
+      expect(requireRecordSource('quick')).toBe('quick');
+      expect(requireRecordSource('backfill')).toBe('backfill');
+    });
+
+    it('拒绝其它值', () => {
+      expect(() => requireRecordSource('auto')).toThrow(ValidationError);
+    });
+  });
+
+  describe('requireIsoDateTime', () => {
+    it('接受带 Z 或带偏移的时间戳', () => {
+      expect(requireIsoDateTime('2026-10-19T08:00:00.000Z')).toBe('2026-10-19T08:00:00.000Z');
+      expect(requireIsoDateTime('2026-10-19T08:00:00+08:00')).toBe('2026-10-19T08:00:00+08:00');
+    });
+
+    it('拒绝不合法的字符串', () => {
+      expect(() => requireIsoDateTime('昨天')).toThrow(ValidationError);
+      expect(() => requireIsoDateTime('2026-10-19')).toThrow(ValidationError);
+    });
+  });
+
+  describe('requireRecordValue', () => {
+    it('计数型要求正整数', () => {
+      expect(requireRecordValue('counter', 2)).toBe(2);
+      expect(() => requireRecordValue('counter', 0.5)).toThrow(ValidationError);
+    });
+
+    it('数量型允许正小数', () => {
+      expect(requireRecordValue('quantity', 0.5)).toBe(0.5);
+      expect(() => requireRecordValue('quantity', 0)).toThrow(ValidationError);
     });
   });
 });
