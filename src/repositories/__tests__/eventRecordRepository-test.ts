@@ -8,6 +8,7 @@ import { TagRepository } from '@/repositories/tagRepository';
 
 const T1 = '2026-10-19T08:00:00.000Z';
 const T2 = '2026-10-19T09:00:00.000Z';
+const T3 = '2026-10-19T10:00:00.000Z';
 
 describe('EventRecordRepository', () => {
   let db: TestDatabase;
@@ -227,12 +228,61 @@ describe('EventRecordRepository', () => {
     expect(after?.value).toBe(3);
   });
 
-  it('软删除的记录默认不出现，includeDeleted 时才列出', async () => {
-    const definition = await createCounter();
+  it('软删除：默认从列表消失，includeDeleted 时才列出，行与快照都保留', async () => {
+    const definition = await createCounter({ unit: '杯' });
     const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
-    await db.runAsync('UPDATE event_records SET deleted_at = ? WHERE id = ?', T1, record.id);
+
+    const deleted = await records.softDelete(record.id, T2);
+    expect(deleted.deletedAt).toBe(T2);
+    expect(deleted.snapshot.name).toBe('喝水'); // 行还在，快照也在，所以能撤销
 
     expect(await records.list()).toEqual([]);
     expect((await records.list({ includeDeleted: true })).map((item) => item.id)).toEqual([record.id]);
+    expect(await records.getById(record.id)).not.toBeNull();
+  });
+
+  it('软删除是幂等的：重复删除不报错，也不覆盖原来的删除时间', async () => {
+    const definition = await createCounter();
+    const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+
+    const first = await records.softDelete(record.id, T2);
+    const second = await records.softDelete(record.id, T3);
+
+    expect(first.deletedAt).toBe(T2);
+    expect(second.deletedAt).toBe(T2); // 保持第一次的删除时间
+  });
+
+  it('软删除只影响目标记录', async () => {
+    const definition = await createCounter();
+    const keep = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+    const drop = await records.record({ definitionId: definition.id, value: 2, source: 'manual' }, T2);
+
+    await records.softDelete(drop.id, T3);
+
+    expect((await records.list()).map((item) => item.id)).toEqual([keep.id]);
+  });
+
+  it('撤销软删除：记录重新可见，deletedAt 被清空', async () => {
+    const definition = await createCounter();
+    const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+    await records.softDelete(record.id, T2);
+
+    const restored = await records.restore(record.id);
+
+    expect(restored.deletedAt).toBeUndefined();
+    expect((await records.list()).map((item) => item.id)).toEqual([record.id]);
+  });
+
+  it('撤销未删除的记录是幂等的，不报错', async () => {
+    const definition = await createCounter();
+    const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+
+    const restored = await records.restore(record.id);
+    expect(restored.deletedAt).toBeUndefined();
+  });
+
+  it('软删除 / 撤销不存在的记录都抛 NotFoundError', async () => {
+    await expect(records.softDelete('missing', T1)).rejects.toThrow(NotFoundError);
+    await expect(records.restore('missing')).rejects.toThrow(NotFoundError);
   });
 });

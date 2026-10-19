@@ -10,6 +10,8 @@
  *    这样补录的旧记录会落在时间轴的正确位置。
  * 4. **补录只能回到过去**：`occurredAt` 允许早于 `recordedAt`，但不允许晚于它
  *    （未来还没发生，不构成事实）。
+ * 5. **删除是软删除**：`softDelete` 只写 `deleted_at`，`restore` 撤销；两者幂等。
+ *    真删需要二次确认，留给后续「永久删除一致性」。
  *
  * 读取时 `kind` / `source` 都会再过一次守卫（泛型运行时不校验）。
  */
@@ -246,6 +248,52 @@ export class EventRecordRepository {
         id,
       );
       return row ? toRecord(row) : null;
+    });
+  }
+
+  /**
+   * 软删除（「撤销」用的删除）：只写 `deleted_at`，行与快照都保留。
+   *
+   * 幂等：已经删除过就直接返回，不报错、也不覆盖原来的删除时间
+   * （否则「撤销栈」里的时间会漂移）。记录不存在才抛 NotFoundError。
+   *
+   * 注意这**不是永久删除**——永久删除需要二次确认，属于后续的「永久删除一致性」项。
+   */
+  async softDelete(id: string, now: IsoDateTime = new Date().toISOString()): Promise<EventRecord> {
+    const targetId = requireId(id, '事件记录 id');
+    const deletedAt = requireIsoDateTime(now, '删除时间');
+
+    return guard('删除事件记录', async () => {
+      const existing = await this.getById(targetId);
+      if (!existing) {
+        throw new NotFoundError(`事件记录不存在：${targetId}`);
+      }
+      if (existing.deletedAt !== undefined) {
+        return existing;
+      }
+      await this.db.runAsync(
+        'UPDATE event_records SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL',
+        deletedAt,
+        targetId,
+      );
+      return this.mustReadOne(targetId);
+    });
+  }
+
+  /** 撤销软删除：清空 `deleted_at`，记录重新参与展示与统计。同样幂等。 */
+  async restore(id: string): Promise<EventRecord> {
+    const targetId = requireId(id, '事件记录 id');
+
+    return guard('恢复事件记录', async () => {
+      const existing = await this.getById(targetId);
+      if (!existing) {
+        throw new NotFoundError(`事件记录不存在：${targetId}`);
+      }
+      if (existing.deletedAt === undefined) {
+        return existing;
+      }
+      await this.db.runAsync('UPDATE event_records SET deleted_at = NULL WHERE id = ?', targetId);
+      return this.mustReadOne(targetId);
     });
   }
 
