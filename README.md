@@ -78,7 +78,29 @@ src/
     id.ts                 # UUID v7 主键方案
   repositories/           # 仓储层（SQL 只写在这里）
   theme/                  # 设计令牌（颜色 / 间距 / 字号）
+docs/
+  learning/               # 中文开发指北（面向不熟悉 React / TS 的读者）
+    README.md             # 学习导航：已完成功能 → 文档、阅读顺序、概念清单、架构与进度
+    01-project-bootstrap.md
+    02-react-native-ui.md
+    03-typescript-domain-model.md
+    04-sqlite-and-repository.md
+    05-business-logic-and-data-flow.md
+    06-navigation-and-state.md
+    07-testing-and-debugging.md
 ```
+
+## 开发指北（学习文档）
+
+`docs/learning/` 下是一套**以本仓库真实代码为依据**的中文走读材料：每篇包含「本次完成什么 / 改了哪些文件 /
+相关技术概念 / 关键代码逐段解释 / 一次完整数据流的 Mermaid 流程图 / 如何验证 / 常见问题排查 / 学习总结与练习」。
+
+入口：[`docs/learning/README.md`](./docs/learning/README.md)。
+
+推荐顺序：`01 工程基线 → 05 业务与数据流 → 06 导航与状态`（快速走读），
+深入类型与数据层时再读 `03 领域模型 → 04 SQLite 与 Repository`。
+
+> 文档随功能同步更新；未实现的功能（备份恢复、整体架构演进）暂不写作，避免空文档。
 
 ## 领域规则（已确认，代码中已体现）
 
