@@ -1,9 +1,4 @@
-import {
-  localDateText,
-  localTimeText,
-  parseLocalDateTime,
-  shiftLocalDays,
-} from '@/features/records/datetime';
+import { localDateText, localTimeText, parseLocalDateTime, shiftLocalDays } from '@/features/common/datetime';
 
 describe('localDateText / localTimeText', () => {
   it('补零输出本地日期与时间', () => {

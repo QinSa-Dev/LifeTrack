@@ -5,12 +5,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { AppText, Button, Card, Chip, EmptyState, Header, Screen, TextField } from '@/components';
 import { useReadyDatabase } from '@/db';
 import type { EventDefinition, EventRecord, RecordSource } from '@/domain/models';
-import {
-  localDateText,
-  localTimeText,
-  parseLocalDateTime,
-  shiftLocalDays,
-} from '@/features/records/datetime';
+import { localDateText, localTimeText, parseLocalDateTime, shiftLocalDays } from '@/features/common/datetime';
 import { describeRecord, formatOccurredAt, sourceLabel } from '@/features/records/format';
 import { RecordRow } from '@/features/records/RecordRow';
 import { UndoBar } from '@/features/records/UndoBar';

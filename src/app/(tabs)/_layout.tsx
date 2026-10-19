@@ -10,7 +10,7 @@ const ACTIVE_COLOR = palette.primary;
 const INACTIVE_COLOR = palette.textMuted;
 
 /** 选中用实心图标，未选中用描边图标 */
-function iconName(base: 'time' | 'albums' | 'settings', focused: boolean): IoniconName {
+function iconName(base: 'time' | 'albums' | 'calendar' | 'settings', focused: boolean): IoniconName {
   return (focused ? base : `${base}-outline`) as IoniconName;
 }
 
@@ -47,6 +47,19 @@ export default function TabsLayout() {
           tabBarIcon: ({ size, focused }) => (
             <Ionicons
               name={iconName('albums', focused)}
+              color={focused ? ACTIVE_COLOR : INACTIVE_COLOR}
+              size={size}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="cycles"
+        options={{
+          title: '周期',
+          tabBarIcon: ({ size, focused }) => (
+            <Ionicons
+              name={iconName('calendar', focused)}
               color={focused ? ACTIVE_COLOR : INACTIVE_COLOR}
               size={size}
             />
