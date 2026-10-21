@@ -1,9 +1,9 @@
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AppText, Card, EmptyState } from '@/components';
+import { AppText, Button, Card, EmptyState } from '@/components';
 import { useReadyDatabase } from '@/db';
 import type { EventRecord } from '@/domain/models';
 import { describeRecord } from '@/features/records/format';
@@ -15,6 +15,7 @@ import { palette, radius, spacing } from '@/theme';
 const RECENT_LIMIT = 100;
 
 export default function TimelineScreen() {
+  const router = useRouter();
   const { db } = useReadyDatabase();
 
   const [records, setRecords] = useState<EventRecord[]>([]);
@@ -134,11 +135,19 @@ export default function TimelineScreen() {
               />
             ) : null}
 
-            {records.length > 0 ? (
-              <AppText variant="caption" color={palette.textMuted} style={styles.listHint}>
-                最近 {records.length} 条，按发生时间倒序（最多 {RECENT_LIMIT} 条）
+            <View style={styles.headerRow}>
+              <AppText variant="caption" color={palette.textMuted} style={styles.headerHint}>
+                {records.length > 0
+                  ? `最近 ${records.length} 条，按发生时间倒序（最多 ${RECENT_LIMIT} 条）`
+                  : '软删除的记录会进回收站'}
               </AppText>
-            ) : null}
+              <Button
+                label="回收站"
+                tone="secondary"
+                size="sm"
+                onPress={() => router.push('/records/deleted')}
+              />
+            </View>
           </View>
         }
         ListEmptyComponent={
@@ -178,9 +187,16 @@ const styles = StyleSheet.create({
   spaced: {
     marginTop: spacing.md,
   },
-  listHint: {
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
     marginTop: spacing.md,
     marginBottom: spacing.sm,
+  },
+  headerHint: {
+    flexShrink: 1,
   },
   itemCard: {
     backgroundColor: palette.surface,

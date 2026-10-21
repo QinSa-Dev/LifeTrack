@@ -285,4 +285,54 @@ describe('EventRecordRepository', () => {
     await expect(records.softDelete('missing', T1)).rejects.toThrow(NotFoundError);
     await expect(records.restore('missing')).rejects.toThrow(NotFoundError);
   });
+
+  it('回收站：onlyDeleted 只列软删除的记录，按删除时间倒序', async () => {
+    const definition = await createCounter();
+    const keep = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+    const older = await records.record({ definitionId: definition.id, value: 2, source: 'manual' }, T2);
+    const newer = await records.record({ definitionId: definition.id, value: 3, source: 'manual' }, T3);
+
+    await records.softDelete(older.id, T2);
+    await records.softDelete(newer.id, T3);
+
+    expect((await records.list({ onlyDeleted: true })).map((item) => item.id)).toEqual([newer.id, older.id]);
+    expect(await records.list()).toEqual([keep]);
+  });
+
+  it('永久删除：行被彻底移除，读不回，也不在回收站里', async () => {
+    const definition = await createCounter();
+    const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+    await records.softDelete(record.id, T2);
+
+    await records.remove(record.id);
+
+    expect(await records.getById(record.id)).toBeNull();
+    expect(await records.list({ includeDeleted: true })).toEqual([]);
+    expect(await records.list({ onlyDeleted: true })).toEqual([]);
+  });
+
+  it('永久删除只影响目标记录', async () => {
+    const definition = await createCounter();
+    const keep = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+    const drop = await records.record({ definitionId: definition.id, value: 2, source: 'manual' }, T2);
+
+    await records.remove(drop.id);
+
+    expect((await records.list()).map((item) => item.id)).toEqual([keep.id]);
+  });
+
+  it('撤销之后仍可永久删除（软删除 → 撤销 → 永久删除 无漏洞）', async () => {
+    const definition = await createCounter();
+    const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+
+    await records.softDelete(record.id, T2);
+    await records.restore(record.id);
+    await records.remove(record.id);
+
+    expect(await records.getById(record.id)).toBeNull();
+  });
+
+  it('永久删除不存在的记录抛 NotFoundError', async () => {
+    await expect(records.remove('missing')).rejects.toThrow(NotFoundError);
+  });
 });

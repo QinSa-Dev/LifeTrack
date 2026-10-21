@@ -10,8 +10,8 @@
  *    这样补录的旧记录会落在时间轴的正确位置。
  * 4. **补录只能回到过去**：`occurredAt` 允许早于 `recordedAt`，但不允许晚于它
  *    （未来还没发生，不构成事实）。
- * 5. **删除是软删除**：`softDelete` 只写 `deleted_at`，`restore` 撤销；两者幂等。
- *    真删需要二次确认，留给后续「永久删除一致性」。
+ * 5. **删除分两级**：`softDelete` 只写 `deleted_at`（可 `restore` 撤销），真删是 `remove`，
+ *    不可撤销、需要界面二次确认。两者划分清楚，避免「以为能撤销，其实是真删」。
  *
  * 读取时 `kind` / `source` 都会再过一次守卫（泛型运行时不校验）。
  */
@@ -133,6 +133,8 @@ export interface ListRecordsOptions {
   definitionId?: string;
   /** 是否包含软删除的记录（默认不包含） */
   includeDeleted?: boolean;
+  /** 只列软删除的记录（回收站用）；与 includeDeleted 互斥，优先本项 */
+  onlyDeleted?: boolean;
   /** 最多返回多少条（时间轴分页用） */
   limit?: number;
 }
@@ -209,13 +211,15 @@ export class EventRecordRepository {
     });
   }
 
-  /** 时间轴/列表：默认按事实发生时间倒序，排除软删除。 */
+  /** 时间轴/列表：默认按事实发生时间倒序，排除软删除；回收站按删除时间倒序。 */
   async list(options: ListRecordsOptions = {}): Promise<EventRecord[]> {
     return guard('读取事件记录', async () => {
       const clauses: string[] = [];
       const params: SqlParam[] = [];
 
-      if (!options.includeDeleted) {
+      if (options.onlyDeleted) {
+        clauses.push('deleted_at IS NOT NULL');
+      } else if (!options.includeDeleted) {
         clauses.push('deleted_at IS NULL');
       }
       if (options.definitionId !== undefined) {
@@ -224,6 +228,9 @@ export class EventRecordRepository {
       }
 
       const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+      const orderBy = options.onlyDeleted
+        ? 'deleted_at DESC, occurred_at DESC, id DESC'
+        : 'occurred_at DESC, recorded_at DESC, id DESC';
       const limit = options.limit !== undefined ? 'LIMIT ?' : '';
       if (options.limit !== undefined) {
         params.push(options.limit);
@@ -233,7 +240,7 @@ export class EventRecordRepository {
         `SELECT ${SELECT_COLUMNS}
            FROM event_records
            ${where}
-          ORDER BY occurred_at DESC, recorded_at DESC, id DESC
+          ORDER BY ${orderBy}
           ${limit}`,
         ...params,
       );
@@ -294,6 +301,22 @@ export class EventRecordRepository {
       }
       await this.db.runAsync('UPDATE event_records SET deleted_at = NULL WHERE id = ?', targetId);
       return this.mustReadOne(targetId);
+    });
+  }
+
+  /**
+   * 永久删除：把这一行彻底删掉（真删），不可撤销。调用方（界面）必须先做二次确认。
+   *
+   * 与 `softDelete` 的区别：软删除只写 `deleted_at`，可以 `restore`；这里是 `DELETE`。
+   * 事件记录没有子表，单条 `DELETE` 本身就是原子的，不需要显式事务。
+   */
+  async remove(id: string): Promise<void> {
+    const targetId = requireId(id, '事件记录 id');
+    return guard('永久删除事件记录', async () => {
+      const result = await this.db.runAsync('DELETE FROM event_records WHERE id = ?', targetId);
+      if (result.changes === 0) {
+        throw new NotFoundError(`事件记录不存在：${targetId}`);
+      }
     });
   }
 
