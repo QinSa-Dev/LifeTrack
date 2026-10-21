@@ -13,13 +13,13 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 
 - 分支：`main`；工作区干净。
 - 最新提交：用 `git log -1` 查看（本文件与「统计」的文档同步在同一批提交里）
-- schema 版本：**v4**（`PRAGMA user_version = 4`）；统计功能**没有新增迁移**，纯从 `event_records` 聚合
+- schema 版本：**v4**（`PRAGMA user_version = 4`）；统计与回收站**都没有新增迁移**（前者纯聚合，后者是 `DELETE` 已有行）
 - 验证状态（全部真实跑过）：
 
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 17 个套件 / 223 个用例通过
+npm test             # 17 个套件 / 228 个用例通过
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（1261 modules，js bundle 2.9MB）
 ```
@@ -92,8 +92,8 @@ src/theme/         设计令牌
 4. 补录只能回到过去：`occurredAt` ≤ `recordedAt`（`requireNotFuture`，按时间比较而非字符串）。
 5. 软删除用 `deleted_at`，`softDelete` / `restore` **幂等**，`list` 默认排除；**永久删除**才需二次确认。
 6. 永久删除必须**二次确认**（`Alert.alert`），多表写入用独占事务。
-   - 已实现：事件定义、周期定义（连带实例与记录）、周期实例（连带记录）、单日周期记录。
-   - **未实现**：事件记录（`event_records`）的永久删除入口——现在只有软删除 + 撤销。
+   - 已实现：事件定义、周期定义（连带实例与记录）、周期实例（连带记录）、单日周期记录、事件记录（回收站页）。
+   - **未实现**：周期内记录（`cycle_entries`）的回收站——它仍是直接真删（模型里没有 `deleted_at`）。
 7. **周期边界修改不得静默删除越界记录**：`CycleInstanceRepository.update` / `endInstance` 先查
    `cycle_entries` 中落在新区间外的日期，有则抛 `ConflictError`（`details.outsideDates` 列出日期），
    绝不顺手删除。界面原样显示原因。`listOutsideEntryDates` 提供只读预演（界面暂未使用）。
@@ -109,10 +109,10 @@ src/theme/         设计令牌
 - 迁移与 schema：`src/db/schema.ts`、`src/db/migrations.ts`
 - 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`
 - 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `isVisibleRecord`）、`src/domain/validation.ts`（含 `requireNotFuture`、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `predictNextCycleStart`）
-- 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / `softDelete` / `restore`）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT）、`cycleDefinitionRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`
+- 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / `softDelete` / `restore` / `remove` 真删）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT）、`cycleDefinitionRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`
 - 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `RecordRow` / `UndoBar`）、`src/features/cycles/`（`labels` / `CycleDefinitionForm`）、`src/features/stats/aggregate.ts`（统计聚合，纯函数）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
-- 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴 + 撤销，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/cycles.tsx`、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/events/[id].tsx`、`src/app/cycles/[id].tsx`、`src/app/cycle-instances/[id].tsx`
-- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`
+- 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴 + 撤销，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/cycles.tsx`、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/records/deleted.tsx`（回收站）、`src/app/events/[id].tsx`、`src/app/cycles/[id].tsx`、`src/app/cycle-instances/[id].tsx`
+- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`
 
 ## 7. 必须遵守的工作约定
 
@@ -127,30 +127,25 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ 静态检查、223 个单元用例（真实内存 SQLite）、iOS 打包。
+- ✅ 静态检查、228 个单元用例（真实内存 SQLite）、iOS 打包。
 - ❌ 模拟器 / 真机手动运行；界面交互的自动化测试（项目暂无组件测试）。
 
 ## 9. 下一步任务：第二阶段剩余项
 
-「统计」已完成（见 `docs/learning/12-statistics.md`：从事实数据聚合 + 时间轴 `FlatList` 虚拟化）。剩下的候选按推荐顺序：
+「回收站与永久删除」已完成（见 `docs/learning/13-permanent-delete-and-trash.md`）。剩下的候选按推荐顺序：
 
-### 9.1（推荐）永久删除一致性（较小、可穿插）
-
-- 事件记录（`event_records`）的**永久删除**还没有入口（周期那边已经有：定义 / 实例 / 单日记录）。
-- 需要为记录加永久删除（`Alert` 二次确认），并确认「软删除 → 撤销 → 永久删除」的状态转换没有漏洞。
-- 注意：删定义不删历史是**有意为之**，别顺手改成级联。
-
-### 9.2 导入导出
+### 9.1（推荐）导入导出
 
 - JSON / CSV 导入导出 + 冲突合并 + 事务一致性校验；领域规则是「导入失败不留半截数据」（整体事务）。
 
-### 9.3 周期功能的增强（可选，穿插）
+### 9.2 周期功能的增强（可选，穿插）
 
 - 日历式月视图（可点选日期）与按症状统计。
 - 预测目前只用「上一段开始日 + 平均周期长度」；可改成最近 N 段的平均（领域层加纯函数，不足两段则不预测）。
 - 界面还没用上 `CycleInstanceRepository.listOutsideEntryDates`：可在用户点保存前预演「这次改动会甩出哪些日期」。
+- 周期内记录（`cycle_entries`）的回收站（现在删了就没）。
 
-### 9.4 统计的增强（可选，穿插）
+### 9.3 统计的增强（可选，穿插）
 
 - 目前只做「按天 / 按周」的条数与合计，没有环比/同比。
 - 统计页一次性读取全部记录再做聚合（没有把时间范围下推到 SQL）；若记录量很大，可在仓储层加
@@ -183,11 +178,12 @@ src/theme/         设计令牌
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：17 套件 / 223 用例通过
+npm run verify             # 应为：17 套件 / 228 用例通过
 npx expo export --platform ios   # 应能打包
 npm start                  # Expo Go 扫码，手动走一遍：
                            #   建事件 → 记录 → 补录 → 看时间轴 → 删除并撤销 → 归档/删除定义
                            #   切到「统计」：看概览 / 按天按周趋势 / 按事件统计；删一条记录再看数字是否变化
+                           #   时间轴删一条 → 进「回收站」→ 恢复 / 永久删除（应弹二次确认）
                            #   建周期定义 → 开始新周期 → 记某天的阶段/症状 → 结束周期
                            #   把结束日提前到某条记录之前 → 应被拒绝并列出该日期（数据不能少）
                            #   删除某天的记录 / 删除整段周期 → 都应有二次确认

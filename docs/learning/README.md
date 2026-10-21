@@ -16,7 +16,8 @@
 | 第二阶段（补录与撤销） | 补录过去发生的事实、软删除与撤销 | **已完成**（本文档 `10`） |
 | 第二阶段（周期事件） | 周期定义 / 周期实例 / 周期内记录、区间规则 | **已完成**（本文档 `11`） |
 | 第二阶段（统计） | 时间轴统计（从事实数据聚合）、时间轴 FlatList 虚拟化 | **已完成**（本文档 `12`） |
-| 第二阶段剩余项 | 导入导出、事件记录永久删除一致性、周期日历/症状统计 | 未开始 |
+| 第二阶段（永久删除） | 事件记录的回收站与真删（「软删除 → 撤销 → 真删」闭环） | **已完成**（本文档 `13`） |
+| 第二阶段剩余项 | 导入导出、周期日历/症状统计、周期记录回收站 | 未开始 |
 
 第一阶段「已完成」的含义是：下面的命令都真实跑过并且通过了。
 
@@ -27,12 +28,12 @@ npm test            # Jest：4 个套件 / 32 个用例
 npm run doctor      # expo-doctor：20/20
 ```
 
-第二阶段各项完成后（目前 `npm test` 为 17 个套件 / 223 个用例），新增命令同样跑过：
+第二阶段各项完成后（目前 `npm test` 为 17 个套件 / 228 个用例），新增命令同样跑过：
 
 ```bash
 npm run typecheck                        # 通过
 npm run lint                             # 通过（0 error / 0 warning）
-npm test                                 # 17 个套件 / 223 个用例
+npm test                                 # 17 个套件 / 228 个用例
 npm run format:check                     # 通过
 npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
 ```
@@ -58,6 +59,7 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
 | 补录与撤销：本地时间 ↔ UTC、日期解析与溢出、软删除的幂等与撤销 | [10-backfill-and-undo.md](./10-backfill-and-undo.md) |
 | 周期事件：日历日期运算、区间重叠、边界修改「不静默删除」、一天一条的 UPSERT | [11-cycle-tracking.md](./11-cycle-tracking.md) |
 | 统计：从事实数据聚合（不落汇总表）、本地时区分天/周、单位不一致不合并、时间轴 FlatList 虚拟化 | [12-statistics.md](./12-statistics.md) |
+| 回收站与永久删除：软删除 vs 真删、`Alert` 二次确认、单条 DELETE 的原子性 | [13-permanent-delete-and-trash.md](./13-permanent-delete-and-trash.md) |
 
 ### 为什么还缺几篇编号
 
@@ -84,9 +86,10 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
 10. **[10 补录与撤销](./10-backfill-and-undo.md)** —— 补录（本地时间 ↔ UTC、日期解析）与软删除/撤销（幂等）。
 11. **[11 周期事件](./11-cycle-tracking.md)** —— 周期定义 / 实例 / 每日记录：日历日期运算、区间规则，以及「改边界不悄悄删记录」。
 12. **[12 统计](./12-statistics.md)** —— 从事实数据聚合（不落汇总表）、本地时区分天/周、单位不一致不合并，以及时间轴 `FlatList` 虚拟化。
+13. **[13 回收站与永久删除](./13-permanent-delete-and-trash.md)** —— 软删除与真删分成两级，回收站承载「恢复 / 永久删除」。
 
 如果只想快速走读一遍项目，读 **01 → 05 → 06** 这三篇就够；03、04 是用来建立类型与数据层认知的，
-08–12 用来了解业务功能是怎么一步步搭起来的。
+08–13 用来了解业务功能是怎么一步步搭起来的。
 
 ## 四、已经接触过的技术概念
 
@@ -138,6 +141,9 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
 | 纯函数聚合（分桶函数 `keyOf` 参数化）、本地时区分天/周的边界 | 领域设计 / JavaScript | 12 |
 | 统计敢于「不给数字」：单位不一致不合并计量 | 领域设计 / 交互 | 12 |
 | `FlatList` 虚拟化、`ListHeaderComponent` / `ListEmptyComponent`、容器与行的职责分离 | React Native | 12 |
+| 「删除」其实是两级：可撤销的软删除 + 不可逆的真删 | 领域设计 | 13 |
+| 二次确认（`Alert`）：破坏性操作的界面护栏；仓储只负责原子地删 | 交互 / React Native | 13 |
+| 不必为单条 `DELETE` 套事务；`changes === 0` 视为「不存在」而不是成功 | SQLite / 架构 | 13 |
 
 ## 五、还没有学到的内容
 
@@ -148,8 +154,8 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
   分组吸顶）还没用到。
 - 统计与汇总 —— 分天/分周的聚合已在 [12](./12-statistics.md) 落地；**环比/同比**还没做。
 - 日历式界面（可点选的月视图、按症状统计）—— 周期已能记录与回看，但还没有日历与统计视图。
-- 记录的**永久删除**与一致性（软删除已就位且可撤销；记录的真删入口属后续项；
-  周期与定义的永久删除已实现，都带二次确认 + 事务）。
+- 记录的**永久删除**与一致性 —— 已在 [13](./13-permanent-delete-and-trash.md) 落地（事件记录的回收站与真删）；
+  **周期内记录**仍是直接真删，回收站属后续项。
 - JSON / CSV 导入导出、冲突合并、事务一致性校验 —— 第二阶段后续项。
 - 深链接与通知跳转 —— 目前只有 `scheme: "lifetrack"` 配置，没有业务用途。
 - 深色主题 —— `theme/index.ts` 里留了 `useTheme()` 的接口，但还没接。
@@ -165,6 +171,7 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
                       │  (tabs)/stats.tsx（统计：概览 / 趋势 / 按事件） │
                       │  events/new.tsx / events/[id].tsx             │
                       │  record/[id].tsx（记录 / 补录 / 删除）          │
+                      │  records/deleted.tsx（回收站：恢复 / 永久删除） │
                       │  cycles/new.tsx / cycles/[id].tsx（周期定义）  │
                       │  cycle-instances/[id].tsx（一段周期 + 每日记录）│
                       │  groups.tsx / tags.tsx / +not-found           │
