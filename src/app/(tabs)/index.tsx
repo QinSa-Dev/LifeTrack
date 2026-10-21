@@ -1,15 +1,16 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, FlatList, StyleSheet, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AppText, Card, EmptyState, Screen } from '@/components';
+import { AppText, Card, EmptyState } from '@/components';
 import { useReadyDatabase } from '@/db';
 import type { EventRecord } from '@/domain/models';
 import { describeRecord } from '@/features/records/format';
 import { RecordRow } from '@/features/records/RecordRow';
 import { UndoBar } from '@/features/records/UndoBar';
 import { EventRecordRepository } from '@/repositories';
-import { palette, spacing } from '@/theme';
+import { palette, radius, spacing } from '@/theme';
 
 const RECENT_LIMIT = 100;
 
@@ -100,56 +101,94 @@ export default function TimelineScreen() {
   };
 
   return (
-    <Screen scroll contentStyle={styles.content}>
-      {error ? (
-        <Card title="操作失败" style={styles.spaced}>
-          <AppText variant="body" color={palette.danger}>
-            {error}
-          </AppText>
-        </Card>
-      ) : null}
-
-      {undoTarget ? (
-        <UndoBar
-          message={`已删除：${describeRecord(undoTarget)}`}
-          onUndo={undoRemove}
-          onDismiss={() => setUndoTarget(null)}
-          busy={restoring}
-        />
-      ) : null}
-
-      {loading ? (
-        <View style={styles.loading}>
-          <ActivityIndicator color={palette.primary} />
-        </View>
-      ) : records.length === 0 ? (
-        <EmptyState
-          title="还没有任何记录"
-          description="到「事件」标签点按一个事件即可记录。计数型如「喝水 +1」，数量型如「跑步 5 公里」。"
-          footnote="记录会保存当时的事件快照，之后改定义也不会篡改历史。"
-        />
-      ) : (
-        <Card title="时间轴" subtitle={`最近 ${records.length} 条，按发生时间倒序`} style={styles.spaced}>
-          {records.map((record) => (
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <FlatList
+        data={records}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item }) => (
+          <View style={styles.itemCard}>
             <RecordRow
-              key={record.id}
-              record={record}
-              onDelete={() => remove(record)}
-              deleting={deletingId === record.id}
+              record={item}
+              divider={false}
+              onDelete={() => remove(item)}
+              deleting={deletingId === item.id}
             />
-          ))}
-        </Card>
-      )}
-    </Screen>
+          </View>
+        )}
+        ListHeaderComponent={
+          <View>
+            {error ? (
+              <Card title="操作失败" style={styles.spaced}>
+                <AppText variant="body" color={palette.danger}>
+                  {error}
+                </AppText>
+              </Card>
+            ) : null}
+
+            {undoTarget ? (
+              <UndoBar
+                message={`已删除：${describeRecord(undoTarget)}`}
+                onUndo={undoRemove}
+                onDismiss={() => setUndoTarget(null)}
+                busy={restoring}
+              />
+            ) : null}
+
+            {records.length > 0 ? (
+              <AppText variant="caption" color={palette.textMuted} style={styles.listHint}>
+                最近 {records.length} 条，按发生时间倒序（最多 {RECENT_LIMIT} 条）
+              </AppText>
+            ) : null}
+          </View>
+        }
+        ListEmptyComponent={
+          loading ? (
+            <View style={styles.loading}>
+              <ActivityIndicator color={palette.primary} />
+            </View>
+          ) : (
+            <EmptyState
+              title="还没有任何记录"
+              description="到「事件」标签点按一个事件即可记录。计数型如「喝水 +1」，数量型如「跑步 5 公里」。"
+              footnote="记录会保存当时的事件快照，之后改定义也不会篡改历史。"
+            />
+          )
+        }
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        style={styles.list}
+      />
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: palette.background,
+  },
+  list: {
+    flex: 1,
+  },
   content: {
+    paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
   spaced: {
     marginTop: spacing.md,
+  },
+  listHint: {
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  itemCard: {
+    backgroundColor: palette.surface,
+    borderRadius: radius.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
   },
   loading: {
     paddingVertical: spacing.xxl,

@@ -13,6 +13,8 @@ export interface RecordRowProps {
   onDelete?: () => void;
   /** 该行删除请求进行中 */
   deleting?: boolean;
+  /** 单独成卡时传 false，去掉行底部的分隔线（默认显示） */
+  divider?: boolean;
 }
 
 /**
@@ -20,13 +22,21 @@ export interface RecordRowProps {
  *
  * 时间轴与事件记录页共用这一行，避免两处各写一遍展示与删除逻辑。
  */
-export function RecordRow({ record, title, subtitle, onDelete, deleting = false }: RecordRowProps) {
+export function RecordRow({
+  record,
+  title,
+  subtitle,
+  onDelete,
+  deleting = false,
+  divider = true,
+}: RecordRowProps) {
   const backfilled = isBackfilled(record);
 
   return (
     <ListRow
       title={title ?? record.snapshot.name}
       subtitle={subtitle ?? recordSubtitle(record)}
+      divider={divider}
       right={
         <>
           {backfilled ? <Badge label="补录" tone="warning" /> : null}
