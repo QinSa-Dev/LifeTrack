@@ -9,26 +9,26 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 技术栈：React Native + Expo SDK 58 + TypeScript + SQLite（expo-sqlite）。
 数据全部在设备本地，**无后端、无账号、无云同步**。
 
-## 1. 当前状态快照（写于「周期事件」完成时）
+## 1. 当前状态快照（写于「统计」完成时）
 
 - 分支：`main`；工作区干净。
-- 最新提交：用 `git log -1` 查看（本文件与「周期事件」的文档同步在同一批提交里）
-- schema 版本：**v4**（`PRAGMA user_version = 4`）；周期功能**新增了 v4 迁移**（三张表）
+- 最新提交：用 `git log -1` 查看（本文件与「统计」的文档同步在同一批提交里）
+- schema 版本：**v4**（`PRAGMA user_version = 4`）；统计功能**没有新增迁移**，纯从 `event_records` 聚合
 - 验证状态（全部真实跑过）：
 
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 16 个套件 / 209 个用例通过
+npm test             # 17 个套件 / 223 个用例通过
 npm run format:check # 通过
-npx expo export --platform ios   # 通过（js bundle 2.9MB）
+npx expo export --platform ios   # 通过（1261 modules，js bundle 2.9MB）
 ```
 
-> ⚠️ **尚未在模拟器 / 真机上手动运行过第二阶段的功能**（事件定义、记录、补录/撤销、周期都只做了静态检查、单测与打包）。
+> ⚠️ **尚未在模拟器 / 真机上手动运行过第二阶段的功能**（事件定义、记录、补录/撤销、周期、统计都只做了静态检查、单测与打包）。
 > 接手后建议先用 `npm start` + Expo Go 实机走一遍，再动新代码。
 
-**远端提醒**：本地 `main` 追踪的 `origin/main` 已不存在（`git status` 会提示 upstream gone）。
-远端为 `git@github.com:QinSa-Dev/LifeTrack.git`。若要推送，先确认目标分支。
+**远端提醒**：本地 `main` 比 `origin/main` 领先 9 个提交（远端为 `git@github.com:QinSa-Dev/LifeTrack.git`）。
+推送前先确认目标分支。
 
 ## 2. 环境与命令
 
@@ -100,7 +100,9 @@ src/theme/         设计令牌
 8. **同一定义的周期实例不重叠**（进行中 = 开区间），`create` / `update` 都会校验。
 9. **周期内记录一天一条**：`UNIQUE(instance_id, date)` + UPSERT（`CycleEntryRepository.save`）；
    写入前校验日期必须在实例区间内。
-10. 统计从事实数据算（未实现，属后续项）。
+10. **统计从事实数据算，不落汇总表**：打开统计页时对事实记录实时聚合，只统计未软删除的记录；
+    「一天/一周」按设备本地时区划分（ISO 周，周一起算）；数量型不同单位的值不合并计量
+    （`src/features/stats/aggregate.ts`）。
 
 ## 6. 关键文件索引
 
@@ -108,9 +110,9 @@ src/theme/         设计令牌
 - 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`
 - 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `isVisibleRecord`）、`src/domain/validation.ts`（含 `requireNotFuture`、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `predictNextCycleStart`）
 - 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / `softDelete` / `restore`）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT）、`cycleDefinitionRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`
-- 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `RecordRow` / `UndoBar`）、`src/features/cycles/`（`labels` / `CycleDefinitionForm`）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
-- 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴 + 撤销）、`src/app/(tabs)/cycles.tsx`、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/events/[id].tsx`、`src/app/cycles/[id].tsx`、`src/app/cycle-instances/[id].tsx`
-- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`
+- 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `RecordRow` / `UndoBar`）、`src/features/cycles/`（`labels` / `CycleDefinitionForm`）、`src/features/stats/aggregate.ts`（统计聚合，纯函数）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
+- 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴 + 撤销，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/cycles.tsx`、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/events/[id].tsx`、`src/app/cycles/[id].tsx`、`src/app/cycle-instances/[id].tsx`
+- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`
 
 ## 7. 必须遵守的工作约定
 
@@ -125,33 +127,34 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ 静态检查、209 个单元用例（真实内存 SQLite）、iOS 打包。
+- ✅ 静态检查、223 个单元用例（真实内存 SQLite）、iOS 打包。
 - ❌ 模拟器 / 真机手动运行；界面交互的自动化测试（项目暂无组件测试）。
 
 ## 9. 下一步任务：第二阶段剩余项
 
-「周期事件」已完成（见 `docs/learning/11-cycle-tracking.md`）。剩下的候选按推荐顺序：
+「统计」已完成（见 `docs/learning/12-statistics.md`：从事实数据聚合 + 时间轴 `FlatList` 虚拟化）。剩下的候选按推荐顺序：
 
-### 9.1（推荐）时间轴与统计
-
-- 统计**从事实数据算**（领域规则 10），不落冗余汇总表；查询必须过滤软删除（`deleted_at IS NULL` 或 `isVisibleRecord`）。
-- 需要按 `occurred_at` 分天/周聚合；数据变大时时间轴要从 `ScrollView` + `map` 换成 `FlatList`。
-
-### 9.2 永久删除一致性（较小、可穿插）
+### 9.1（推荐）永久删除一致性（较小、可穿插）
 
 - 事件记录（`event_records`）的**永久删除**还没有入口（周期那边已经有：定义 / 实例 / 单日记录）。
 - 需要为记录加永久删除（`Alert` 二次确认），并确认「软删除 → 撤销 → 永久删除」的状态转换没有漏洞。
 - 注意：删定义不删历史是**有意为之**，别顺手改成级联。
 
-### 9.3 导入导出
+### 9.2 导入导出
 
 - JSON / CSV 导入导出 + 冲突合并 + 事务一致性校验；领域规则是「导入失败不留半截数据」（整体事务）。
 
-### 9.4 周期功能的增强（可选，穿插）
+### 9.3 周期功能的增强（可选，穿插）
 
 - 日历式月视图（可点选日期）与按症状统计。
 - 预测目前只用「上一段开始日 + 平均周期长度」；可改成最近 N 段的平均（领域层加纯函数，不足两段则不预测）。
 - 界面还没用上 `CycleInstanceRepository.listOutsideEntryDates`：可在用户点保存前预演「这次改动会甩出哪些日期」。
+
+### 9.4 统计的增强（可选，穿插）
+
+- 目前只做「按天 / 按周」的条数与合计，没有环比/同比。
+- 统计页一次性读取全部记录再做聚合（没有把时间范围下推到 SQL）；若记录量很大，可在仓储层加
+  `occurred_at` 范围过滤后再聚合，纯函数接口不用变。
 
 ### 提交与验证习惯
 
@@ -163,7 +166,9 @@ src/theme/         设计令牌
 - **`MetaRepository.incrementLaunchCount` 是「读-改-写」，非原子**（`docs/learning/04` 4.6）。
   当前只用于启动计数，无实际损失；写真正的计数逻辑时不要照抄这个模式，改用原子 SQL 或事务。
 - **界面无自动化测试**：项目至今没有组件测试；若做复杂交互，考虑引入 `@testing-library/react-native`。
-- **列表用 `ScrollView` + `map`**：时间轴当前 `LIMIT 100`；数据变大要改 `FlatList` 虚拟化。
+- **时间轴只取最近 100 条**：已用 `FlatList` 虚拟化，但没有分页 / 无限滚动；更早的记录要去事件页看。
+- **统计页全量读取记录**：`EventRecordRepository.list()` 无上限，记录很多时会一次性读进内存再聚合；
+  可在仓储层加 `occurred_at` 范围过滤后再聚合（纯函数接口不用变，见第 9.4 节）。
 - **撤销状态不跨页面**：离开页面后撤销入口消失（记录仍是软删除状态）。若要跨页面持久化，按 `docs/learning/06` 3.9 评估（优先 `Context + useReducer`，不要直接上第三方库）。
 - **补录采用的是文本输入而非原生日期选择器**：因为原生 picker 不在 Expo Go 内置，会强制引入 development build。
   若将来接受 dev build，可再评估 `@react-native-community/datetimepicker`。
@@ -178,10 +183,11 @@ src/theme/         设计令牌
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：16 套件 / 209 用例通过
+npm run verify             # 应为：17 套件 / 223 用例通过
 npx expo export --platform ios   # 应能打包
 npm start                  # Expo Go 扫码，手动走一遍：
                            #   建事件 → 记录 → 补录 → 看时间轴 → 删除并撤销 → 归档/删除定义
+                           #   切到「统计」：看概览 / 按天按周趋势 / 按事件统计；删一条记录再看数字是否变化
                            #   建周期定义 → 开始新周期 → 记某天的阶段/症状 → 结束周期
                            #   把结束日提前到某条记录之前 → 应被拒绝并列出该日期（数据不能少）
                            #   删除某天的记录 / 删除整段周期 → 都应有二次确认

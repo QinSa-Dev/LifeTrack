@@ -6,7 +6,7 @@
 - 平台：iOS / Android
 - 数据：**全部存在设备本地**，无独立后端、无账号系统、无云数据库
 
-> 当前进度：**第一阶段（工程基线）已完成**；**第二阶段第 1 项（事件定义 / 分组 / 标签 / 快捷选项 / 归档）已完成**；**第 2 项（counter / quantity 记录与时间轴）已完成**；**补录与撤销已完成**；**周期事件（周期定义 / 实例 / 每日记录）已完成**（新增 v4 迁移，schema 现为 v4），其余核心业务尚未开始。
+> 当前进度：**第一阶段（工程基线）已完成**；**第二阶段第 1 项（事件定义 / 分组 / 标签 / 快捷选项 / 归档）已完成**；**第 2 项（counter / quantity 记录与时间轴）已完成**；**补录与撤销已完成**；**周期事件（周期定义 / 实例 / 每日记录）已完成**（新增 v4 迁移，schema 现为 v4）；**统计（从事实数据聚合 / 按天按周趋势 / 按事件合计）与时间轴 FlatList 虚拟化已完成**（无新增迁移，schema 仍为 v4），其余核心业务尚未开始。
 
 > 🤝 **接手 / 交接**：先读 [`HANDOFF.md`](./HANDOFF.md) —— 它记录当前状态、必须遵守的约定、已知问题与下一步任务；
 > 功能走读见 [`docs/learning/`](./docs/learning/README.md)。
@@ -67,7 +67,8 @@ iOS 模拟器 / 真机与 Android 模拟器都可以直接用 **Expo Go** 打开
 src/
   app/                    # expo-router 路由（每个文件即一个屏幕）
     _layout.tsx           # 根布局：注入 DatabaseProvider + 数据库门禁
-    (tabs)/               # 底部四标签：时间轴 / 事件 / 周期 / 设置
+    (tabs)/               # 底部五标签：时间轴 / 统计 / 事件 / 周期 / 设置
+                          #   index 时间轴（FlatList）/ stats 统计 / definitions / cycles / settings
     events/new.tsx        # 新建事件定义
     events/[id].tsx       # 编辑事件定义（归档 / 永久删除）
     record/[id].tsx       # 记录一次事件（快捷 / 手动 / 补录）＋ 最近记录删除与撤销
@@ -84,6 +85,7 @@ src/
     records/              # format（记录值 / 时间 / 来源）、RecordRow（记录行）、
                           # UndoBar（软删除后的撤销条）
     cycles/               # 周期定义表单 CycleDefinitionForm + 展示文案与症状解析
+    stats/                # aggregate：从事实记录聚合（按定义 / 按天 / 按周 / 概览），纯函数
     common/               # datetime：本地时间 ↔ UTC（补录与周期共用）
   db/                     # 数据库基础设施
     client.ts             # 唯一连接入口（PRAGMA、单例、失败不覆盖数据）
@@ -121,6 +123,7 @@ docs/
     09-event-recording.md
     10-backfill-and-undo.md
     11-cycle-tracking.md
+    12-statistics.md
 ```
 
 ## 开发指北（学习文档）
@@ -135,7 +138,8 @@ docs/
 了解第二阶段第 1 项（事件定义）时读 `08 事件定义`，
 了解第 2 项（记录与时间轴）时读 `09 事件记录`，
 了解补录与撤销时读 `10 补录与撤销`，
-了解周期事件时读 `11 周期事件`。
+了解周期事件时读 `11 周期事件`，
+了解统计与时间轴虚拟化时读 `12 统计`。
 
 > 文档随功能同步更新；未实现的功能（备份恢复、整体架构演进）暂不写作，避免空文档。
 
@@ -224,6 +228,20 @@ docs/
 | schema | v4 迁移（`cycle_definitions` / `cycle_instances` / `cycle_entries` + 索引），从 v1 升级只跑 v2/v3/v4 且旧数据不丢 |
 | 领域规则 | 边界修改不静默删除越界记录（`ConflictError` + `details.outsideDates`）；同一周期实例不重叠；一天一条（`UNIQUE(instance_id, date)` + UPSERT）；永久删除均二次确认 |
 | iOS 打包 | `npx expo export --platform ios` 通过（js bundle 2.9MB） |
+| 模拟器 / 真机运行 | **尚未执行**（本次仅做静态检查、单测与打包验证） |
+
+## 第二阶段验收记录（统计）
+
+| 项目 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过 |
+| `npm run lint` | 通过（0 error / 0 warning） |
+| `npm test` | 17 个套件 / 223 个用例通过 |
+| `npm run format:check` | 通过 |
+| schema | **无新增迁移**，仍为 v4（统计从 `event_records` 实时聚合，不落汇总表） |
+| 领域规则 | 统计从事实数据算；只统计未软删除记录；按设备本地时区分天/周（ISO 周，周一起算）；不同单位的数量不合并计量 |
+| 时间轴 | 由 `ScrollView` + `map` 改为 `FlatList` 虚拟化，每行单独成卡 |
+| iOS 打包 | `npx expo export --platform ios` 通过（1261 modules，js bundle 2.9MB） |
 | 模拟器 / 真机运行 | **尚未执行**（本次仅做静态检查、单测与打包验证） |
 
 ## 不在范围内（首版）
