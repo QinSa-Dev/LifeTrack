@@ -59,6 +59,10 @@ interface InstanceRangeRow {
 const SELECT_COLUMNS =
   'id, instance_id, date, phase, symptoms, feelings, note, created_at, updated_at, deleted_at';
 
+/** JOIN 实例表时要带表别名，否则列名有歧义。 */
+const SELECT_COLUMNS_ALIASED =
+  'e.id, e.instance_id, e.date, e.phase, e.symptoms, e.feelings, e.note, e.created_at, e.updated_at, e.deleted_at';
+
 /** symptoms 存 JSON 数组文本；解析失败退化为空数组，避免整行读不出来。 */
 function parseSymptoms(json: string): string[] {
   let parsed: unknown;
@@ -114,6 +118,36 @@ export class CycleEntryRepository {
     return guard('读取周期记录', async () => {
       const rows = await this.db.getAllAsync<CycleEntryRow>(
         `SELECT ${SELECT_COLUMNS} FROM cycle_entries ORDER BY date ASC, id ASC`,
+      );
+      return rows.map(toEntry);
+    });
+  }
+
+  /**
+   * 全部**可见**的周期记录（跨实例），按日期正序。
+   * 传入 `definitionId` 时只返回这个周期定义下的记录。
+   *
+   * 与 `listAll` 的区别：那个是导出用的、**含软删除**；这个是展示与统计用的、不含。
+   * 症状统计需要跨实例看一个定义（或全部）的记录，所以不能只靠 `listByInstance`。
+   */
+  async listVisible(definitionId?: string): Promise<CycleEntry[]> {
+    return guard('读取周期记录', async () => {
+      if (definitionId === undefined) {
+        const rows = await this.db.getAllAsync<CycleEntryRow>(
+          `SELECT ${SELECT_COLUMNS} FROM cycle_entries
+            WHERE deleted_at IS NULL
+            ORDER BY date ASC, id ASC`,
+        );
+        return rows.map(toEntry);
+      }
+
+      const targetId = requireId(definitionId, '周期定义 id');
+      const rows = await this.db.getAllAsync<CycleEntryRow>(
+        `SELECT ${SELECT_COLUMNS_ALIASED} FROM cycle_entries e
+           JOIN cycle_instances i ON i.id = e.instance_id
+          WHERE i.definition_id = ? AND e.deleted_at IS NULL
+          ORDER BY e.date ASC, e.id ASC`,
+        targetId,
       );
       return rows.map(toEntry);
     });

@@ -83,6 +83,37 @@ describe('CycleEntryRepository', () => {
     expect((await entries.listAll()).map((entry) => entry.date)).toEqual(['2026-10-04', '2026-11-02']);
   });
 
+  it('listVisible 跨实例返回可见记录，且不含软删除（展示与统计用）', async () => {
+    const definitions = new CycleDefinitionRepository(db);
+    const second = await definitions.create({ name: '第二个周期' }, T1);
+    const otherInstance = await instances.create(
+      { definitionId: second.id, startDate: '2026-11-01', endDate: '2026-11-03' },
+      T1,
+    );
+
+    await entries.save(instanceId, { date: '2026-10-04' }, T1);
+    await entries.save(otherInstance.id, { date: '2026-11-02' }, T1);
+    const trashed = await entries.save(instanceId, { date: '2026-10-02' }, T1);
+    await entries.softDelete(trashed.id, T2);
+
+    expect((await entries.listVisible()).map((entry) => entry.date)).toEqual(['2026-10-04', '2026-11-02']);
+  });
+
+  it('listVisible 传定义 id 时只返回这个定义下的记录', async () => {
+    const definitions = new CycleDefinitionRepository(db);
+    const second = await definitions.create({ name: '第二个周期' }, T1);
+    const otherInstance = await instances.create(
+      { definitionId: second.id, startDate: '2026-11-01', endDate: '2026-11-03' },
+      T1,
+    );
+
+    await entries.save(instanceId, { date: '2026-10-04' }, T1);
+    await entries.save(otherInstance.id, { date: '2026-11-02' }, T1);
+
+    expect((await entries.listVisible(second.id)).map((entry) => entry.date)).toEqual(['2026-11-02']);
+    expect(await entries.listVisible('missing')).toEqual([]);
+  });
+
   it('日期必须落在周期区间内，否则拒绝且不写库', async () => {
     await expect(entries.save(instanceId, { date: '2026-09-30' }, T1)).rejects.toThrow(ValidationError);
     await expect(entries.save(instanceId, { date: '2026-10-06' }, T1)).rejects.toThrow(ValidationError);
