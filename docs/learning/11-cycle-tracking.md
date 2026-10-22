@@ -17,7 +17,7 @@
 | 周期内记录 | 某一天的阶段、症状、感受、备注；**一天一条**，重复保存即覆盖 |
 | 预测 | 按「最近一段开始日 + 周期长度」给出下次预测；长度优先用**实际观察到的间隔平均**，没有历史才退回配置值，都没有就**不预测**（不猜） |
 | 归档 | 归档只表示「不再开新周期」，**已有周期与记录都留着** |
-| 永久删除 | 删定义 / 删实例 / 删某天的记录，都有 `Alert` 二次确认 |
+| 删除分两级 | **某天的记录**：软删除（可撤销，回收站里再彻底删除，见第 4.9 节）；**定义 / 整段实例**：不可逆的永久删除，`Alert` 二次确认 |
 | 边界预演 | 改边界时**保存之前**就提示「会有哪几天落到区间外」，不必等报错（第 4.8 节） |
 
 这一项真正的新东西是三条**领域规则**，它们不是「顺手删掉就行」，而是要在代码里站住：
@@ -213,10 +213,15 @@ await this.db.runAsync(
      symptoms = excluded.symptoms,
      feelings = excluded.feelings,
      note = excluded.note,
-     updated_at = excluded.updated_at`,
+     updated_at = excluded.updated_at,
+     deleted_at = NULL`,
   // …
 );
 ```
+
+最后那句 `deleted_at = NULL` 是 v5 加的（发生了软删除之后，保存 = **复活**）：
+不这样做就会出现「提示保存成功、列表里却没有」——那天仍是软删除状态，被列表过滤掉了。
+详见第 4.9 节。
 
 **为什么本项目需要**：界面的交互是「点某一天 → 填写 → 保存」。如果保存分成
 「新建」和「更新」两条路，页面就要自己判断「这天填过没有」，还容易判断错。
@@ -472,6 +477,40 @@ const outsideDates = useMemo(() => {
    否则会把「输入还没填好」显示成「全部记录都越界」。
 4. **提示不等于校验**：用警告色，文案写明「保存会被拒绝」。
 
+### 4.9 某天的记录也能软删除（v5）
+
+原来的「删除某天的记录」是真删，只有 `Alert` 二次确认兜着。v5 给 `cycle_entries` 加了
+`deleted_at`，与事件记录对齐：「删除」先软删（可撤销），回收站里再决定恢复还是彻底删除。
+
+```ts
+// src/repositories/cycleEntryRepository.ts
+async softDelete(id: string, now: IsoDateTime = new Date().toISOString()): Promise<CycleEntry> {
+  // … 幂等：已删除直接返回原记录
+  await this.db.runAsync(
+    'UPDATE cycle_entries SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL',
+    deletedAt,
+    targetId,
+  );
+  return this.mustReadOne(targetId);
+}
+```
+
+这次改动牵动了周期这边**三处规则**，每一处都要跟着更新，否则就自相矛盾：
+
+| 规则 | 原来 | 现在 |
+| --- | --- | --- |
+| 写入校验 | 日期必须在实例区间内 | 不变；`restore` 也**重新**校验（软删期间边界可能已缩走） |
+| 边界越界检查（4.4 节） | 查这条周期的全部记录日期 | 只查 **`deleted_at IS NULL`** 的：回收站里那几天不该挡住缩小边界 |
+| 列表 / 统计 | `listByInstance` 全给 | 默认过滤软删；`listAll`（导出用）仍带全部 |
+
+还有一个「保存即复活」（第 3.5 节）与一条备份侧的连带修改（软删除的记录允许落在区间外，
+否则 App 自己导出的备份会在导入时被自己拒绝）——完整经过见
+[13 回收站与永久删除](./13-permanent-delete-and-trash.md) 第 6 节。
+
+界面上，这一段周期的页面删除后出现「撤销」提示条（复用时间轴的 `UndoBar`），
+提示条里写明回收站在哪；回收站页则多了一个「已删除的周期记录」区
+（一行显示：**日期 · 所属周期与区间 · 删除时间**，带「恢复 / 永久删除」）。
+
 ## 5. 一次完整数据流：把结束日提前，但那天有记录
 
 ```mermaid
@@ -512,8 +551,9 @@ npx expo export --platform ios           # 打包（不需要模拟器）
 ### 真实跑过的结果
 
 ```bash
-npm test    # 21 个套件 / 291 个用例通过（含后来补的预测与边界预演增强）
+npm test    # 22 个套件 / 338 个用例通过（含预测与边界预演增强、v5 软删除）
 npx expo export --platform ios   # 通过（js bundle 3.1MB）
+maestro test .maestro/flows      # 8/8 通过（含周期边界预演与周期记录软删除，见 docs/learning/15）
 ```
 
 其中与周期直接相关的用例：
@@ -525,11 +565,14 @@ npx expo export --platform ios   # 通过（js bundle 3.1MB）
 - `src/features/cycles/__tests__/labels-test.ts`：`describePrediction` 把「算出来的 / 按配置推的 / 不预测」
   三种说法分开；列表副标题里的预测也用实际间隔。
 - `src/db/__tests__/migrations-test.ts`：v4 三表存在、两项 `CHECK`、`UNIQUE(instance_id, date)`、
-  外键生效、级联删除、「记录与实例独立」；以及从 v1 升级只跑 v2/v3/v4 且旧数据不丢。
+  外键生效、级联删除、「记录与实例独立」；v1 升级只跑 v2 之后的迁移且旧数据不丢；
+  v5 加上 `deleted_at` 列（可空、旧行为 NULL）、从 v4 旧库升级后老记录都在且都视为未删除。
 - `src/repositories/__tests__/cycleInstanceRepository-test.ts`：定义必须存在且未归档、区间非法、
-  重叠拒绝、**缩小边界被拒后「边界没变、记录一条没少」**、`details.outsideDates`、`endInstance`、级联删除。
+  重叠拒绝、**缩小边界被拒后「边界没变、记录一条没少」**、`details.outsideDates`、`endInstance`、级联删除；
+  以及**回收站里的记录不挡边界**（软删除之后可以缩到它外面，未删的那条被完整保留）。
 - `src/repositories/__tests__/cycleEntryRepository-test.ts`：UPSERT 更新同一天（`id` 不变、`created_at` 不变）、
-  区间外被拒且不写库、症状去空去重、空数组存成 `'[]'`。
+  区间外被拒且不写库、症状去空去重、空数组存成 `'[]'`；v5 的软删除幂等、
+  恢复幂等、「保存即复活」、`listDeleted` 的顺序与上下文、恢复被区间拒绝（失败后仍是软删除状态）。
 
 ### 测试覆盖了什么
 
@@ -553,12 +596,15 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
 
 ### 没覆盖什么（诚实记录）
 
-- **没有在模拟器 / 真机上手动运行过**。本项与第二阶段其它项一样，只做了静态检查、单元测试与打包验证。
-  （后来本机 iOS 模拟器把页面渲染统一走了一遍，但**没有手点过**写入路径，见 `README.md`。）
+- **当时没有在模拟器 / 真机上手动运行过**：本项与第二阶段其它项一样，只做了静态检查、单元测试与打包验证。
+  （后来用 Maestro 在真实界面上补了点：周期边界预演 `05`、周期记录软删除 `07`，见
+  [15 端到端](./15-maestro-e2e.md)；Android 与真机仍未跑。）
 - **没有组件 / 界面测试**：项目至今没有引入 `@testing-library/react-native`，
   所以「点某一行回填表单」「`Alert` 二次确认」这些交互没有自动化验证。
-- **边界预演没有界面测试**：`outsideDates` 的计算用的是被单测覆盖的纯函数 `findDatesOutside`，
-  但「输入没填完整时不提示」「提示文案带出了哪些日期」这两件事只能说逻辑上成立，没有断言。
+- **边界预演与软删除只有端到端覆盖**：`outsideDates` 用的是被单测覆盖的纯函数 `findDatesOutside`，
+  「输入没填完整时不提示」「提示文案带出了哪些日期」与「软删除 → 撤销 → 回收站恢复」这些
+  交互层结论，只有 Maestro 流程（`05` / `07`，见 [15](./15-maestro-e2e.md)）在真实界面上断言过，
+  没有组件级断言。
 - **没有并发测试**：`withExclusiveTransactionAsync` 的行为在真实设备上与测试环境可能不同。
 
 ## 7. 常见问题与排查
@@ -567,7 +613,7 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
 
 这不是 bug，是本项要的**行为**。先看报错里列出的日期，决定：
 
-1. 把那几天的记录删掉（在「每日记录」里点删除，会二次确认），再改边界；
+1. 把那几天的记录删掉（在「每日记录」里点「删除」，是软删除；确认不需要了就进回收站彻底删除），再改边界；
 2. 或者把边界改回包含它们；
 3. 或者干脆另开一段周期。
 
@@ -602,6 +648,13 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
 所以界面上的「永久删除这段周期」会先弹二次确认，并告知将删除几条记录。
 删**周期定义**同理，会连带删掉它所有的实例与记录。
 
+### 问题：删了某天的记录，还能找回来吗
+
+能——「删除」是软删除，会先出现在回收站（时间轴头部入口）的「已删除的周期记录」区，
+可以恢复或彻底删除；当次页面上也会立刻出现一个「撤销」提示条。
+只有软删除期间这段周期的边界又被缩小、导致那天落在区间外时，「恢复」才会被拒绝并说明原因
+（先把边界改回来，或彻底删除它）。详见 [13](./13-permanent-delete-and-trash.md) 第 6 节。
+
 ## 8. 学习总结与练习
 
 本项练习到的能力：
@@ -615,6 +668,9 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
 - **「不许静默丢数据」怎么落地**：把规则做成一次会 `throw` 的校验，并在报错里带上足够的上下文。
 - **`ConflictError` 与 `ValidationError` 的区分**：前者是「和现有数据冲突」，后者是「输入本身不合法」。
 - **UPSERT + 唯一索引**表达「一天一条」，让保存天然幂等。
+- **给已有表加软删除要连着改一串规则**：写入/恢复的区间校验、边界的越界检查、
+  备份的完整性检查、UPSERT 的「复活」语义——每一条都要跟着更新，否则规则之间会互相矛盾
+  （第 4.9 节那张表）。
 - **字典序即时间序**：定长 `YYYY-MM-DD` 字符串可以直接比较，不必转 `Date`。
 - **三层下钻路由**与 `typedRoutes` 的重新生成。
 
