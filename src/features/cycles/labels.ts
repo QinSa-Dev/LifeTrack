@@ -5,7 +5,7 @@
  * 也方便将来单元测试不需要渲染 React 组件。
  */
 
-import { instanceLengthDays, latestInstance, predictNextCycleStart } from '@/domain/cycles';
+import { instanceLengthDays, latestInstance, predictNextCycle, type CyclePrediction } from '@/domain/cycles';
 import type { CycleDefinition, CycleInstance, CyclePhase, IsoDate } from '@/domain/models';
 
 /** 常用阶段名，界面上给成快捷胶囊；`CyclePhase` 本身是自由文本，仍可自己填。 */
@@ -34,11 +34,25 @@ export function describeLatestCycle(
     return '还没有周期记录';
   }
   const parts = [`最近 ${latest.startDate} ~ ${latest.endDate ?? '进行中'}`];
-  const predicted = predictNextCycleStart(latest, definition);
-  if (predicted !== undefined) {
-    parts.push(`预测下次 ${predicted}`);
+  const prediction = predictNextCycle(instances, definition);
+  if (prediction !== undefined) {
+    parts.push(`预测下次 ${prediction.nextStart}`);
   }
   return parts.join(' · ');
+}
+
+/**
+ * 把预测结果说清楚：**是「算出来的」还是「按配置推的」要分开讲**，
+ * 否则用户会以为「预测」两个字代表确定的算法结果。没有依据时明说不预测。
+ */
+export function describePrediction(prediction: CyclePrediction | undefined): string {
+  if (prediction === undefined) {
+    return '没有可用的周期长度（既无历史间隔、也未配置平均周期），暂不做预测。';
+  }
+  if (prediction.basis === 'observed') {
+    return `预测下次开始日：${prediction.nextStart}（按最近 ${prediction.observedGaps} 段间隔的平均 ${prediction.lengthDays} 天）`;
+  }
+  return `预测下次开始日：${prediction.nextStart}（按定义里配置的平均周期长度 ${prediction.lengthDays} 天）`;
 }
 
 /** 「2026-10-01 ~ 2026-10-05 · 共 5 天」；进行中的实例需要传入 `through`（通常是今天）。 */

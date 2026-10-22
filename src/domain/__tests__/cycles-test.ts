@@ -5,7 +5,8 @@ import {
   isEntryWithinRange,
   isOngoingInstance,
   latestInstance,
-  predictNextCycleStart,
+  observedCycleLength,
+  predictNextCycle,
   rangesOverlap,
 } from '@/domain/cycles';
 import type { CycleDefinition, CycleInstance } from '@/domain/models';
@@ -127,15 +128,85 @@ describe('isOngoingInstance / instanceLengthDays', () => {
   });
 });
 
-describe('predictNextCycleStart', () => {
-  it('按平均周期长度预测', () => {
-    expect(predictNextCycleStart(makeInstance(), makeDefinition({ averageCycleLengthDays: 28 }))).toBe(
-      '2026-10-29',
-    );
+describe('observedCycleLength', () => {
+  const at = (startDate: string) => makeInstance({ id: startDate, startDate, endDate: undefined });
+
+  it('一个实例（没有完整间隔）不猜', () => {
+    expect(observedCycleLength([at('2026-10-01')])).toBeUndefined();
   });
 
-  it('没有配置平均长度时不预测', () => {
-    expect(predictNextCycleStart(makeInstance(), makeDefinition())).toBeUndefined();
+  it('两个实例：间隔就是两段开始日之差', () => {
+    expect(observedCycleLength([at('2026-09-03'), at('2026-10-01')])).toEqual({
+      averageDays: 28,
+      gaps: 1,
+    });
+  });
+
+  it('取最近 window 个间隔的平均（远的旧数据不参与）', () => {
+    const instances = [at('2026-06-01'), at('2026-06-21'), at('2026-07-20'), at('2026-08-17')];
+    // 间隔依次是 20 / 29 / 28 天；window = 2 时只看 29 与 28 → 28.5 → 四舍五入 29
+    expect(observedCycleLength(instances, 2)).toEqual({ averageDays: 29, gaps: 2 });
+    // 全部参与时 20 + 29 + 28 → 25.67 → 26
+    expect(observedCycleLength(instances)).toEqual({ averageDays: 26, gaps: 3 });
+  });
+
+  it('实例顺序不影响结果（内部按开始日排序）', () => {
+    const instances = [at('2026-08-17'), at('2026-06-01'), at('2026-07-20'), at('2026-06-21')];
+    expect(observedCycleLength(instances)).toEqual({ averageDays: 26, gaps: 3 });
+  });
+
+  it('同一个开始日只算一次（防御性处理，避免 0 天间隔拉低平均）', () => {
+    expect(observedCycleLength([at('2026-09-03'), at('2026-09-03'), at('2026-10-01')])).toEqual({
+      averageDays: 28,
+      gaps: 1,
+    });
+  });
+
+  it('window 不是正整数时不猜', () => {
+    const instances = [at('2026-09-03'), at('2026-10-01')];
+    expect(observedCycleLength(instances, 0)).toBeUndefined();
+    expect(observedCycleLength(instances, 1.5)).toBeUndefined();
+  });
+});
+
+describe('predictNextCycle', () => {
+  const at = (startDate: string) => makeInstance({ id: startDate, startDate, endDate: undefined });
+
+  it('有历史时按实际观察到的间隔预测，并说明依据', () => {
+    const prediction = predictNextCycle([at('2026-09-03'), at('2026-10-01')], makeDefinition());
+    expect(prediction).toEqual({
+      nextStart: '2026-10-29',
+      lengthDays: 28,
+      basis: 'observed',
+      observedGaps: 1,
+    });
+  });
+
+  it('观察到的间隔优先于定义里配置的平均长度', () => {
+    const prediction = predictNextCycle(
+      [at('2026-09-03'), at('2026-10-01')],
+      makeDefinition({ averageCycleLengthDays: 40 }),
+    );
+    expect(prediction?.lengthDays).toBe(28);
+    expect(prediction?.basis).toBe('observed');
+  });
+
+  it('没有历史间隔时退回配置的平均长度，并标明依据是配置', () => {
+    const prediction = predictNextCycle([at('2026-10-01')], makeDefinition({ averageCycleLengthDays: 28 }));
+    expect(prediction).toEqual({
+      nextStart: '2026-10-29',
+      lengthDays: 28,
+      basis: 'configured',
+      observedGaps: 0,
+    });
+  });
+
+  it('既没有历史间隔、也没有配置时不预测', () => {
+    expect(predictNextCycle([at('2026-10-01')], makeDefinition())).toBeUndefined();
+  });
+
+  it('一个实例都没有时不预测', () => {
+    expect(predictNextCycle([], makeDefinition({ averageCycleLengthDays: 28 }))).toBeUndefined();
   });
 });
 

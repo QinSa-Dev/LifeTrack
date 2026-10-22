@@ -213,25 +213,6 @@ export class CycleInstanceRepository {
     });
   }
 
-  /**
-   * 只读的「预演」：如果边界改成这个区间，哪些日期会落在外面。
-   * 界面可以在用户点保存之前就提示，而不是等报错。
-   */
-  async listOutsideEntryDates(id: string, range: DateRange): Promise<IsoDate[]> {
-    const targetId = requireId(id, '周期实例 id');
-    return guard('检查周期边界', async () => {
-      const rows = await this.db.getAllAsync<DateRow>(
-        'SELECT date FROM cycle_entries WHERE instance_id = ? ORDER BY date ASC',
-        targetId,
-      );
-      return findDatesOutside(
-        rows.map((row) => row.date),
-        range.startDate,
-        range.endDate,
-      );
-    });
-  }
-
   /** 有记录落在新区间外就抛 ConflictError——这就是「不静默删除」的落点。 */
   private async assertNoOutsiders(txn: SqlExecutor, instanceId: string, range: DateRange): Promise<void> {
     const rows = await txn.getAllAsync<DateRow>(

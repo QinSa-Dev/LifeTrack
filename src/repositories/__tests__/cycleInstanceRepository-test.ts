@@ -128,19 +128,6 @@ describe('CycleInstanceRepository', () => {
     });
   });
 
-  it('listOutsideEntryDates 可以预演边界改动会甩出哪些日期', async () => {
-    const created = await create({ startDate: '2026-10-01', endDate: '2026-10-10' });
-    await entries.save(created.id, { date: '2026-10-02' }, T1);
-    await entries.save(created.id, { date: '2026-10-08' }, T1);
-
-    expect(
-      await instances.listOutsideEntryDates(created.id, { startDate: '2026-10-01', endDate: '2026-10-05' }),
-    ).toEqual(['2026-10-08']);
-    expect(
-      await instances.listOutsideEntryDates(created.id, { startDate: '2026-10-01', endDate: '2026-10-10' }),
-    ).toEqual([]);
-  });
-
   it('更新成与其它实例重叠时拒绝', async () => {
     const first = await create({ startDate: '2026-09-01', endDate: '2026-09-05' });
     await create({ startDate: '2026-10-01', endDate: '2026-10-05' });

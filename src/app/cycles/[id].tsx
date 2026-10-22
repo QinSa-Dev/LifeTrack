@@ -5,10 +5,10 @@ import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 import { AppText, Badge, Button, Card, EmptyState, Header, ListRow, Screen, TextField } from '@/components';
 import { useReadyDatabase } from '@/db';
 import { addDays } from '@/domain/dates';
-import { instanceLengthDays, latestInstance, predictNextCycleStart } from '@/domain/cycles';
+import { instanceLengthDays, latestInstance, predictNextCycle } from '@/domain/cycles';
 import type { CycleDefinition, CycleInstance } from '@/domain/models';
 import { CycleDefinitionForm } from '@/features/cycles/CycleDefinitionForm';
-import { describeCycleDefinition } from '@/features/cycles/labels';
+import { describeCycleDefinition, describePrediction } from '@/features/cycles/labels';
 import { localDateText } from '@/features/common/datetime';
 import { CycleDefinitionRepository, CycleInstanceRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
@@ -88,8 +88,7 @@ export default function CycleDefinitionScreen() {
 
   const today = localDateText(new Date());
   const ongoing = instances.find((instance) => instance.endDate === undefined);
-  const latest = latestInstance(instances);
-  const predicted = latest ? predictNextCycleStart(latest, definition) : undefined;
+  const prediction = predictNextCycle(instances, definition);
 
   const toggleArchive = () => {
     if (busy) {
@@ -204,9 +203,7 @@ export default function CycleDefinitionScreen() {
         <Card title="定义信息" style={styles.spaced}>
           <AppText variant="body">{describeCycleDefinition(definition)}</AppText>
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-            {predicted === undefined
-              ? '没有配置平均周期长度，暂不做预测。'
-              : `预测下次开始日：${predicted}（按上一段开始日 + 平均周期长度）`}
+            {describePrediction(prediction)}
           </AppText>
         </Card>
       )}

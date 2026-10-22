@@ -1,5 +1,5 @@
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
 import {
@@ -15,10 +15,17 @@ import {
   TextField,
 } from '@/components';
 import { useReadyDatabase } from '@/db';
-import { isOngoingInstance, predictNextCycleStart } from '@/domain/cycles';
+import { isValidIsoDate } from '@/domain/dates';
+import { findDatesOutside, isOngoingInstance, predictNextCycle } from '@/domain/cycles';
 import type { CycleDefinition, CycleEntry, CycleInstance } from '@/domain/models';
 import { localDateText } from '@/features/common/datetime';
-import { COMMON_PHASES, describeInstanceRange, joinSymptoms, splitSymptoms } from '@/features/cycles/labels';
+import {
+  COMMON_PHASES,
+  describeInstanceRange,
+  describePrediction,
+  joinSymptoms,
+  splitSymptoms,
+} from '@/features/cycles/labels';
 import { CycleDefinitionRepository, CycleEntryRepository, CycleInstanceRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
@@ -59,6 +66,8 @@ export default function CycleInstanceScreen() {
   const [instance, setInstance] = useState<CycleInstance | null | undefined>(undefined);
   const [definition, setDefinition] = useState<CycleDefinition | null>(null);
   const [entries, setEntries] = useState<CycleEntry[]>([]);
+  // 同一定义的全部实例：预测要用「实际观察到的间隔」，只看当前这一段不够
+  const [definitionInstances, setDefinitionInstances] = useState<CycleInstance[]>([]);
   const [boundaryStart, setBoundaryStart] = useState('');
   const [boundaryEnd, setBoundaryEnd] = useState('');
   const [form, setForm] = useState<EntryForm>(EMPTY_FORM);
@@ -85,15 +94,17 @@ export default function CycleInstanceScreen() {
         setBoundaryStart(loaded.startDate);
         setBoundaryEnd(loaded.endDate ?? '');
 
-        const [loadedDefinition, loadedEntries] = await Promise.all([
+        const [loadedDefinition, loadedEntries, loadedInstances] = await Promise.all([
           new CycleDefinitionRepository(db).getById(loaded.definitionId),
           new CycleEntryRepository(db).listByInstance(loaded.id),
+          new CycleInstanceRepository(db).list({ definitionId: loaded.definitionId }),
         ]);
         if (cancelled) {
           return;
         }
         setDefinition(loadedDefinition);
         setEntries(loadedEntries);
+        setDefinitionInstances(loadedInstances);
         // 表单的日期只在第一次填入时给默认值，之后不覆盖用户正在编辑的内容
         const defaultDate = clampDate(localDateText(new Date()), loaded.startDate, loaded.endDate);
         setForm((current) => (current.date === '' ? { ...current, date: defaultDate } : current));
@@ -251,6 +262,29 @@ export default function CycleInstanceScreen() {
     );
   };
 
+  /**
+   * 边界预演：按当前输入，哪些日期会落到区间外。
+   *
+   * 记录本来就在手上（`entries` 是这段周期的全部记录），所以**不必再查一次库**：
+   * 直接用与仓储同一份纯函数规则 `findDatesOutside` 算，边打字边出结果，
+   * 也就没有「异步结果回来晚了、显示成旧输入的结论」这类竞态。
+   *
+   * 输入还没填完整（不是合法日期、或结束日早于开始日）时不给结论——
+   * 否则会显示成误导性的「全部记录都越界」。真正的把关仍在保存时由仓储执行。
+   */
+  const outsideDates = useMemo(() => {
+    const start = boundaryStart.trim();
+    const end = boundaryEnd.trim();
+    if (!isValidIsoDate(start) || (end !== '' && (!isValidIsoDate(end) || end < start))) {
+      return [];
+    }
+    return findDatesOutside(
+      entries.map((entry) => entry.date),
+      start,
+      end === '' ? undefined : end,
+    );
+  }, [entries, boundaryStart, boundaryEnd]);
+
   if (instance === undefined) {
     return (
       <Screen contentStyle={styles.centered}>
@@ -270,7 +304,7 @@ export default function CycleInstanceScreen() {
 
   const today = localDateText(new Date());
   const ongoing = isOngoingInstance(instance);
-  const predicted = definition ? predictNextCycleStart(instance, definition) : undefined;
+  const prediction = definition ? predictNextCycle(definitionInstances, definition) : undefined;
 
   return (
     <Screen scroll contentStyle={styles.content}>
@@ -312,7 +346,7 @@ export default function CycleInstanceScreen() {
           placeholder="2026-10-05"
           autoCapitalize="none"
           autoCorrect={false}
-          hint="若新边界会把已有记录甩在外面，会拒绝保存并列出那些日期——不会悄悄删掉它们。"
+          hint="若新边界会把已有记录甩在外面，这里会立刻提示；保存也会被拒绝——不会悄悄删掉它们。"
         />
         <View style={styles.actions}>
           <Button
@@ -331,9 +365,15 @@ export default function CycleInstanceScreen() {
             />
           ) : null}
         </View>
-        {predicted !== undefined ? (
+        {outsideDates.length > 0 ? (
+          <AppText variant="body" color={palette.warning} style={styles.spacedTop}>
+            按这个边界，会有 {outsideDates.length} 条记录落在区间外（{outsideDates.join('、')}）：
+            保存会被拒绝，这些记录不会被删除。
+          </AppText>
+        ) : null}
+        {prediction !== undefined ? (
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-            预测下次开始日：{predicted}
+            {describePrediction(prediction)}
           </AppText>
         ) : null}
       </Card>

@@ -1,5 +1,5 @@
 /**
- * 周期相关的领域规则（纯函数，不碰数据库、不碰 React）。
+ * 生命周期的领域规则（纯函数，不碰数据库、不碰 React）。
  *
  * 这里承载的是本功能最重要的一条规则：
  *
@@ -8,6 +8,9 @@
  * `findDatesOutside` 把「哪些日期会越界」算出来交给调用方决定；
  * 仓储层据此**拒绝更新**（抛 ConflictError）并在报错里说明原因，
  * 而不是把越界的记录偷偷删掉或改掉。这样数据只会在用户明确操作时消失。
+ *
+ * 预测同样守「不猜」的原则：**先看实际观察到的间隔，没有历史才退回配置值，
+ * 两样都没有就明说「不做预测」**（`predictNextCycle`）。
  */
 
 import { addDays, daysBetween, isDateWithin } from './dates';
@@ -76,19 +79,101 @@ export function instanceLengthDays(instance: CycleInstance, through?: IsoDate): 
   return daysBetween(instance.startDate, end) + 1;
 }
 
+/** 预测时最多回看多少个「间隔」（相邻两次开始日之差）。 */
+export const DEFAULT_PREDICTION_WINDOW = 3;
+
+/** 从历史里「观察」到的周期长度。 */
+export interface ObservedCycleLength {
+  /** 相邻开始日之差的平均值（天，四舍五入成整数） */
+  averageDays: number;
+  /** 参与平均的间隔数（≥ 1） */
+  gaps: number;
+}
+
 /**
- * 预测下次周期的开始日：本次开始日 + 平均周期长度。
- * 没有配置平均长度时返回 `undefined`（表示「不预测」，而不是猜一个值）。
+ * 观察到的平均周期长度：把**最近 `window` 个相邻开始日之差**取平均。
+ *
+ * - 少于两个实例（连一个完整间隔都没有）→ `undefined`，**不猜**。
+ * - 传进来的应当是同一定义的实例（仓储的 `list({ definitionId })` 已经保证）；
+ *   同一个开始日只算一次（正常情况下两段区间不重叠，这里是防御性处理）。
+ * - 间隔按**日历日**算（`daysBetween`），不受时区与夏令时影响。
  */
-export function predictNextCycleStart(
-  instance: CycleInstance,
-  definition: CycleDefinition,
-): IsoDate | undefined {
-  const length = definition.averageCycleLengthDays;
-  if (length === undefined) {
+export function observedCycleLength(
+  instances: readonly CycleInstance[],
+  window: number = DEFAULT_PREDICTION_WINDOW,
+): ObservedCycleLength | undefined {
+  if (!Number.isInteger(window) || window < 1) {
     return undefined;
   }
-  return addDays(instance.startDate, length);
+  const starts = [...new Set(instances.map((instance) => instance.startDate))].sort();
+  if (starts.length < 2) {
+    return undefined;
+  }
+
+  const gaps: number[] = [];
+  for (let index = Math.max(1, starts.length - window); index < starts.length; index += 1) {
+    const previous = starts[index - 1];
+    const current = starts[index];
+    if (previous === undefined || current === undefined) {
+      continue;
+    }
+    gaps.push(daysBetween(previous, current));
+  }
+  if (gaps.length === 0) {
+    return undefined;
+  }
+
+  const total = gaps.reduce((sum, gap) => sum + gap, 0);
+  return { averageDays: Math.round(total / gaps.length), gaps: gaps.length };
+}
+
+/** 下次周期的预测结果；`basis` 说明这个长度是怎么来的，界面据此说清依据。 */
+export interface CyclePrediction {
+  nextStart: IsoDate;
+  /** 用来预测的周期长度（天） */
+  lengthDays: number;
+  /** `observed` = 最近若干段的实际间隔平均；`configured` = 定义里配置的平均长度 */
+  basis: 'observed' | 'configured';
+  /** `basis` 为 `observed` 时参与平均的间隔数；否则为 0 */
+  observedGaps: number;
+}
+
+/**
+ * 预测下次周期开始日（= 最近一段的开始日 + 预测长度）。
+ *
+ * 三级优先：**观察到的间隔** → **定义里配置的平均长度** → **不做预测**（`undefined`）。
+ * 任何一种情况的依据都能从返回值看出来，界面不会把「猜的」说成「算的」。
+ */
+export function predictNextCycle(
+  instances: readonly CycleInstance[],
+  definition: CycleDefinition,
+  window: number = DEFAULT_PREDICTION_WINDOW,
+): CyclePrediction | undefined {
+  const latest = latestInstance(instances);
+  if (!latest) {
+    return undefined;
+  }
+
+  const observed = observedCycleLength(instances, window);
+  if (observed !== undefined) {
+    return {
+      nextStart: addDays(latest.startDate, observed.averageDays),
+      lengthDays: observed.averageDays,
+      basis: 'observed',
+      observedGaps: observed.gaps,
+    };
+  }
+
+  const configuredLength = definition.averageCycleLengthDays;
+  if (configuredLength === undefined) {
+    return undefined;
+  }
+  return {
+    nextStart: addDays(latest.startDate, configuredLength),
+    lengthDays: configuredLength,
+    basis: 'configured',
+    observedGaps: 0,
+  };
 }
 
 /** 取「最近一次」实例：开始日最大的那个（进行中的也算）。 */
