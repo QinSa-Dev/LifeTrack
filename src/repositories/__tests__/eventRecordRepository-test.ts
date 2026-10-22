@@ -101,6 +101,48 @@ describe('EventRecordRepository', () => {
     expect((await records.list({ limit: 1 })).length).toBe(1);
   });
 
+  it('可按发生时间范围读取（半开区间 [from, until)）', async () => {
+    const definition = await createCounter();
+    for (const at of [
+      '2026-10-01T00:00:00.000Z',
+      '2026-10-15T00:00:00.000Z',
+      '2026-10-20T00:00:00.000Z',
+      '2026-11-01T00:00:00.000Z',
+    ]) {
+      await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, at);
+    }
+
+    // from 含、until 不含：正好落在边界上的两条各算一侧
+    const range = await records.list({
+      from: '2026-10-15T00:00:00.000Z',
+      until: '2026-10-20T00:00:00.000Z',
+    });
+    expect(range.map((item) => item.occurredAt)).toEqual(['2026-10-15T00:00:00.000Z']);
+
+    // 只给一侧也可以
+    expect((await records.list({ from: '2026-10-16T00:00:00.000Z' })).length).toBe(2);
+    expect((await records.list({ until: '2026-10-15T00:00:00.000Z' })).length).toBe(1);
+
+    // 范围排除软删除、也能和定义 / limit 一起用（AND 叠加）
+    const soft = await records.record(
+      { definitionId: definition.id, value: 1, source: 'manual' },
+      '2026-10-16T00:00:00.000Z',
+    );
+    await records.softDelete(soft.id);
+    const other = await createCounter({ name: '另一个' });
+    await records.record({ definitionId: other.id, value: 1, source: 'manual' }, '2026-10-17T00:00:00.000Z');
+
+    expect((await records.list({ from: '2026-10-16T00:00:00.000Z' })).length).toBe(3);
+    expect((await records.list({ from: '2026-10-16T00:00:00.000Z', includeDeleted: true })).length).toBe(4);
+    expect((await records.list({ from: '2026-10-16T00:00:00.000Z', definitionId: other.id })).length).toBe(1);
+    expect((await records.list({ from: '2026-10-16T00:00:00.000Z', limit: 1 })).length).toBe(1);
+  });
+
+  it('时间范围不是合法时间戳时抛错，且不查库', async () => {
+    await expect(records.list({ from: '昨天' })).rejects.toThrow(ValidationError);
+    await expect(records.list({ until: '2026-10-20' })).rejects.toThrow(ValidationError);
+  });
+
   it('归档的事件不能新增记录，且不会写入任何数据', async () => {
     const definition = await createCounter();
     await definitions.setArchived(definition.id, true);

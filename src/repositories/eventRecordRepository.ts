@@ -135,6 +135,10 @@ export interface ListRecordsOptions {
   includeDeleted?: boolean;
   /** 只列软删除的记录（回收站用）；与 includeDeleted 互斥，优先本项 */
   onlyDeleted?: boolean;
+  /** 只列**发生时间**（`occurred_at`）不早于它的记录；ISO-8601 时间戳 */
+  from?: IsoDateTime;
+  /** 只列**发生时间**（`occurred_at`）早于它的记录。区间是半开的：`[from, until)` */
+  until?: IsoDateTime;
   /** 最多返回多少条（时间轴分页用） */
   limit?: number;
 }
@@ -211,7 +215,17 @@ export class EventRecordRepository {
     });
   }
 
-  /** 时间轴/列表：默认按事实发生时间倒序，排除软删除；回收站按删除时间倒序。 */
+  /**
+   * 时间轴/列表：默认按事实发生时间倒序，排除软删除；回收站按删除时间倒序。
+   *
+   * `from` / `until` 把时间范围**下推到 SQL**（走 `idx_event_records_occurred_at`），
+   * 统计页的趋势与对比因此不必先把全表读进内存再逐行判断窗口。
+   *
+   * 比较用的是 `occurred_at` 文本的**字典序**：这成立的前提是写入路径一律把时间戳
+   * 归一到 `...Z`（`toISOString()`）。同一假设本来就被 `ORDER BY occurred_at` 与
+   * 那条索引用着；唯一例外是外部手写的、带 `+08:00` 这类偏移的备份数据（导入只做
+   * 格式校验，不做归一）。
+   */
   async list(options: ListRecordsOptions = {}): Promise<EventRecord[]> {
     return guard('读取事件记录', async () => {
       const clauses: string[] = [];
@@ -225,6 +239,14 @@ export class EventRecordRepository {
       if (options.definitionId !== undefined) {
         clauses.push('definition_id = ?');
         params.push(options.definitionId);
+      }
+      if (options.from !== undefined) {
+        clauses.push('occurred_at >= ?');
+        params.push(requireIsoDateTime(options.from, '起始时间'));
+      }
+      if (options.until !== undefined) {
+        clauses.push('occurred_at < ?');
+        params.push(requireIsoDateTime(options.until, '结束时间'));
       }
 
       const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';

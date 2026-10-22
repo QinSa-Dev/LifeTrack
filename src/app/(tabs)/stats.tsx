@@ -14,8 +14,11 @@ import {
   compareDefinitions,
   compareWindows,
   recentComparisonWindows,
+  statsReadRange,
   summarize,
+  TREND_RANGES,
   type ComparisonBasis,
+  type ComparisonUnit,
   type DefinitionChange,
   type DefinitionTotal,
   type PeriodTotal,
@@ -24,10 +27,8 @@ import { describeComparison, describeDefinitionChange } from '@/features/stats/l
 import { CycleEntryRepository, EventRecordRepository } from '@/repositories';
 import { palette, radius, spacing } from '@/theme';
 
-type Mode = 'day' | 'week';
-
-/** 趋势窗口：天看两周，周看两个月。对比窗口与它同长。 */
-const RANGES: Record<Mode, number> = { day: 14, week: 8 };
+/** 趋势的粒度就是对比窗口的单位（同一个 `'day' | 'week'`）。 */
+type Mode = ComparisonUnit;
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
@@ -80,9 +81,15 @@ function TrendBars({ periods }: { periods: PeriodTotal[] }) {
 export default function StatsScreen() {
   const { db } = useReadyDatabase();
 
+  // 「累计」口径（概览 / 按事件统计）：需要**有史以来**的全部记录，所以这里读全量。
   const [records, setRecords] = useState<EventRecord[]>([]);
+  // 「窗口」口径（趋势 / 对比）：只需要统计窗口内的一段时间，由 `statsReadRange` 下推给 SQL。
+  const [recentRecords, setRecentRecords] = useState<EventRecord[]>([]);
   // 周期内记录（症状统计用；仓储已过滤软删除）。与事件记录是两套事实，分开统计。
   const [cycleEntries, setCycleEntries] = useState<CycleEntry[]>([]);
+  // 本次加载的参考时刻：读库、窗口、分桶共用同一个 `now`，
+  // 免得跨零点时「读了 14 天、却按 15 天分桶」这种不一致。
+  const [now, setNow] = useState(() => new Date().toISOString());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>('day');
@@ -93,11 +100,21 @@ export default function StatsScreen() {
     useCallback(() => {
       let cancelled = false;
       setLoading(true);
-      Promise.all([new EventRecordRepository(db).list(), new CycleEntryRepository(db).listVisible()])
-        .then(([loadedRecords, loadedEntries]) => {
+      const loadedAt = new Date().toISOString();
+      const range = statsReadRange(loadedAt);
+      const recordRepository = new EventRecordRepository(db);
+
+      Promise.all([
+        recordRepository.list(),
+        recordRepository.list({ from: range.from, until: range.until }),
+        new CycleEntryRepository(db).listVisible(),
+      ])
+        .then(([loadedRecords, loadedRecent, loadedEntries]) => {
           if (!cancelled) {
             setRecords(loadedRecords);
+            setRecentRecords(loadedRecent);
             setCycleEntries(loadedEntries);
+            setNow(loadedAt);
             setError(null);
           }
         })
@@ -120,21 +137,27 @@ export default function StatsScreen() {
   const summary = useMemo(() => summarize(records), [records]);
   const definitions = useMemo(() => aggregateByDefinition(records), [records]);
   const periods = useMemo(
-    () => (mode === 'day' ? aggregateByDay(records, RANGES.day) : aggregateByWeek(records, RANGES.week)),
-    [records, mode],
+    () =>
+      mode === 'day'
+        ? aggregateByDay(recentRecords, TREND_RANGES.day, now)
+        : aggregateByWeek(recentRecords, TREND_RANGES.week, now),
+    [recentRecords, mode, now],
   );
 
   // 对比窗口与趋势窗口同长：「最近 14 天 vs 前 14 天」或「vs 上年同期」。
-  const windows = useMemo(() => recentComparisonWindows(mode, RANGES[mode], basis), [mode, basis]);
-  const comparison = useMemo(() => compareWindows(records, windows), [records, windows]);
+  const windows = useMemo(
+    () => recentComparisonWindows(mode, TREND_RANGES[mode], basis, now),
+    [mode, basis, now],
+  );
+  const comparison = useMemo(() => compareWindows(recentRecords, windows), [recentRecords, windows]);
   // 每个事件的变化，用来给「按事件统计」的每一行加一句对比。
   const changeById = useMemo(() => {
     const map = new Map<string, DefinitionChange>();
-    for (const change of compareDefinitions(records, windows)) {
+    for (const change of compareDefinitions(recentRecords, windows)) {
       map.set(change.definitionId, change);
     }
     return map;
-  }, [records, windows]);
+  }, [recentRecords, windows]);
 
   const hasData = !loading && records.length > 0;
   const hasCycleData = !loading && cycleEntries.length > 0;
@@ -179,8 +202,8 @@ export default function StatsScreen() {
                 title="趋势"
                 subtitle={
                   mode === 'day'
-                    ? `最近 ${RANGES.day} 天（按本地日期）`
-                    : `最近 ${RANGES.week} 周（按周一起算）`
+                    ? `最近 ${TREND_RANGES.day} 天（按本地日期）`
+                    : `最近 ${TREND_RANGES.week} 周（按周一起算）`
                 }
                 style={styles.spaced}
               >

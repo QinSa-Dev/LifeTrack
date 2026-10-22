@@ -23,7 +23,13 @@
 
 import { addDays, daysBetween } from '@/domain/dates';
 import { ValidationError } from '@/domain/errors';
-import { isVisibleRecord, type EventDefinitionKind, type EventRecord, type IsoDate } from '@/domain/models';
+import {
+  isVisibleRecord,
+  type EventDefinitionKind,
+  type EventRecord,
+  type IsoDate,
+  type IsoDateTime,
+} from '@/domain/models';
 import { localDateText, shiftLocalDays } from '@/features/common/datetime';
 
 /** 单个事件定义在一段时间内的汇总。 */
@@ -280,6 +286,14 @@ export type ComparisonUnit = 'day' | 'week';
 /** 跟谁比：前一段（环比）还是上年同期（同比）。 */
 export type ComparisonBasis = 'previous' | 'lastYear';
 
+/**
+ * 趋势窗口的长度（与对比窗口同长）：按天看两周，按周看两个月。
+ *
+ * 这是窗口长度的**唯一来源**：界面上的趋势条、对比文案、以及「统计要读到哪一天」
+ * （`statsReadRange`）都从这一份取值，避免三处各写一个数字后对不上。
+ */
+export const TREND_RANGES: Record<ComparisonUnit, number> = { day: 14, week: 8 };
+
 /** 本期与对照期的窗口。 */
 export interface ComparisonWindows {
   current: StatsWindow;
@@ -361,6 +375,50 @@ export function recentComparisonWindows(
       startDate: addDays(current.startDate, -shift),
       endDate: addDays(current.endDate, -shift),
     },
+  };
+}
+
+/** 统计页需要读到的时段（**半开区间** `[from, until)`，UTC 时间戳）。 */
+export interface StatsReadRange {
+  from: IsoDateTime;
+  until: IsoDateTime;
+}
+
+/** 界面能摆出的四种窗口组合：按天/按周 × 环比/同比。 */
+const READ_RANGE_PAIRS: readonly (readonly [ComparisonUnit, ComparisonBasis])[] = [
+  ['day', 'previous'],
+  ['day', 'lastYear'],
+  ['week', 'previous'],
+  ['week', 'lastYear'],
+];
+
+/**
+ * 算出「统计页至少要读到哪一段」（给仓储的 `list({ from, until })` 用）。
+ *
+ * 为什么放在这里：趋势与对比**只看窗口内的记录**，却原本要先把全表读进内存再逐行
+ * 判断属于哪个窗口；窗口的定义就在本模块，所以「最早要读到哪天」也只能在这里回答。
+ * 下推之后这两块只扫窗口内的行（概览与「按事件统计」是**累计**口径，不受它约束）。
+ *
+ * 两条刻意的设计：
+ *
+ * 1. **只求超集，不求精确**：按 UTC 零点取整并前后各留一天。边界不需要精确，是因为
+ *    「某个时刻属于哪一天」仍由纯函数按**设备本地时区**判定——多读的行会被过滤掉。
+ *    这样这里不必关心时区偏移与夏令时，也不会因为差一小时而漏掉记录。
+ * 2. 取**四种组合的并集**（而不是当前选中的那一种）：读一次就够，切换「按天/按周」或
+ *    「较前一段/较上年同期」只是重新算，不必再查库。
+ */
+export function statsReadRange(now: string = new Date().toISOString()): StatsReadRange {
+  const windows = READ_RANGE_PAIRS.flatMap(([unit, basis]) => {
+    const pair = recentComparisonWindows(unit, TREND_RANGES[unit], basis, now);
+    return [pair.current, pair.previous];
+  });
+
+  const startDate = windows.map((window) => window.startDate).reduce((a, b) => (a < b ? a : b));
+  const endDate = windows.map((window) => window.endDate).reduce((a, b) => (a > b ? a : b));
+
+  return {
+    from: `${addDays(startDate, -1)}T00:00:00.000Z`,
+    until: `${addDays(endDate, 2)}T00:00:00.000Z`,
   };
 }
 

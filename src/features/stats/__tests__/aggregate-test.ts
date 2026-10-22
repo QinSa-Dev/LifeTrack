@@ -7,8 +7,10 @@ import {
   compareDefinitions,
   compareWindows,
   recentComparisonWindows,
+  statsReadRange,
   summarize,
   summarizeWindow,
+  TREND_RANGES,
 } from '@/features/stats/aggregate';
 
 /**
@@ -259,6 +261,93 @@ describe('recentComparisonWindows', () => {
 
   it('参考时间不合法时抛 ValidationError', () => {
     expect(() => recentComparisonWindows('day', 3, 'previous', '昨天')).toThrow(ValidationError);
+  });
+});
+
+describe('statsReadRange', () => {
+  const now = new Date(2026, 9, 19, 12, 0).toISOString(); // 本地 2026-10-19（周一）中午
+
+  it('取四种窗口（按天/按周 × 环比/同比）的并集，前后各留一天', () => {
+    // 最早：按周同比的区间起点 2025-09-01 再往前一天；
+    // 最晚：按周本期的终点（本周周日 2026-10-25）再往后两天。
+    expect(statsReadRange(now)).toEqual({
+      from: '2025-08-31T00:00:00.000Z',
+      until: '2026-10-27T00:00:00.000Z',
+    });
+  });
+
+  it('对每一种窗口都是超集：不早于窗口起点、不晚于窗口终点', () => {
+    const range = statsReadRange(now);
+    const from = Date.parse(range.from);
+    const until = Date.parse(range.until);
+
+    for (const unit of ['day', 'week'] as const) {
+      for (const basis of ['previous', 'lastYear'] as const) {
+        const windows = recentComparisonWindows(unit, TREND_RANGES[unit], basis, now);
+        for (const window of [windows.current, windows.previous]) {
+          expect(from).toBeLessThanOrEqual(Date.parse(`${window.startDate}T00:00:00.000Z`));
+          expect(until).toBeGreaterThan(Date.parse(`${window.endDate}T23:59:59.999Z`));
+        }
+      }
+    }
+  });
+
+  it('大约读到一年出头，不是全量', () => {
+    const range = statsReadRange(now);
+    const days = (Date.parse(range.until) - Date.parse(range.from)) / 86_400_000;
+    expect(days).toBeGreaterThan(370);
+    expect(days).toBeLessThan(430);
+  });
+
+  it('参考时间不合法时抛 ValidationError', () => {
+    expect(() => statsReadRange('昨天')).toThrow(ValidationError);
+  });
+});
+
+describe('窗口下推的一致性（时间范围只求超集）', () => {
+  const now = new Date(2026, 9, 22, 9, 0).toISOString(); // 本地 2026-10-22（周四）上午
+
+  it('只喂 statsReadRange 内的记录，趋势与对比的结果与喂全量完全一致', () => {
+    // 横跨两年多：窗口外的（2024 / 2026-09-01）与窗口内的都有
+    const days: [number, number, number][] = [
+      [2024, 1, 5],
+      [2024, 11, 11],
+      [2025, 8, 30],
+      [2025, 9, 2],
+      [2025, 10, 8],
+      [2025, 10, 21],
+      [2026, 1, 1],
+      [2026, 7, 7],
+      [2026, 9, 1],
+      [2026, 10, 6],
+      [2026, 10, 19],
+      [2026, 10, 22],
+      [2026, 11, 30],
+    ];
+    const records = days.map((at, index) => makeRecord({ definitionId: index % 2 === 0 ? 'd1' : 'd2', at }));
+
+    const range = statsReadRange(now);
+    // 仓储那边是 `occurred_at >= from AND occurred_at < until`，这里用同样的口径筛
+    const pushed = records.filter(
+      (record) => record.occurredAt >= range.from && record.occurredAt < range.until,
+    );
+    expect(pushed.length).toBeGreaterThan(0);
+    expect(pushed.length).toBeLessThan(records.length);
+
+    for (const unit of ['day', 'week'] as const) {
+      for (const basis of ['previous', 'lastYear'] as const) {
+        const windows = recentComparisonWindows(unit, TREND_RANGES[unit], basis, now);
+        expect(compareWindows(pushed, windows)).toEqual(compareWindows(records, windows));
+        expect(compareDefinitions(pushed, windows)).toEqual(compareDefinitions(records, windows));
+      }
+    }
+
+    expect(aggregateByDay(pushed, TREND_RANGES.day, now)).toEqual(
+      aggregateByDay(records, TREND_RANGES.day, now),
+    );
+    expect(aggregateByWeek(pushed, TREND_RANGES.week, now)).toEqual(
+      aggregateByWeek(records, TREND_RANGES.week, now),
+    );
   });
 });
 
