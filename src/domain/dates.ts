@@ -89,3 +89,59 @@ export function isDateWithin(date: IsoDate, startDate: IsoDate, endDate?: IsoDat
   }
   return true;
 }
+
+/** 该日期所在月份的第一天（`2026-10-19` → `2026-10-01`）。 */
+export function startOfMonth(date: IsoDate): IsoDate {
+  const ms = parseIsoDate(date);
+  if (ms === null) {
+    throw new ValidationError(`不是合法的日历日期：${date}`);
+  }
+  const parsed = new Date(ms);
+  return `${parsed.getUTCFullYear()}-${pad(parsed.getUTCMonth() + 1)}-01`;
+}
+
+/** 该日期所在月份有多少天（闰年 2 月为 29）。 */
+export function daysInMonth(date: IsoDate): number {
+  const ms = parseIsoDate(date);
+  if (ms === null) {
+    throw new ValidationError(`不是合法的日历日期：${date}`);
+  }
+  const parsed = new Date(ms);
+  // 下个月的第 0 天 = 本月最后一天
+  return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth() + 1, 0)).getUTCDate();
+}
+
+/**
+ * 按月加减（`months` 可为负）。**日号超出目标月份时夹到月末**：
+ * `2026-01-31` 加一个月是 `2026-02-28`，而不是溢出成 3 月 3 日。
+ */
+export function addMonths(date: IsoDate, months: number): IsoDate {
+  const ms = parseIsoDate(date);
+  if (ms === null) {
+    throw new ValidationError(`不是合法的日历日期：${date}`);
+  }
+  if (!Number.isInteger(months)) {
+    throw new ValidationError(`月数必须是整数：${months}`);
+  }
+  const parsed = new Date(ms);
+  const totalMonths = parsed.getUTCFullYear() * 12 + parsed.getUTCMonth() + months;
+  const year = Math.floor(totalMonths / 12);
+  const month = ((totalMonths % 12) + 12) % 12;
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const day = Math.min(parsed.getUTCDate(), lastDay);
+  return formatUtc(Date.UTC(year, month, day));
+}
+
+/**
+ * 这一天是星期几，**周一为 0**、周日为 6（与日历「周一起排」的网格一致）。
+ *
+ * 与 `features/stats` 里的 `localWeekStart` 不同：这里把 `IsoDate` 当成纯日历日期，
+ * 一律按 UTC 取星期，不掺设备时区。
+ */
+export function weekdayIndex(date: IsoDate): number {
+  const ms = parseIsoDate(date);
+  if (ms === null) {
+    throw new ValidationError(`不是合法的日历日期：${date}`);
+  }
+  return (new Date(ms).getUTCDay() + 6) % 7;
+}

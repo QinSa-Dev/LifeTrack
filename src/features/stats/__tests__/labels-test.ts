@@ -3,8 +3,11 @@ import {
   comparisonBasisLabel,
   describeComparison,
   describeDefinitionChange,
+  describeSymptomSummary,
+  describeSymptomTotal,
   formatDelta,
   formatRate,
+  formatSymptomRatio,
 } from '@/features/stats/labels';
 
 function makeSummary(
@@ -109,5 +112,31 @@ describe('describeDefinitionChange', () => {
 
   it('两个窗口都没有它时返回 undefined（调用方不显示这一段）', () => {
     expect(describeDefinitionChange(makeChange(0, 0), 'previous')).toBeUndefined();
+  });
+});
+
+describe('症状统计的文案', () => {
+  it('formatSymptomRatio 四舍五入到百分比，缺失时为 undefined', () => {
+    expect(formatSymptomRatio(1)).toBe('100%');
+    expect(formatSymptomRatio(0.3333)).toBe('33%');
+    expect(formatSymptomRatio(0)).toBe('0%');
+    expect(formatSymptomRatio(undefined)).toBeUndefined();
+  });
+
+  it('describeSymptomSummary 先讲底数，再讲有多少条记了症状', () => {
+    expect(describeSymptomSummary({ entryCount: 0, withSymptomsCount: 0, distinctSymptoms: 0 })).toBe(
+      '还没有周期内记录',
+    );
+    expect(describeSymptomSummary({ entryCount: 4, withSymptomsCount: 0, distinctSymptoms: 0 })).toBe(
+      '4 条记录，都还没有记症状',
+    );
+    expect(describeSymptomSummary({ entryCount: 5, withSymptomsCount: 3, distinctSymptoms: 2 })).toBe(
+      '5 条记录，其中 3 条记了症状，共 2 种',
+    );
+  });
+
+  it('describeSymptomTotal 给出天数与占比', () => {
+    expect(describeSymptomTotal({ symptom: '头痛', dayCount: 3, ratio: 0.5 })).toBe('3 天 · 50%');
+    expect(describeSymptomTotal({ symptom: '头痛', dayCount: 2, ratio: undefined })).toBe('2 天');
   });
 });

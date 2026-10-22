@@ -10,6 +10,7 @@
  */
 
 import type { ComparisonBasis, ComparisonSummary, DefinitionChange } from '@/features/stats/aggregate';
+import type { SymptomSummary, SymptomTotal } from '@/features/stats/symptoms';
 
 /** 用来对照的那一段怎么称呼。 */
 export function comparisonBasisLabel(basis: ComparisonBasis): string {
@@ -78,4 +79,36 @@ export function describeDefinitionChange(
     return `与${label}持平（${change.currentCount} 条）`;
   }
   return `本期 ${change.currentCount} 条，较${label} ${formatDelta(change.delta)}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * 周期症状统计的文案
+ * ------------------------------------------------------------------ */
+
+/** `33%`；比例缺失时返回 undefined（没有任何记了症状的记录）。 */
+export function formatSymptomRatio(ratio: number | undefined): string | undefined {
+  if (ratio === undefined) {
+    return undefined;
+  }
+  return `${Math.round(ratio * 100)}%`;
+}
+
+/**
+ * 症状统计的底数：先讲清「多少条记录里有多少条记了症状」，
+ * 否则下面的百分比会被误读成「占全部记录」。
+ */
+export function describeSymptomSummary(summary: SymptomSummary): string {
+  if (summary.entryCount === 0) {
+    return '还没有周期内记录';
+  }
+  if (summary.withSymptomsCount === 0) {
+    return `${summary.entryCount} 条记录，都还没有记症状`;
+  }
+  return `${summary.entryCount} 条记录，其中 ${summary.withSymptomsCount} 条记了症状，共 ${summary.distinctSymptoms} 种`;
+}
+
+/** 一个症状的副标题：`3 天 · 33%`（比例按「记了症状的记录数」算）。 */
+export function describeSymptomTotal(total: SymptomTotal): string {
+  const ratio = formatSymptomRatio(total.ratio);
+  return ratio === undefined ? `${total.dayCount} 天` : `${total.dayCount} 天 · ${ratio}`;
 }
