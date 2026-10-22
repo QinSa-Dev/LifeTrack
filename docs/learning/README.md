@@ -18,6 +18,7 @@
 | 第二阶段（统计） | 时间轴统计（从事实数据聚合）、时间轴 FlatList 虚拟化 | **已完成**（本文档 `12`） |
 | 第二阶段（永久删除） | 事件记录的回收站与真删（「软删除 → 撤销 → 真删」闭环） | **已完成**（本文档 `13`） |
 | 第二阶段（导入导出） | JSON 备份 / CSV 表格导出、按 id 合并的导入、事务一致性 | **已完成**（本文档 `14`） |
+| 第二阶段（周期增强） | 预测改用实际间隔（含依据）、保存前预演越界日期 | **已完成**（本文档 `11` 的 4.2 / 4.8 节） |
 | 第二阶段剩余项 | 周期日历/症状统计、周期记录回收站、统计增强 | 未开始 |
 
 第一阶段「已完成」的含义是：下面的命令都真实跑过并且通过了。
@@ -29,12 +30,12 @@ npm test            # Jest：4 个套件 / 32 个用例
 npm run doctor      # expo-doctor：20/20
 ```
 
-第二阶段各项完成后（目前 `npm test` 为 20 个套件 / 277 个用例），新增命令同样跑过：
+第二阶段各项完成后（目前 `npm test` 为 21 个套件 / 291 个用例），新增命令同样跑过：
 
 ```bash
 npm run typecheck                        # 通过
 npm run lint                             # 通过（0 error / 0 warning）
-npm test                                 # 20 个套件 / 277 个用例
+npm test                                 # 21 个套件 / 291 个用例
 npm run format:check                     # 通过
 npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
 ```
@@ -50,7 +51,8 @@ npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
 - **仍未验证（如实记录）**：本机没有可用的自动化点击（模拟器未授予辅助功能权限），
   所以**没有手动点按走通写入路径**（点一下记录、删除并撤销、回收站恢复/永久删除的二次确认弹窗）；
   这些目前只有单元测试覆盖。**导入导出也一样**：设置页的三个按钮（导出 JSON / 导出 CSV /
-  从备份导入）与系统分享面板、文件选择器都没有真手点过。Android 与真机也没有跑过。
+  从备份导入）与系统分享面板、文件选择器都没有真手点过。**周期增强也一样**：改边界时的
+  越界预演、预测文案的依据说明都只在单测与逻辑层面验证过。Android 与真机也没有跑过。
 
 ## 二、已完成功能 → 对应文档
 
@@ -67,6 +69,7 @@ npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
 | 记录一次事件（counter / quantity）、快照、时间轴：v3 迁移、发生时间 vs 录入时间 | [09-event-recording.md](./09-event-recording.md) |
 | 补录与撤销：本地时间 ↔ UTC、日期解析与溢出、软删除的幂等与撤销 | [10-backfill-and-undo.md](./10-backfill-and-undo.md) |
 | 周期事件：日历日期运算、区间重叠、边界修改「不静默删除」、一天一条的 UPSERT | [11-cycle-tracking.md](./11-cycle-tracking.md) |
+| 周期增强：预测优先用实际观察到的间隔（返回值带依据）、保存边界前的越界预演 | [11-cycle-tracking.md](./11-cycle-tracking.md) 的 4.2 / 4.8 节 |
 | 统计：从事实数据聚合（不落汇总表）、本地时区分天/周、单位不一致不合并、时间轴 FlatList 虚拟化 | [12-statistics.md](./12-statistics.md) |
 | 回收站与永久删除：软删除 vs 真删、`Alert` 二次确认、单条 DELETE 的原子性 | [13-permanent-delete-and-trash.md](./13-permanent-delete-and-trash.md) |
 | 备份与恢复：显式格式契约、外部 JSON 的严格解析、取并集合并、事务内体检、CSV 导出 | [14-backup-and-restore.md](./14-backup-and-restore.md) |
@@ -93,7 +96,8 @@ npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
 8. **[08 事件定义](./08-event-definitions.md)** —— 第二阶段第 1 项：从 v2 迁移到表单、二级路由与多表聚合的前后端闭环。
 9. **[09 事件记录](./09-event-recording.md)** —— 第二阶段第 2 项：v3 迁移、快照写入、occurredAt/recordedAt 与时间轴。
 10. **[10 补录与撤销](./10-backfill-and-undo.md)** —— 补录（本地时间 ↔ UTC、日期解析）与软删除/撤销（幂等）。
-11. **[11 周期事件](./11-cycle-tracking.md)** —— 周期定义 / 实例 / 每日记录：日历日期运算、区间规则，以及「改边界不悄悄删记录」。
+11. **[11 周期事件](./11-cycle-tracking.md)** —— 周期定义 / 实例 / 每日记录：日历日期运算、区间规则，以及「改边界不悄悄删记录」；
+    4.2 / 4.8 节是后来的增强：预测优先看实际间隔（带依据）、保存前就把「会甩出哪几天」提示出来。
 12. **[12 统计](./12-statistics.md)** —— 从事实数据聚合（不落汇总表）、本地时区分天/周、单位不一致不合并，以及时间轴 `FlatList` 虚拟化。
 13. **[13 回收站与永久删除](./13-permanent-delete-and-trash.md)** —— 软删除与真删分成两级，回收站承载「恢复 / 永久删除」。
 14. **[14 备份与恢复](./14-backup-and-restore.md)** —— 显式格式契约、外部 JSON 的严格解析与带路径报错、取并集的合并规则、事务内体检、CSV 导出。
@@ -164,6 +168,9 @@ npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
 | 纯函数合并 + 仓储只落库：预演与真导入共用一条校验路径 | 架构 | 14 |
 | `expo-file-system`（`File` / `Paths`）/ `expo-sharing` / `expo-document-picker` 与 Expo Go 内置判断 | React Native / Expo | 14 |
 | CSV 的 RFC 4180 转义、BOM 与 CRLF（Excel 打开中文不乱码） | 数据交换 | 14 |
+| 预测要「有依据可查」：返回值带 `basis` / `observedGaps`，界面分开讲「算出来的 / 按配置推的」 | 领域设计 | 11（4.2） |
+| 同一条纯函数规则同时喂给「保存前提示」和「保存时拒绝」，两者不可能不一致 | 架构 | 11（4.8） |
+| 数据已经在手上就别再查一次库：删掉重复的只读查询、顺带消掉异步竞态 | 架构 | 11（4.8） |
 
 ## 五、还没有学到的内容
 
@@ -174,6 +181,8 @@ npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
   分组吸顶）还没用到。
 - 统计与汇总 —— 分天/分周的聚合已在 [12](./12-statistics.md) 落地；**环比/同比**还没做。
 - 日历式界面（可点选的月视图、按症状统计）—— 周期已能记录与回看，但还没有日历与统计视图。
+- 「用历史数据做预测」—— 已在 [11](./11-cycle-tracking.md) 的 4.2 节落地（最近 N 段间隔平均 + 依据说明）；
+  更复杂的模型（加权、异常值剔除、置信区间）没做。
 - 记录的**永久删除**与一致性 —— 已在 [13](./13-permanent-delete-and-trash.md) 落地（事件记录的回收站与真删）；
   **周期内记录**仍是直接真删，回收站属后续项。
 - JSON / CSV 导入导出、冲突合并、事务一致性校验 —— 已在 [14](./14-backup-and-restore.md) 落地
@@ -207,7 +216,7 @@ npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
                       ├─────────────────────────────────────────────┤
    src/features/      │ definitions/：EventDefinitionForm             │
                       │ records/：format / RecordRow / UndoBar        │
-                      │ cycles/：labels / CycleDefinitionForm         │
+                      │ cycles/：labels（含预测依据）/ CycleDefinitionForm │
                       │ stats/：aggregate（从事实数据聚合，纯函数）    │
                       │ backup/：csv（记录表格，纯函数）/ transfer      │
                       │        （写文件 + 分享 + 选文件，唯一碰文件系统）│
@@ -238,7 +247,7 @@ npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
    src/domain/        │ models.ts 领域模型 + 快照生成                  │
                       │ validation.ts 输入类型与校验规则               │
                       │ dates.ts  纯日历日期运算（不沾时区）            │
-                      │ cycles.ts 周期规则（越界 / 重叠 / 预测）        │
+                      │ cycles.ts 周期规则（越界 / 重叠 / 间隔 / 预测）  │
                       │ backup.ts 备份格式 / 严格解析 / 合并（纯函数）  │
                       │ errors.ts 统一错误（AppError + code）          │
                       │ id.ts     UUID v7                             │
