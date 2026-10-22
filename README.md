@@ -60,6 +60,7 @@ iOS 模拟器 / 真机与 Android 模拟器都可以直接用 **Expo Go** 打开
 | `npm test` / `npm run test:watch` | Jest 单元测试 |
 | `npm run verify` | 一把梭：typecheck + lint + test |
 | `npm run doctor` | `expo-doctor` 依赖与配置体检 |
+| `maestro test .maestro/flows` | 端到端：在 iOS 模拟器上真手点写入路径（需先起 Metro，见 [`.maestro/README.md`](./.maestro/README.md)） |
 
 ## 目录结构
 
@@ -133,6 +134,11 @@ docs/
     12-statistics.md
     13-permanent-delete-and-trash.md
     14-backup-and-restore.md
+    15-maestro-e2e.md
+.maestro/                 # 端到端流程（Maestro）：在 iOS 模拟器上真的点击应用 + 读库核对
+  README.md               # 跑法、前置条件、选择器上的坑、「不许 clearState」等约定
+  flows/                  # 00 冒烟 / 01 记录 / 02 删除撤销 / 03 回收站 / 04 导出 / 05 周期边界 / 06 统计对比
+  subflows/               # 被 runFlow 引用的共用片段（如「确保 Maestro喝水 存在并记一次」）
 ```
 
 ## 开发指北（学习文档）
@@ -200,6 +206,8 @@ docs/
   因此迁移 SQL、约束、`PRAGMA` 行为都是真的被执行，而不是对 mock 断言调用顺序。
 - 设备侧使用 `expo-sqlite`，与测试环境的 SQLite 版本可能略有差异，
   所以**端到端结论仍以模拟器 / 真机实际运行为准**。
+- 界面写入路径由 `.maestro/` 下的 Maestro 流程在**真实模拟器**上点击验证，
+  并在跑完之后**直接读模拟器的 `lifetrack.db`** 核对是否真的落盘（见「端到端：Maestro 真手点」）。
 
 ## 第一阶段验收记录
 
@@ -304,7 +312,7 @@ docs/
 | 新增依赖 | `expo-file-system` / `expo-sharing` / `expo-document-picker`（**均在 Expo Go 内置**，无需 development build） |
 | iOS 打包 | `npx expo export --platform ios` 通过（js bundle 3.1MB） |
 | 依赖体检 | `npx expo-doctor` 19/20：8 个**旧依赖** patch 版本漂移（与本次无关，本次新增的 3 个模块版本与 SDK 58 期望一致） |
-| 模拟器 / 真机运行 | **未跑**：分享面板、系统文件选择器都是原生 UI，三个按钮没有手动点过（本机无法自动化点击）。Android 未跑 |
+| 模拟器 / 真机运行 | **未跑**：分享面板、系统文件选择器都是原生 UI，三个按钮没有手动点过（本机无法自动化点击）。Android 未跑 → 后已用 Maestro 补齐「导出 JSON → 分享面板」，**「选文件导入」仍未覆盖**（见文末「端到端：Maestro 真手点」） |
 
 ## 第二阶段验收记录（周期功能增强）
 
@@ -320,7 +328,7 @@ docs/
 | 边界预演 | 改边界时**保存之前**就提示「会有哪几天落在区间外」；与仓储保存时的拒绝共用纯函数 `findDatesOutside` |
 | 收敛 | 删掉仓储里重复的只读查询 `listOutsideEntryDates`（记录已在界面上，无需再查一次库） |
 | iOS 打包 | `npx expo export --platform ios` 通过（js bundle 3.1MB） |
-| 模拟器 / 真机运行 | **未跑**：预测与预演都只在逻辑与单测层面验证过，没有手点（见下方「本机 iOS 模拟器实机运行」的说明） |
+| 模拟器 / 真机运行 | **未跑**：预测与预演都只在逻辑与单测层面验证过，没有手点 → 后已用 Maestro 补齐（越界预演 + 保存被拒，见文末「端到端：Maestro 真手点」） |
 
 ## 第二阶段验收记录（统计增强：环比 / 同比）
 
@@ -338,7 +346,7 @@ docs/
 | 界面 | 趋势卡片新增「对比」选择（较前一段 / 较上年同期）＋一句结论；「按事件统计」每行补一句窗口对比 |
 | 文案单测 | `src/features/stats/labels.ts` + 13 个用例覆盖「有记录 / 对照期为空 / 两边都空」三种说法 |
 | iOS 打包 | `npx expo export --platform ios` 通过（js bundle 3.1MB） |
-| 模拟器 / 真机运行 | **未跑**：两个对比 `Chip` 与文案没有手点过（本机无法自动化点击）；Android 未跑 |
+| 模拟器 / 真机运行 | **未跑**：两个对比 `Chip` 与文案没有手点过（本机无法自动化点击）；Android 未跑 → 后已用 Maestro 补齐（见文末「端到端：Maestro 真手点」） |
 
 ## 第二阶段验收记录（本机 iOS 模拟器实机运行）
 
@@ -354,12 +362,35 @@ docs/
 | 渲染内容 | 时间轴显示 14 条记录（来源区分「快捷 / 手动 / 补录」、取值带单位）；统计显示概览 14 条 / 4 个事件、覆盖区间与按天趋势；事件页分「进行中 3 个 / 已归档 1 个」；周期页显示平均周期天数与 2 段；回收站显示 1 条软删除记录与「恢复 / 永久删除」按钮 |
 | 运行期报错 | Metro 日志无 JS 报错、无红屏 |
 | 示例数据 | **直接写入模拟器数据库**（4 个定义 / 15 条记录 / 2 段周期 / 4 条每日记录），不是通过界面点出来的 |
-| 未覆盖 | 本机未授予模拟器辅助功能权限，无法自动化点击，因此**没有手动走通写入路径**（点一下记录、删除并撤销、回收站恢复/永久删除的 Alert）。写入路径目前仍只有单元测试覆盖。Android 与真机未跑 |
+| 未覆盖 | 本次只做了「逐页打开 + 渲染」；写入路径（点记录、删除并撤销、回收站恢复/永久删除的 Alert）后来用 Maestro 补齐，见下方「端到端：Maestro 真手点」。Android 与真机未跑 |
 
 > 排障备注：本机访问 GitHub Releases 带宽很低，`expo start --ios` 自动下载 Expo Go 会超时。
 > 稳妥做法是手动分片下载 `Expo-Go-58.0.5.tar.gz`（约 148MB）→ 解包得到的目录本身就是 app bundle
 > （`CFBundleIdentifier = host.exp.Exponent`）→ 重命名为 `Expo Go.app` → `xcrun simctl install booted`。
 > 之后 `xcrun simctl openurl booted "exp://127.0.0.1:8081"` 即可打开。
+
+## 第二阶段验收记录（端到端：Maestro 真手点）
+
+这一节记录**用 Maestro 在模拟器上真的点击应用**之后看到的结果——补上此前「写入路径没有真手点过」的缺口。
+流程文件在 `.maestro/`（跑法见 [`./.maestro/README.md`](./.maestro/README.md)，走读见
+[`docs/learning/15-maestro-e2e.md`](./docs/learning/15-maestro-e2e.md)）。
+
+| 项目 | 结果 |
+| --- | --- |
+| 工具 | Maestro 2.11.0（官方 release zip 手动安装；`JAVA_HOME=/opt/homebrew/opt/openjdk@17`、`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`） |
+| 环境 | iPhone 16e 模拟器 · iOS 26.3 · Expo Go 58.0.5 · Metro（`localhost:8081`） |
+| 为什么不用坐标点击 | 坐标点击（`osascript` / `cliclick`）需要 macOS「辅助功能」权限；Maestro 自带的 XCTest driver 不需要，且按文字/id 找元素 |
+| 流程 | 7 条：冒烟 / 记录一次 / 删除并撤销 / 回收站恢复+永久删除 / 导出 JSON 分享面板 / 周期边界预演+越界保存被拒 / 统计环比同比切换 |
+| 运行结果 | **`7/7 Flows Passed`**，合计约 2 分钟（复跑一次：`7/7` / 2m07s） |
+| 记录一次 | 事件页自建「Maestro喝水」定义（中文 `inputText` 直接可用）→ 记录页点「记录」→ 顶部提示 `已记录：Maestro喝水 +1` → 时间轴出现该行 |
+| 删除并撤销 | 时间轴第一行点「删除」→ 出现 `已删除：…` → 点「撤销」→ 提示条消失、记录回来（**净值 0**） |
+| 回收站 | 「恢复」→ 回时间轴；再删 →「永久删除」→ **原生二次确认弹窗**（用相对选择器 `below: '.*无法恢复.*'` 区分弹窗按钮与列表行按钮）→ 记录真的从库里消失 |
+| 导出 | 设置页「导出 JSON 备份」→ 系统分享面板出现，显示文件名 `lifetrack-backup-2026-10-22` 与 `JSON · 19 KB` → 关闭（面板上的按钮是 `保存到“文件”`） |
+| 周期边界预演 | 开一段 `2026-10-01` 起的周期 → 记今天一条 → 把结束日改到 `2026-10-05` → **黄色预演**「会有 1 条记录落在区间外（2026-10-22）…保存会被拒绝，这些记录不会被删除」→ 点保存 → 仓储拒绝并原样显示原因 |
+| 统计对比 | 「较上年同期」结论行实测：**「本期 17 条，上年同期没有记录，无法算变化率」**，对照窗口 `2025-10-10 ~ 2025-10-23`（本期 `2026-10-09 ~ 2026-10-22`）——正是 52 周（364 天）对齐；对照期为空时**不出现百分比** |
+| 落盘核对 | 跑完直接读模拟器里的 `lifetrack.db`：软删仍是 **1 条**（使用者自己的 `喝水`，10-18），回收站**无 `Maestro*` 残留**，使用者的 2 段 `月经` + 4 条每日记录一条没少；「越界保存被拒」之后那条每日记录**还在**（拒绝没有删数据） |
+| 数据安全 | 写路径流程**自产自销**：只新增自己造的 `Maestro*` 数据，真删只删自己刚建的那条；**不使用 `clearState`**（在 Expo Go 里会连项目 SQLite 一起清掉） |
+| 未覆盖 | **Android 与真机未跑**；**「选文件导入」未覆盖**（只走到系统分享面板，文件选择器属另一个 App 的 UI）；周期流程假定运行日期晚于 `2026-10-05`；**组件级测试仍没有**（见 `HANDOFF.md` 技术债清单） |
 
 ## 不在范围内（首版）
 

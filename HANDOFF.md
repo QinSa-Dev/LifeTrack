@@ -9,7 +9,7 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 技术栈：React Native + Expo SDK 58 + TypeScript + SQLite（expo-sqlite）。
 数据全部在设备本地，**无后端、无账号、无云同步**。
 
-## 1. 当前状态快照（写于「导入导出」与「周期 / 统计增强」完成、并已在本机模拟器跑起来之后）
+## 1. 当前状态快照（写于「导入导出」「周期 / 统计增强」完成、并已在本机模拟器真手点验证之后）
 
 - 分支：`main`；工作区干净。
 - 最新提交：用 `git log -1` 查看
@@ -24,18 +24,19 @@ npm test             # 22 个套件 / 319 个用例通过
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（js bundle 3.1MB）
 npx expo-doctor      # 19/20：8 个旧依赖 patch 版本漂移（与最近改动无关）
+maestro test .maestro/flows      # 7/7 通过（约 2 分钟；需先起 Metro，见 .maestro/README.md）
 ```
 
-> ✅ **已在本机 iOS 模拟器实机跑起来**（见第 8 节）：第二阶段的功能都能打开、渲染真实数据。
-> ⚠️ 但**写入路径没有真手点过**（点记录 / 删除撤销 / 回收站真删 / 导出分享 / 选文件导入 /
-> 周期边界预览 / 统计页的对比切换），
-> 只靠单元测试；Android 与真机未跑。
-> 接手后建议：`npm start` + Expo Go 手动点一遍再动新代码。
+> ✅ **已在本机 iOS 模拟器实机跑起来**，并且**写入路径已经用 Maestro 真手点过**（见第 8 节）：
+> 点记录、删除并撤销、回收站恢复/永久删除（含原生二次确认）、导出 JSON 到分享面板、
+> 周期边界预演 + 越界保存被拒、统计环比/同比切换，7 条流程全绿，跑完还直接读模拟器的
+> `lifetrack.db` 核对过（使用者数据一条没少）。走读见 `docs/learning/15-maestro-e2e.md`。
+> ⚠️ 仍未验证：**Android 与真机**、**「选文件导入」**（只走到系统分享面板）、**组件级测试**。
 >
 > 本机访问 GitHub Releases 很慢，`expo start --ios` 会卡在「Fetching Expo Go」超时。变通办法见
 > `README.md`「本机 iOS 模拟器实机运行」末尾的排障备注（手动分片下载 Expo Go → `simctl install`）。
 
-**远端提醒**：本地 `main` 比 `origin/main` 领先 7 个提交（远端为 `git@github.com:QinSa-Dev/LifeTrack.git`；
+**远端提醒**：本地 `main` 比 `origin/main` 领先 9 个提交（远端为 `git@github.com:QinSa-Dev/LifeTrack.git`；
 `origin/main` 当前为 `1ada659`）。推送前先确认目标分支。
 
 ## 2. 环境与命令
@@ -60,6 +61,22 @@ npx expo export --platform ios   # 打包验证，不需要模拟器
 npx expo-doctor           # 依赖/配置体检（等价于 npm run doctor）
 ```
 
+端到端（真手点，需要先起 Metro 并开一个模拟器；只在 macOS + Xcode 下可用）：
+
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17        # Maestro 的 zip 不含 JDK
+export PATH="$HOME/.maestro/bin:$PATH"
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer   # 本机 xcode-select 指向 CLT，simctl 要靠它
+
+npx expo start                     # 另一个终端，保持运行
+maestro test .maestro/flows        # 7/7，约 2 分钟
+maestro hierarchy                  # 排错：打印当前屏幕的视图树
+```
+
+> 约定与坑（**跑之前务必读** `.maestro/README.md`）：`appId` 用 `host.exp.Exponent`；
+> **不要用 `clearState`**（Expo Go 里会连项目 SQLite 一起清掉）；每条流程用
+> `launchApp: {stopApp: true}` + `openLink` 归一化；写路径流程自产自销。
+
 > **新增路由后**：`tsc` 可能报「Href 里没有这个路径」。因为 `typedRoutes` 的类型生成在
 > `.expo/types/router.d.ts`（已 gitignore）。跑一次 `npx expo start --offline`（十几秒后 Ctrl-C）即可重新生成。
 
@@ -73,6 +90,7 @@ src/db/            连接、PRAGMA、迁移、DatabaseProvider、SqlExecutor 抽
 src/repositories/  ★ 唯一写 SQL 的地方，对外只暴露业务语义方法
 src/domain/        类型与规则（models / validation / dates / cycles / backup / errors / id），不依赖 React、不依赖数据库
 src/theme/         设计令牌
+.maestro/          端到端流程（Maestro）：在真实模拟器上点击写入路径 + 读库核对（不是应用代码）
 ```
 
 - **界面层不出现 SQL**；**仓储层是唯一 SQL 出口**；**领域层做校验与规则**，纯函数优先。
@@ -139,11 +157,14 @@ src/theme/         设计令牌
 - 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / `softDelete` / `restore` / `remove` 真删）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 导出用的 `listAll`）、`cycleDefinitionRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`）
 - 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `RecordRow` / `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `CycleDefinitionForm`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数）、`src/features/stats/labels.ts`（对比的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
 - 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴 + 撤销，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/cycles.tsx`、`src/app/(tabs)/settings.tsx`（诊断 + 备份与恢复）、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/records/deleted.tsx`（回收站）、`src/app/events/[id].tsx`、`src/app/cycles/[id].tsx`、`src/app/cycle-instances/[id].tsx`
-- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`
+- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`
+- 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`06`（7 条流程）、`.maestro/subflows/record-once.yaml`
 
 ## 7. 必须遵守的工作约定
 
 1. **运行验证再收工**：至少 `npm run typecheck && npm run lint && npm test`；涉及界面/依赖时补 `npx expo export`。
+   碰到**界面交互/写入路径**（点一下会写库的地方）时，跑一遍 `maestro test .maestro/flows`
+   （需先起 Metro；新增写入路径就顺手加一条流程，并跑完读库核对）。
 2. **提交粒度**：一个可独立说明的改动一个 commit；中文提交信息，首行「第 N 阶段第 X 项：…”+ 要点。
 3. **文档随功能同步**：更新 `README.md`（进度、目录、验收记录）+ `docs/learning/README.md`（进度表、概念、架构图）；
    新功能落地时写一篇 `docs/learning/NN-*.md`。**不写空文档、不把计划写成现状**。
@@ -158,13 +179,18 @@ src/theme/         设计令牌
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go 58.0.5）：5 个标签页 + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
-- ❌ **没有手动走通写入路径**：本机无法自动化点击（模拟器未授予辅助功能权限），所以「点一下记录」
-  「删除并撤销」「回收站恢复/永久删除的二次确认」「导出 JSON/CSV 的分享面板」「从备份导入的文件选择器」
-  「改周期边界时的越界预演」「统计页的对比切换」都只由单元测试覆盖，没有真手点过。
-  也**没在 Android 与真机上跑过**。
-- ❌ 界面交互的自动化测试（项目暂无组件测试）。
-- ❌ 导入导出的**文件层面**未验证：`expo-file-system` / `expo-sharing` / `expo-document-picker`
-  只保证「能打包」，没有真机验证过「文件存得下来、选得回来」。
+- ✅ **写入路径已经真手点过**（Maestro，`7/7` 通过，约 2 分钟）：点一下记录、删除并撤销、
+  回收站「恢复 / 永久删除」（含原生二次确认）、导出 JSON 到系统分享面板、
+  改周期边界的越界预演 + 越界保存被拒绝、统计页的环比 / 同比切换。
+  流程在 `.maestro/`，走读见 `docs/learning/15-maestro-e2e.md`，结果明细见 `README.md`
+  的「端到端：Maestro 真手点」一节。
+  另外，跑完会**直接读模拟器里的 `lifetrack.db`** 核对：使用者数据一条没少，
+  流程只新增自己造的 `Maestro*` 数据。
+- ❌ **没在 Android 与真机上跑过**（Maestro 流程也只写了 iOS 路径）。
+- ❌ **「选文件导入」没真手点过**：`04` 只走到系统分享面板并关掉；系统文件选择器是另一个 App 的 UI，
+  跨 App 取文件还没做。`expo-file-system` / `expo-sharing` / `expo-document-picker`
+  因此只验证到「导出写得出文件、面板弹得出来」。
+- ❌ 界面交互的**组件级**自动化测试仍没有（项目里只有单元测试 + Maestro 端到端两层）。
 
 ## 9. 下一步任务：第二阶段剩余项
 
@@ -194,7 +220,10 @@ src/theme/         设计令牌
 
 ### 9.3 导入导出的收尾（可选）
 
-- **真机 / 模拟器手测一遍**：导出 → 分享 → 存文件 → 选回来导入（本次唯一没验证的环节）。
+- **「选文件导入」还没手测过**：导出 → 分享面板这条已经由 `.maestro/flows/04` 覆盖；
+  剩下的是「存到「文件」→ 选回来导入」——文件选择器属另一个 App，要另写流程（跨 App 操作，
+  先想清楚断言什么、怎么不污染使用者数据）。Android 上的 `expo-sharing` / `expo-document-picker`
+  行为同样未知。
 - 备份文件可以做得更「防呆」：导入时若 `format` 对但 `data` 整个缺失，目前按空备份处理——
   可考虑提示「这看起来不是一份完整备份」。
 - 导出体积优化（当前是缩进 JSON，记录很多时偏大）。
@@ -208,7 +237,9 @@ src/theme/         设计令牌
 
 - **`MetaRepository.incrementLaunchCount` 是「读-改-写」，非原子**（`docs/learning/04` 4.6）。
   当前只用于启动计数，无实际损失；写真正的计数逻辑时不要照抄这个模式，改用原子 SQL 或事务。
-- **界面无自动化测试**：项目至今没有组件测试；若做复杂交互，考虑引入 `@testing-library/react-native`。
+- **界面只有端到端、没有组件级测试**：Maestro 流程（`.maestro/`）能证明「点得通、落得进库」，
+  但跑得慢、只能盖住主干路径；细粒度的界面交互（条件渲染、空状态、错误态）若要自动化，
+  仍需 `@testing-library/react-native`。
 - **时间轴只取最近 100 条**：已用 `FlatList` 虚拟化，但没有分页 / 无限滚动；更早的记录要去事件页看。
 - **统计页全量读取记录**：`EventRecordRepository.list()` 无上限，记录很多时会一次性读进内存再聚合；
   可在仓储层加 `occurred_at` 范围过滤后再聚合（纯函数接口不用变，见第 9.2 节）。
@@ -223,8 +254,8 @@ src/theme/         设计令牌
 - **边界预演是「提示」而不是「校验」**：界面用纯函数算出来的结论不参与拦截，
   真正的拒绝仍在保存时由仓储执行；两者共用 `findDatesOutside`，所以不会对不上。
 - **周期界面没有日历视图**：现在是「标签页 → 定义详情 → 实例详情」三层下钻，月历点选属增强项。
-- **导入导出的文件层未手测**：`transfer.ts` 的三个入口（分享 / 选文件）没有真机点过；
-  Android 上的 `expo-sharing` / `expo-document-picker` 行为未知（见 9.3）。
+- **导入导出的文件层只覆盖了一半**：`.maestro/flows/04` 证明「导出能写出文件、分享面板能弹出」；
+  「选文件导入」与 Android 上的行为仍未验证（见 9.3）。
 - **导入的「读」与「写」不在同一个事务窗口**：`readAll()` 在事务外（受 `withExclusiveTransactionAsync`
   只能在回调内用 `txn` 的限制），单用户单连接场景无影响；若将来出现后台写入，需要改成事务内读取或加乐观校验。
 - **`app_meta` 不参与备份**：这是有意的（安装时间/启动次数是本机信息），但意味着「换机恢复」后
@@ -240,17 +271,30 @@ git status                 # 应干净
 npm install                # 若 node_modules 不全
 npm run verify             # 应为：22 套件 / 319 用例通过
 npx expo export --platform ios   # 应能打包（3.1MB 左右）
-npm start                  # Expo Go 扫码，手动走一遍：
-                           #   建事件 → 记录 → 补录 → 看时间轴 → 删除并撤销 → 归档/删除定义
-                           #   切到「统计」：看概览 / 按天按周趋势 / 按事件统计；删一条记录再看数字是否变化
-                           #   统计页切「较前一段 / 较上年同期」：对照窗口日期应相隔 52 周；对照期为空时不该出现百分比
-                           #   时间轴删一条 → 进「回收站」→ 恢复 / 永久删除（应弹二次确认）
-                           #   建周期定义 → 开始新周期 → 记某天的阶段/症状 → 结束周期
-                           #   再开第二段（间隔不同）→ 回定义详情看预测是否按「实际间隔」给，且写明依据
-                           #   把结束日提前到某条记录之前 → 应立刻出现黄色预演提示，保存被拒绝（数据不能少）
-                           #   删除某天的记录 / 删除整段周期 → 都应有二次确认
-                           #   设置页：导出 JSON 备份 → 存到「文件」→ 再导入这份备份
-                           #   （第二次导入应提示「新增 0 条」；导出 CSV 用表格软件打开看列是否错位）
+npm start                  # Expo Go 扫码（或走下面的自动流程）
+
+# 端到端：另开终端，Metro 保持运行
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17
+export PATH="$HOME/.maestro/bin:$PATH"
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+maestro test .maestro/flows      # 应为 7/7 通过（约 2 分钟）
+sqlite3 "$(xcrun simctl get_app_container booted host.exp.Exponent data)"/Documents/ExponentExperienceData/@anonymous/lifetrack-*/SQLite/lifetrack.db \
+  "select count(*), sum(deleted_at is not null) from event_records;"   # 跑完核对：多的应该只有 Maestro* 那条记录
+```
+
+手动走一遍（想看得更细时）：
+
+```
+建事件 → 记录 → 补录 → 看时间轴 → 删除并撤销 → 归档/删除定义
+切到「统计」：看概览 / 按天按周趋势 / 按事件统计；删一条记录再看数字是否变化
+统计页切「较前一段 / 较上年同期」：对照窗口日期应相隔 52 周；对照期为空时不该出现百分比
+时间轴删一条 → 进「回收站」→ 恢复 / 永久删除（应弹二次确认）
+建周期定义 → 开始新周期 → 记某天的阶段/症状 → 结束周期
+再开第二段（间隔不同）→ 回定义详情看预测是否按「实际间隔」给，且写明依据
+把结束日提前到某条记录之前 → 应立刻出现黄色预演提示，保存被拒绝（数据不能少）
+删除某天的记录 / 删除整段周期 → 都应有二次确认
+设置页：导出 JSON 备份 → 存到「文件」→ 再导入这份备份
+（第二次导入应提示「新增 0 条」；导出 CSV 用表格软件打开看列是否错位）
 ```
 
 走完之后，再按第 9 节挑下一项开始。
