@@ -14,6 +14,11 @@ export const META_KEYS = {
   installedAt: 'app.installed_at',
   /** 应用启动次数（用于验证跨重启持久化） */
   launchCount: 'app.launch_count',
+  /**
+   * 时间轴显示方式：`expanded`（逐条展开）/ `merged`（同类合并）。
+   * 纯展示偏好，存这里就不用为它加表或加列。
+   */
+  timelineView: 'app.timeline_view',
 } as const;
 
 /**

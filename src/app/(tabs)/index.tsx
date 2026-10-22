@@ -1,30 +1,42 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AppText, Button, Card, EmptyState } from '@/components';
-import { useReadyDatabase } from '@/db';
-import type { EventRecord } from '@/domain/models';
-import { describeRecord } from '@/features/records/format';
+import { AppText, Button, Card, Chip, EmptyState } from '@/components';
+import { META_KEYS, useReadyDatabase } from '@/db';
+import type { EventDefinition, EventRecord } from '@/domain/models';
+import { groupRecordsByDefinition, type RecordGroup } from '@/features/records/groupRecords';
+import { RecordGroupRow } from '@/features/records/RecordGroupRow';
 import { RecordRow } from '@/features/records/RecordRow';
-import { UndoBar } from '@/features/records/UndoBar';
-import { EventRecordRepository } from '@/repositories';
+import { parseTimelineViewMode, type TimelineViewMode } from '@/features/records/timelineView';
+import { EventDefinitionRepository, EventRecordRepository, MetaRepository } from '@/repositories';
 import { palette, radius, spacing } from '@/theme';
 
 const RECENT_LIMIT = 100;
+
+/** 列表里的一项：逐条视图是一条记录，合并视图是一个事件的多次记录。 */
+type TimelineItem = { type: 'record'; record: EventRecord } | { type: 'group'; group: RecordGroup };
+
+/** 传给 RecordRow / RecordGroupRow 的【+1】开关，四种状态互斥。 */
+interface RepeatProps {
+  onRepeat?: () => void;
+  repeatBlockedReason?: string;
+  definitionGone?: boolean;
+}
 
 export default function TimelineScreen() {
   const router = useRouter();
   const { db } = useReadyDatabase();
 
   const [records, setRecords] = useState<EventRecord[]>([]);
+  const [definitions, setDefinitions] = useState<ReadonlyMap<string, EventDefinition>>(new Map());
+  const [definitionsLoaded, setDefinitionsLoaded] = useState(false);
+  const [viewMode, setViewMode] = useState<TimelineViewMode>('expanded');
+  const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // 最近一次被软删除的记录：有值时显示「撤销」提示条
-  const [undoTarget, setUndoTarget] = useState<EventRecord | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [restoring, setRestoring] = useState(false);
+  const [repeatingId, setRepeatingId] = useState<string | null>(null);
 
   const load = useCallback(
     (showSpinner: boolean) => {
@@ -32,11 +44,15 @@ export default function TimelineScreen() {
       if (showSpinner) {
         setLoading(true);
       }
-      new EventRecordRepository(db)
-        .list({ limit: RECENT_LIMIT })
-        .then((loaded) => {
+      Promise.all([
+        new EventRecordRepository(db).list({ limit: RECENT_LIMIT }),
+        new EventDefinitionRepository(db).list({ includeArchived: true }),
+      ])
+        .then(([loadedRecords, loadedDefinitions]) => {
           if (!cancelled) {
-            setRecords(loaded);
+            setRecords(loadedRecords);
+            setDefinitions(new Map(loadedDefinitions.map((definition) => [definition.id, definition])));
+            setDefinitionsLoaded(true);
             setError(null);
           }
         })
@@ -57,63 +73,135 @@ export default function TimelineScreen() {
     [db],
   );
 
-  // 每次回到这个标签页都重新读一次，这样从记录页返回后能立刻看到新记录
+  // 每次回到这个标签页都重新读一次，这样从记录页/详情页返回后能立刻看到变化
   useFocusEffect(
     useCallback(() => {
       return load(true);
     }, [load]),
   );
 
-  const remove = (record: EventRecord) => {
-    setDeletingId(record.id);
+  // 显示方式只读一次：它是纯偏好，读到之前先用默认的逐条展开；
+  // 读失败的后果只是「偏好没记住」，不值得弹错误卡片打扰人。
+  useEffect(() => {
+    let cancelled = false;
+    new MetaRepository(db)
+      .get(META_KEYS.timelineView)
+      .then((stored) => {
+        if (!cancelled) {
+          setViewMode(parseTimelineViewMode(stored));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [db]);
+
+  const changeViewMode = (next: TimelineViewMode) => {
+    setViewMode(next);
+    setError(null);
+    // 先切再存：切换是纯展示，不该等一次写库；写失败才回报
+    new MetaRepository(db).set(META_KEYS.timelineView, next).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+  };
+
+  /**
+   * 【+1】：以这条记录的取值「现在」再记一条（来源记为快捷）。
+   *
+   * 记完就完事——**不弹确认、也不再给撤销条**：这一下就是「快」，
+   * 记错了进这条记录的详情页改或删（那页底部的「更多操作」里有）。
+   * 事件记录没有指向定义的外键，所以定义没了的历史也可能出现在列表里，这里要分开处置。
+   */
+  const repeat = (record: EventRecord) => {
+    setRepeatingId(record.id);
     setError(null);
     new EventRecordRepository(db)
-      .softDelete(record.id)
+      .record({
+        definitionId: record.definitionId,
+        value: record.value,
+        unit: record.unit,
+        source: 'quick',
+      })
       .then(() => {
-        setUndoTarget(record);
         load(false);
       })
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause));
       })
       .finally(() => {
-        setDeletingId(null);
+        setRepeatingId(null);
       });
   };
 
-  const undoRemove = () => {
-    if (!undoTarget) {
-      return;
+  const repeatProps = (definitionId: string, onRepeat: () => void): RepeatProps => {
+    if (!definitionsLoaded) {
+      return {};
     }
-    setRestoring(true);
-    setError(null);
-    new EventRecordRepository(db)
-      .restore(undoTarget.id)
-      .then(() => {
-        setUndoTarget(null);
-        load(false);
-      })
-      .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      })
-      .finally(() => {
-        setRestoring(false);
-      });
+    const definition = definitions.get(definitionId);
+    if (!definition) {
+      return { definitionGone: true };
+    }
+    if (definition.isArchived) {
+      return { onRepeat, repeatBlockedReason: '已归档' };
+    }
+    return { onRepeat };
   };
+
+  const toggleGroup = (definitionId: string) => {
+    setExpandedGroups((current) =>
+      current.includes(definitionId)
+        ? current.filter((item) => item !== definitionId)
+        : [...current, definitionId],
+    );
+  };
+
+  const groups = useMemo(() => groupRecordsByDefinition(records), [records]);
+
+  const items: TimelineItem[] = useMemo(
+    () =>
+      viewMode === 'merged'
+        ? groups.map((group) => ({ type: 'group' as const, group }))
+        : records.map((record) => ({ type: 'record' as const, record })),
+    [groups, records, viewMode],
+  );
+
+  const openDetail = (record: EventRecord) =>
+    router.push({ pathname: '/records/[id]', params: { id: record.id } });
+
+  const renderRecordRow = (record: EventRecord, divider: boolean) => (
+    <RecordRow
+      key={record.id}
+      record={record}
+      divider={divider}
+      onPress={() => openDetail(record)}
+      repeating={repeatingId === record.id}
+      {...repeatProps(record.definitionId, () => repeat(record))}
+    />
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <FlatList
-        data={records}
-        keyExtractor={(item) => item.id}
+        data={items}
+        keyExtractor={(item) => (item.type === 'group' ? item.group.definitionId : item.record.id)}
         renderItem={({ item }) => (
           <View style={styles.itemCard}>
-            <RecordRow
-              record={item}
-              divider={false}
-              onDelete={() => remove(item)}
-              deleting={deletingId === item.id}
-            />
+            {item.type === 'group' ? (
+              <RecordGroupRow
+                group={item.group}
+                expanded={expandedGroups.includes(item.group.definitionId)}
+                onToggle={() => toggleGroup(item.group.definitionId)}
+                repeating={repeatingId === item.group.latest.id}
+                {...repeatProps(item.group.latest.definitionId, () => repeat(item.group.latest))}
+              >
+                {item.group.records.map((record, index) =>
+                  renderRecordRow(record, index < item.group.records.length - 1),
+                )}
+              </RecordGroupRow>
+            ) : (
+              renderRecordRow(item.record, false)
+            )}
           </View>
         )}
         ListHeaderComponent={
@@ -126,19 +214,12 @@ export default function TimelineScreen() {
               </Card>
             ) : null}
 
-            {undoTarget ? (
-              <UndoBar
-                message={`已删除：${describeRecord(undoTarget)}`}
-                onUndo={undoRemove}
-                onDismiss={() => setUndoTarget(null)}
-                busy={restoring}
-              />
-            ) : null}
-
             <View style={styles.headerRow}>
               <AppText variant="caption" color={palette.textMuted} style={styles.headerHint}>
                 {records.length > 0
-                  ? `最近 ${records.length} 条，按发生时间倒序（最多 ${RECENT_LIMIT} 条）`
+                  ? viewMode === 'merged'
+                    ? `最近 ${records.length} 条，合并为 ${groups.length} 个事件（最多 ${RECENT_LIMIT} 条）`
+                    : `最近 ${records.length} 条，按发生时间倒序（最多 ${RECENT_LIMIT} 条）`
                   : '软删除的记录会进回收站'}
               </AppText>
               <Button
@@ -147,6 +228,22 @@ export default function TimelineScreen() {
                 size="sm"
                 onPress={() => router.push('/records/deleted')}
               />
+            </View>
+
+            <View style={styles.viewRow}>
+              <Chip
+                label="逐条"
+                selected={viewMode === 'expanded'}
+                onPress={() => changeViewMode('expanded')}
+              />
+              <Chip
+                label="同类合并"
+                selected={viewMode === 'merged'}
+                onPress={() => changeViewMode('merged')}
+              />
+              <AppText variant="caption" color={palette.textMuted} style={styles.viewHint}>
+                点行看详情，点【+1】按同样的取值再记一条
+              </AppText>
             </View>
           </View>
         }
@@ -159,7 +256,7 @@ export default function TimelineScreen() {
             <EmptyState
               title="还没有任何记录"
               description="到「事件」标签点按一个事件即可记录。计数型如「喝水 +1」，数量型如「跑步 5 公里」。"
-              footnote="记录会保存当时的事件快照，之后改定义也不会篡改历史。"
+              footnote="记录会保存当时的事件快照，之后改定义也不会篡改历史。列表上的【+1】会按那条记录的取值再记一条。"
             />
           )
         }
@@ -196,6 +293,16 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   headerHint: {
+    flexShrink: 1,
+  },
+  viewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  viewHint: {
     flexShrink: 1,
   },
   itemCard: {

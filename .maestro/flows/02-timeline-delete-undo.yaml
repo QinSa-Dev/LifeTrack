@@ -1,9 +1,15 @@
-# 写入路径 2：时间轴删除一条（软删除）→ 撤销 → 记录回来。
+# 写入路径 2：时间轴点一行 → 记录详情页 → 修改 / 删除 / 撤销删除。
 #
-# 覆盖：RecordRow 的「删除」→ UndoBar（已删除：… / 撤销 / 知道了）。
-# 副作用：删的是时间轴第一条（最新），随后立刻撤销，净值 0。
+# 覆盖：
+#   1. 行可点进详情（删除已经不在行内了），详情页显示快照名、取值、发生/录入时间、来源、备注、记录 id；
+#   2. 「更多操作 → 修改这条记录」：卡片就地变成修改表单 → 改发生日期 → 保存
+#      （发生时间 ≠ 录入时间，来源自己会变成「事后补记的」）；
+#   3. 「更多操作 → 删除这条记录」= 软删除 → 页面进入「已删除」态 → 「撤销删除」把它找回来。
+#
+# 自产自销：只动本流程自己刚记的那条「Maestro喝水」（刚记的就是最新的一条，
+# 所以它一定在列表第一行），不碰使用者手工留下的历史。
 appId: host.exp.Exponent
-name: 02 时间轴 · 删除 → 撤销
+name: 02 时间轴 · 点行进详情 → 修改 / 删除 / 撤销
 tags:
   - write
 ---
@@ -14,13 +20,87 @@ tags:
     visible: '时间轴, tab, 1 of 5'
     timeout: 120000
 - tapOn: '.*时间轴, tab.*'
+- tapOn: '.*事件, tab.*'
+- runFlow: ../subflows/record-once.yaml
+- tapOn: '返回'
+- tapOn: '.*时间轴, tab.*'
+# 显示方式是**记在 app_meta 里的偏好**，上一次跑留下的可能是「同类合并」；
+# 合并行点一下是就地展开、不是进详情，所以这里先明确切回「逐条」（选中的再点一下也无害）。
+- tapOn: '逐条'
 - takeScreenshot: 02-before
-# index 0 = 列表里第一行的「删除」，也就是最新那条
+
+# —— 点行 = 进记录详情页（行内已经没有【删除】了）——
 - tapOn:
-    text: '删除'
+    text: '.*Maestro喝水.*'
     index: 0
-- assertVisible: '.*已删除：.*'
-- takeScreenshot: 02-undo-bar
-- tapOn: '撤销'
-- assertNotVisible: '.*已删除：.*'
-- takeScreenshot: 02-after-undo
+- assertVisible: '这条记录'
+- assertVisible: '记录当时的样子，之后改定义也不会动它'
+- assertVisible: '记录 id'
+- takeScreenshot: 02-detail
+
+# —— 更多操作 → 修改这条记录（同一张卡片就地变成修改表单）——
+- scrollUntilVisible:
+    element:
+      text: '修改这条记录'
+    direction: DOWN
+- tapOn: '修改这条记录'
+- assertVisible: '改的是记录本身；记录时的名称与单位是快照，不会跟着变'
+# 发生日期输入框有预填值，没有 placeholder 可点，所以按「值的形状」点它：这页上只有它的
+# 文本整串长成 2026-10-22（详情里发生/录入时间是「2026-10-22 18:20」，整串不匹配）。
+# 点它右侧 95% 处让光标落在文本末尾——`eraseText` 是往回删字符，光标在中间就会删成半截
+# （踩过一次：2026-10-22 变成 2026-01-0122）。
+- tapOn:
+    text: '\d{4}-\d{2}-\d{2}'
+    point: 95%, 50%
+- eraseText: 20
+- inputText: '2026-01-01'
+# 单行输入回车即失焦（这个 App 的输入框上 hideKeyboard 会失败：中文输入法）
+- pressKey: Enter
+- scrollUntilVisible:
+    element:
+      text: '保存修改'
+    direction: DOWN
+- tapOn: '保存修改'
+- assertVisible: '已保存修改'
+# 改的日期生效了；发生时间早于录入时间，来源自己变成「事后补记的」
+- assertVisible: '.*2026-01-01.*'
+- assertVisible: '.*事后补记的.*'
+- takeScreenshot: 02-edited
+
+# —— 删除这条记录（软删除）——
+- scrollUntilVisible:
+    element:
+      text: '删除这条记录'
+    direction: DOWN
+- tapOn: '删除这条记录'
+# 卡片就地变成「撤销删除」+「已删除」横幅在顶部，先滚回去看它
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
+- assertVisible: '这条记录已删除'
+- takeScreenshot: 02-deleted
+
+# —— 撤销删除：这条记录回来 ——
+- scrollUntilVisible:
+    element:
+      text: '撤销删除'
+    direction: DOWN
+- tapOn: '撤销删除'
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
+- assertVisible: '已撤销删除，这条记录又回来了'
+- assertNotVisible: '这条记录已删除'
+- takeScreenshot: 02-undone
+
+# —— 回时间轴：那条记录还在 ——
+- tapOn: '返回'
+# 这条记录的发生时间刚被改到 2026-01-01，按发生时间倒序它排在很下面，得往下滚
+- scrollUntilVisible:
+    element:
+      text: '.*Maestro喝水.*'
+    direction: DOWN
+- assertVisible: '.*Maestro喝水.*'
+- takeScreenshot: 02-timeline

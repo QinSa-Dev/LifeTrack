@@ -12,6 +12,9 @@
  *    （未来还没发生，不构成事实）。
  * 5. **删除分两级**：`softDelete` 只写 `deleted_at`（可 `restore` 撤销），真删是 `remove`，
  *    不可撤销、需要界面二次确认。两者划分清楚，避免「以为能撤销，其实是真删」。
+ * 6. **记录可以更正**：`update` 只改事实本身（取值、发生时间、备注），
+ *    快照（名称、单位、分组、标签）永不更新——「快照不可改，事实可更正」。
+ *    已软删除的记录不能改（先撤销删除），避免改了又留在回收站里对不上账。
  *
  * 读取时 `kind` / `source` 都会再过一次守卫（泛型运行时不校验）。
  */
@@ -36,6 +39,7 @@ import {
   requireNotFuture,
   requireRecordSource,
   requireRecordValue,
+  type EventRecordEditInput,
   type EventRecordInput,
 } from '@/domain/validation';
 
@@ -212,6 +216,48 @@ export class EventRecordRepository {
       });
 
       return this.mustReadOne(id);
+    });
+  }
+
+  /**
+   * 更正一条已存在的记录：取值、发生时间、备注。
+   *
+   * 动的是「事实」，不是「快照」：记录时的名称、单位、分组、标签保持原样，
+   * 所以改完之后历史仍然自洽（比如定义后来改了名，这条记录还是原名）。
+   *
+   * 校验与新增记录同一套：取值按类型（counter 是正整数、quantity 是数字）、
+   * 发生时间不能晚于录入时间（未来还没发生，不构成事实——这条与补录共用同一条规则）。
+   * 已软删除的记录拒绝修改：先撤销删除再改，免得「改了又躺在回收站里」对不上。
+   */
+  async update(id: string, input: EventRecordEditInput): Promise<EventRecord> {
+    const targetId = requireId(id, '事件记录 id');
+    const occurredAtInput = input.occurredAt;
+    const note = optionalText(input.note);
+
+    return guard('修改事件记录', async () => {
+      const existing = await this.getById(targetId);
+      if (!existing) {
+        throw new NotFoundError(`事件记录不存在：${targetId}`);
+      }
+      if (existing.deletedAt !== undefined) {
+        throw new ConflictError('这条记录已被删除，先撤销删除再修改');
+      }
+
+      const value = requireRecordValue(existing.kind, input.value);
+      const occurredAt = requireNotFuture(
+        requireIsoDateTime(occurredAtInput ?? existing.occurredAt, '发生时间'),
+        existing.recordedAt,
+        '发生时间',
+      );
+
+      await this.db.runAsync(
+        'UPDATE event_records SET value = ?, note = ?, occurred_at = ? WHERE id = ?',
+        value,
+        note ?? null,
+        occurredAt,
+        targetId,
+      );
+      return this.mustReadOne(targetId);
     });
   }
 

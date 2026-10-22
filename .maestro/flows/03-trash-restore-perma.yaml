@@ -1,9 +1,11 @@
 # 写入路径 3：回收站 · 恢复 / 永久删除（二次确认）。
 #
-# 覆盖：软删除 → 回收站「恢复」→ 回时间轴；再删 → 「永久删除」→ 原生二次确认 → 真删。
+# 覆盖：点行进详情（删除在页面底部的「更多操作」里）→ 软删除 → 回收站「恢复」→ 回时间轴；
+# 再删 → 「永久删除」→ 原生二次确认 → 真删。
 #
-# 自产自销：全程只动本流程自己刚记的那条「Maestro喝水」。
-# 回收站按 deleted_at 倒序，所以第一条就是刚删的那条。
+# 自产自销：全程只动本流程自己刚记的那条「Maestro喝水」（刚记的就是最新的一条）。
+# 回收站按 deleted_at 倒序，所以「已删除的记录」区第一条就是刚删的那条（使用者自己那条
+# 软删的「喝水」更早，排在后面）。
 #
 # 二次确认那一步：弹窗按钮文字是「彻底删除」，与列表里每行的「永久删除」**不同名**。
 # Maestro 是全文匹配，所以按钮文字本身就是最稳的选择器——不需要相对定位，也不会
@@ -23,10 +25,30 @@ tags:
 - runFlow: ../subflows/record-once.yaml
 - tapOn: '返回'
 - tapOn: '.*时间轴, tab.*'
+# 显示方式是 app_meta 里的偏好，上一次跑可能留下「同类合并」；合并行点一下是展开、
+# 不是进详情，所以先明确切回「逐条」。
+- tapOn: '逐条'
+
+# 进详情页删掉它：删除按钮在页面最下面那张「更多操作」卡片里（行内已经没有了）
 - tapOn:
-    text: '删除'
+    text: '.*Maestro喝水.*'
     index: 0
-- assertVisible: '.*已删除：.*'
+- scrollUntilVisible:
+    element:
+      text: '删除这条记录'
+    direction: DOWN
+- tapOn: '删除这条记录'
+# 删完之后卡片就地变成「撤销删除」，再滚回顶部看「已删除」横幅
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
+- assertVisible: '这条记录已删除'
+- tapOn: '返回'
+- takeScreenshot: 03-deleted
+# 注意：**不能**在这里断言时间轴上「.*Maestro喝水.*」不见了——同名事件可能有多条
+# （每个流程各记一条，会累加），删掉的只是刚记的那一条。它到底删没删，
+# 由下一步在回收站里看到它、以及跑完直接读库来证明。
 
 # —— 恢复 ——
 - tapOn: '回收站'
@@ -37,6 +59,10 @@ tags:
     text: '恢复'
     index: 0
 - assertNotVisible: '.*Maestro喝水.*'
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
 - tapOn: '返回'
 - tapOn: '.*时间轴, tab.*'
 - assertVisible: '.*Maestro喝水.*'
@@ -44,9 +70,18 @@ tags:
 
 # —— 永久删除（真删）——
 - tapOn:
-    text: '删除'
+    text: '.*Maestro喝水.*'
     index: 0
-- assertVisible: '.*已删除：.*'
+- scrollUntilVisible:
+    element:
+      text: '删除这条记录'
+    direction: DOWN
+- tapOn: '删除这条记录'
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
+- tapOn: '返回'
 - tapOn: '回收站'
 - assertVisible: '.*Maestro喝水.*'
 - tapOn:

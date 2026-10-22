@@ -8,7 +8,6 @@ import type { EventDefinition, EventRecord, RecordSource } from '@/domain/models
 import { localDateText, localTimeText, parseLocalDateTime, shiftLocalDays } from '@/features/common/datetime';
 import { describeRecord, formatOccurredAt, sourceLabel } from '@/features/records/format';
 import { RecordRow } from '@/features/records/RecordRow';
-import { UndoBar } from '@/features/records/UndoBar';
 import { EventDefinitionRepository, EventRecordRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
@@ -31,9 +30,8 @@ export default function RecordScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
-  const [undoTarget, setUndoTarget] = useState<EventRecord | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [restoring, setRestoring] = useState(false);
+  // 「最近记录」里正在【+1】的那一条
+  const [repeatingId, setRepeatingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     let cancelled = false;
@@ -61,18 +59,39 @@ export default function RecordScreen() {
 
   useEffect(() => load(), [load]);
 
-  const save = (value: number, unit: string | undefined, source: RecordSource, occurredAt?: string) => {
+  /**
+   * 记一条。
+   *
+   * `note` 默认取输入框里的备注；行内的【+1】显式传空串——它不该顺手带上
+   * 你刚敲进「手动记录」输入框、还没提交的备注。
+   */
+  const save = (
+    value: number,
+    unit: string | undefined,
+    source: RecordSource,
+    options: { occurredAt?: string; note?: string } = {},
+  ): Promise<void> => {
     if (!definition || busy) {
-      return;
+      return Promise.resolve();
     }
+    const usedNote = options.note ?? note;
     setBusy(true);
     setError(null);
     setFlash(null);
-    new EventRecordRepository(db)
-      .record({ definitionId: definition.id, value, unit, note, source, occurredAt })
+    return new EventRecordRepository(db)
+      .record({
+        definitionId: definition.id,
+        value,
+        unit,
+        note: usedNote,
+        source,
+        occurredAt: options.occurredAt,
+      })
       .then((created) => {
         setFlash(`${created.source === 'backfill' ? '已补录' : '已记录'}：${describeRecord(created)}`);
-        setNote('');
+        if (usedNote.trim() !== '') {
+          setNote('');
+        }
         load();
       })
       .catch((cause: unknown) => {
@@ -83,12 +102,21 @@ export default function RecordScreen() {
       });
   };
 
+  /** 行内【+1】：以这条记录的取值再记一条（不带备注）。 */
+  const repeatRecord = (record: EventRecord) => {
+    if (repeatingId !== null) {
+      return;
+    }
+    setRepeatingId(record.id);
+    void save(record.value, record.unit, 'quick', { note: '' }).finally(() => setRepeatingId(null));
+  };
+
   const submitManual = () => {
     if (!definition) {
       return;
     }
     if (!backfill) {
-      save(Number(manualValue.trim()), undefined, 'manual');
+      void save(Number(manualValue.trim()), undefined, 'manual');
       return;
     }
     const occurredAt = parseLocalDateTime(dateText, timeText);
@@ -96,45 +124,7 @@ export default function RecordScreen() {
       setError('日期或时间格式不正确，日期应形如 2026-10-19，时间应形如 08:30。');
       return;
     }
-    save(Number(manualValue.trim()), undefined, 'backfill', occurredAt);
-  };
-
-  const removeRecord = (record: EventRecord) => {
-    setDeletingId(record.id);
-    setError(null);
-    setFlash(null);
-    new EventRecordRepository(db)
-      .softDelete(record.id)
-      .then(() => {
-        setUndoTarget(record);
-        load();
-      })
-      .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      })
-      .finally(() => {
-        setDeletingId(null);
-      });
-  };
-
-  const undoRemove = () => {
-    if (!undoTarget) {
-      return;
-    }
-    setRestoring(true);
-    setError(null);
-    new EventRecordRepository(db)
-      .restore(undoTarget.id)
-      .then(() => {
-        setUndoTarget(null);
-        load();
-      })
-      .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      })
-      .finally(() => {
-        setRestoring(false);
-      });
+    void save(Number(manualValue.trim()), undefined, 'backfill', { occurredAt });
   };
 
   if (definition === undefined) {
@@ -194,17 +184,6 @@ export default function RecordScreen() {
         </Card>
       ) : null}
 
-      {undoTarget ? (
-        <View style={styles.spaced}>
-          <UndoBar
-            message={`已删除：${describeRecord(undoTarget)}`}
-            onUndo={undoRemove}
-            onDismiss={() => setUndoTarget(null)}
-            busy={restoring}
-          />
-        </View>
-      ) : null}
-
       {!archived && definition.quickOptions.length > 0 ? (
         <Card title="快捷记录" subtitle="点一下即可记录" style={styles.spaced}>
           <View style={styles.chipRow}>
@@ -212,7 +191,7 @@ export default function RecordScreen() {
               <Chip
                 key={option.id}
                 label={`${option.label}（+${option.value}${option.unit ?? definition.unit ?? ''}）`}
-                onPress={() => save(option.value, option.unit, 'quick')}
+                onPress={() => void save(option.value, option.unit, 'quick')}
               />
             ))}
           </View>
@@ -304,8 +283,10 @@ export default function RecordScreen() {
               subtitle={
                 record.note ? `${sourceLabel(record.source)} · ${record.note}` : sourceLabel(record.source)
               }
-              onDelete={() => removeRecord(record)}
-              deleting={deletingId === record.id}
+              onPress={() => router.push({ pathname: '/records/[id]', params: { id: record.id } })}
+              onRepeat={() => repeatRecord(record)}
+              repeating={repeatingId === record.id}
+              repeatBlockedReason={archived ? '已归档' : undefined}
             />
           ))
         )}

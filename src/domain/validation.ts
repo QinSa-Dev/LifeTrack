@@ -69,6 +69,20 @@ export interface EventRecordInput {
   source: RecordSource;
 }
 
+/**
+ * 修改一条已存在的记录：只改「事实本身」——取值、发生时间、备注。
+ *
+ * 不给单位、名称这类**快照**字段：它们是「记录当时的样子」，改了就不是历史了
+ * （见 domain/models.ts 的 snapshot）。也不给 source：它说明这条是怎么进来的，
+ * 不是用户能重新选的东西。
+ */
+export interface EventRecordEditInput {
+  value: number;
+  occurredAt?: string;
+  /** 省略即清空备注：更新是「这条记录的这三个字段整体替换」 */
+  note?: string;
+}
+
 /** 周期定义的输入（创建与更新共用）。 */
 export interface CycleDefinitionInput {
   name: string;

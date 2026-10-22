@@ -378,3 +378,112 @@ describe('EventRecordRepository', () => {
     await expect(records.remove('missing')).rejects.toThrow(NotFoundError);
   });
 });
+
+describe('EventRecordRepository.update', () => {
+  let db: TestDatabase;
+  let definitions: EventDefinitionRepository;
+  let records: EventRecordRepository;
+
+  beforeEach(async () => {
+    db = createTestDatabase();
+    await runMigrations(db, MIGRATIONS);
+    definitions = new EventDefinitionRepository(db);
+    records = new EventRecordRepository(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  async function createCounter(overrides: { name?: string; unit?: string } = {}) {
+    return definitions.create({
+      name: overrides.name ?? '喝水',
+      kind: 'counter',
+      unit: overrides.unit,
+      tagIds: [],
+      quickOptions: [],
+    });
+  }
+
+  it('改取值与备注：改动落库，快照纹丝不动', async () => {
+    const definition = await definitions.create({
+      name: '喝水',
+      kind: 'quantity',
+      unit: '毫升',
+      tagIds: [],
+      quickOptions: [],
+    });
+    const record = await records.record(
+      { definitionId: definition.id, value: 300, note: '随手一杯', source: 'manual' },
+      T1,
+    );
+    // 定义后来改名换单位：历史不该跟着变
+    await definitions.update(definition.id, {
+      name: '饮水',
+      kind: 'quantity',
+      unit: '升',
+      tagIds: [],
+      quickOptions: [],
+    });
+
+    const updated = await records.update(record.id, { value: 500, note: '大杯' });
+
+    expect(updated.value).toBe(500);
+    expect(updated.note).toBe('大杯');
+    expect(updated.unit).toBe('毫升'); // 记录当时的单位
+    expect(updated.snapshot.name).toBe('喝水'); // 记录当时的名称
+    expect(updated.recordedAt).toBe(T1);
+    expect(updated.source).toBe('manual');
+  });
+
+  it('省略备注即清空备注（这三个字段是整体替换）', async () => {
+    const definition = await createCounter();
+    const record = await records.record(
+      { definitionId: definition.id, value: 1, note: '运动后', source: 'manual' },
+      T1,
+    );
+
+    const updated = await records.update(record.id, { value: 2 });
+
+    expect(updated.note).toBeUndefined();
+  });
+
+  it('可以改发生时间：只允许移到录入时间之前（未来还没发生）', async () => {
+    const definition = await createCounter();
+    const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T3);
+
+    const earlier = await records.update(record.id, { value: 1, occurredAt: T1 });
+    expect(earlier.occurredAt).toBe(T1);
+    expect(earlier.recordedAt).toBe(T3);
+
+    await expect(
+      records.update(record.id, { value: 1, occurredAt: '2026-10-20T00:00:00.000Z' }),
+    ).rejects.toThrow(ValidationError);
+    // 被拒之后原来的值还在，没有写坏
+    expect((await records.getById(record.id))?.occurredAt).toBe(T1);
+  });
+
+  it('取值仍按类型校验：计数型不接受 0 或负数', async () => {
+    const definition = await createCounter();
+    const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+
+    await expect(records.update(record.id, { value: 0 })).rejects.toThrow(ValidationError);
+    await expect(records.update(record.id, { value: -2 })).rejects.toThrow(ValidationError);
+    expect((await records.getById(record.id))?.value).toBe(1);
+  });
+
+  it('已软删除的记录不能改：先撤销删除', async () => {
+    const definition = await createCounter();
+    const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+    await records.softDelete(record.id, T2);
+
+    await expect(records.update(record.id, { value: 5 })).rejects.toThrow(ConflictError);
+
+    await records.restore(record.id);
+    expect((await records.update(record.id, { value: 5 })).value).toBe(5);
+  });
+
+  it('改不存在的记录抛 NotFoundError', async () => {
+    await expect(records.update('missing', { value: 1 })).rejects.toThrow(NotFoundError);
+  });
+});

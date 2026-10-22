@@ -1,0 +1,68 @@
+# 写入路径 9：行内【+1】即时落库（不弹确认）· 「逐条 / 同类合并」开关。
+#
+# 覆盖：
+#   1. 行右侧的【+1】= 按那条记录的取值「现在」再记一条（来源「快捷」）。
+#      **点下去就记，没有确认条**：核实办法是进那条记录的详情页，看到来源确实是「快捷」；
+#   2. 列表头的显示方式开关：切到「同类合并」后一个事件只剩一行（共 N 次 · 最近 … · 展开逐条），
+#      点行就地展开成逐条、再点收起，切回「逐条」恢复原样。偏好写进 app_meta，跨重启记得住。
+#
+# 自产自销：只动 Maestro 自己的「Maestro喝水」（刚记的那条在列表第一行）。
+# 合并行上的「共 N 次」是按事件累计的（同名定义会被重复跑累加），所以断言只看形状、
+# 不写死次数——次数的正确性由单元测试 groupRecords-test 保证。
+appId: host.exp.Exponent
+name: 09 时间轴 · 【+1】即时记录 + 同类合并
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+- tapOn: '.*时间轴, tab.*'
+- tapOn: '.*事件, tab.*'
+- runFlow: ../subflows/record-once.yaml
+- tapOn: '返回'
+- tapOn: '.*时间轴, tab.*'
+# 先明确切回「逐条」：① 显示方式是 app_meta 里的偏好，上一次跑可能留下「同类合并」；
+# ② 本流程最后一段本来也要验证切回「逐条」这件事。
+- tapOn: '逐条'
+- takeScreenshot: 09-before
+
+# —— 【+1】：点第一行（刚记的那条）右侧的按钮 ——
+- tapOn:
+    text: '+1'
+    index: 0
+- takeScreenshot: 09-after-repeat
+
+# —— 核实：+1 记出来的那条（现在在列表最上面）来源是「快捷」——
+# 子流程自己记的那条是「手动」，所以这一条一定是【+1】刚补出来的
+- tapOn:
+    text: 'Maestro喝水, .*'
+    index: 0
+- assertVisible: '这条记录'
+- assertVisible: '快捷'
+- takeScreenshot: 09-repeat-detail
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
+- tapOn: '返回'
+
+# —— 同类合并：一个事件一行 ——
+- tapOn: '同类合并'
+- assertVisible: '.*共 [0-9]+ 次.*'
+- assertVisible: '.*展开逐条.*'
+- takeScreenshot: 09-merged
+# 选择器写「Maestro喝水, …」是故意的：行里还有别的同名文字时（例如提示条），
+# 只写 .*Maestro喝水.* 可能点到别处去（踩过一次）。逗号后面是副标题，只有行本身长这样。
+- assertVisible: 'Maestro喝水, 共 [0-9]+ 次.*'
+- tapOn: 'Maestro喝水, .*'
+- assertVisible: '.*收起.*'
+- takeScreenshot: 09-merged-expanded
+
+# —— 切回逐条：还是原来那样 ——
+- tapOn: '逐条'
+- assertNotVisible: '.*展开逐条.*'
+- takeScreenshot: 09-expanded
