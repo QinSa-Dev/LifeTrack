@@ -20,7 +20,17 @@ export interface ListRowProps {
 export function ListRow({ title, subtitle, right, onPress, style, divider = true }: ListRowProps) {
   const content = (
     <View style={styles.content}>
-      <View style={styles.texts}>
+      {/*
+        「文字区」自己当无障碍按钮，而不是把整行标成按钮：
+        整行标按钮会把右侧的按钮一起合并进去（VoiceOver 只会读到
+        「2026-10-22，删除」这样一个元素，里面的「删除」再也点不到）。
+        拆开之后，文字区是一个按钮、右侧各元素各归各，两边都能被单独聚焦。
+      */}
+      <View
+        style={styles.texts}
+        accessible={onPress ? true : undefined}
+        accessibilityRole={onPress ? 'button' : undefined}
+      >
         <AppText variant="body" numberOfLines={1}>
           {title}
         </AppText>
@@ -40,7 +50,8 @@ export function ListRow({ title, subtitle, right, onPress, style, divider = true
 
   return (
     <Pressable
-      accessibilityRole="button"
+      // 整行仍是点击区（点哪里都能进），只是自身不做无障碍元素——见上面「文字区」的注释
+      accessible={false}
       onPress={onPress}
       style={({ pressed }) => [
         styles.row,

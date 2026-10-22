@@ -26,6 +26,7 @@ import {
   joinSymptoms,
   splitSymptoms,
 } from '@/features/cycles/labels';
+import { UndoBar } from '@/features/records/UndoBar';
 import { CycleDefinitionRepository, CycleEntryRepository, CycleInstanceRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
@@ -74,6 +75,9 @@ export default function CycleInstanceScreen() {
   const [boundaryBusy, setBoundaryBusy] = useState(false);
   const [entryBusy, setEntryBusy] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // 最近一次被软删除的记录：有值时显示「撤销」提示条
+  const [undoTarget, setUndoTarget] = useState<CycleEntry | null>(null);
+  const [restoring, setRestoring] = useState(false);
   const [deletingInstance, setDeletingInstance] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -211,27 +215,47 @@ export default function CycleInstanceScreen() {
     });
   };
 
-  const confirmRemoveEntry = (entry: CycleEntry) => {
-    Alert.alert('删除这天的记录', `${entry.date} 的记录将被永久删除。此操作不可撤销。`, [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: () => {
-          setDeletingId(entry.id);
-          setError(null);
-          new CycleEntryRepository(db)
-            .remove(entry.id)
-            .then(async () => reloadEntries(entry.instanceId))
-            .catch((cause: unknown) => {
-              setError(cause instanceof Error ? cause.message : String(cause));
-            })
-            .finally(() => {
-              setDeletingId(null);
-            });
-        },
-      },
-    ]);
+  /**
+   * 删除某一天的记录：**软删除**（写 `deleted_at`），所以不需要二次确认，
+   * 先删再给一个「撤销」入口更轻。真正不可逆的永久删除在回收站里，那边才二次确认。
+   */
+  const removeEntry = (entry: CycleEntry) => {
+    setDeletingId(entry.id);
+    setError(null);
+    setFlash(null);
+    new CycleEntryRepository(db)
+      .softDelete(entry.id)
+      .then(async (deleted) => {
+        setUndoTarget(deleted);
+        await reloadEntries(entry.instanceId);
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        setDeletingId(null);
+      });
+  };
+
+  const undoRemoveEntry = () => {
+    if (!undoTarget) {
+      return;
+    }
+    setRestoring(true);
+    setError(null);
+    new CycleEntryRepository(db)
+      .restore(undoTarget.id)
+      .then(async (restored) => {
+        setUndoTarget(null);
+        await reloadEntries(restored.instanceId);
+      })
+      .catch((cause: unknown) => {
+        // 恢复失败（例如期间边界已经缩走）时提示条留着，让用户能再试或去回收站
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => {
+        setRestoring(false);
+      });
   };
 
   const confirmRemoveInstance = () => {
@@ -401,7 +425,7 @@ export default function CycleInstanceScreen() {
                       label={deletingId === entry.id ? '删除中…' : '删除'}
                       tone="danger"
                       size="sm"
-                      onPress={() => confirmRemoveEntry(entry)}
+                      onPress={() => removeEntry(entry)}
                       disabled={deletingId === entry.id}
                     />
                   </>
@@ -412,10 +436,20 @@ export default function CycleInstanceScreen() {
         )}
         {entries.length > 0 ? (
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-            点某一行可以把那天填进下方表单；同一天再保存是覆盖更新。
+            点某一行可以把那天填进下方表单；同一天再保存是覆盖更新。删除是软删除，可在「时间轴 →
+            回收站」恢复或永久删除。
           </AppText>
         ) : null}
       </Card>
+
+      {undoTarget ? (
+        <UndoBar
+          message={`已删除 ${undoTarget.date} 的记录（可在「时间轴 → 回收站」找回）`}
+          onUndo={undoRemoveEntry}
+          onDismiss={() => setUndoTarget(null)}
+          busy={restoring}
+        />
+      ) : null}
 
       <Card title="添加 / 编辑记录" subtitle="一天一条，重复保存即覆盖" style={styles.spaced}>
         <TextField

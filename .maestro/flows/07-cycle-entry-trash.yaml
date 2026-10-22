@@ -1,0 +1,163 @@
+# 写入路径 7：周期内记录也能软删除（v5）· 撤销 / 回收站恢复 / 永久删除。
+#
+# 这是 v5 迁移（cycle_entries 加 deleted_at）的端到端回归：
+#   1. 周期页的「删除」现在是软删除：记录立刻从列表消失，页面出现「撤销」提示条；
+#   2. 撤销能把它找回来（软删除 → restore）；
+#   3. 不撤销的话它落在回收站的「已删除的周期记录」区，那里能恢复，也能永久删除（原生二次确认）。
+#
+# 自产自销：只动本流程自己刚记的那一天（定义「Maestro周期」+ 它的一段进行中周期）。
+# 注意：回收站里**还有使用者自己软删除的事件记录**，所以周期区的按钮不能用 index 定位，
+# 要用相对选择器 `below: 已删除的周期记录` 消歧——这是「测试不动用户数据」的具体做法。
+#
+# 前提与副作用同 05：运行日期要晚于 2026-10-05（这样「今天」一定落在 2026-10-01 起的区间内）；
+# 会留下定义「Maestro周期」与一段进行中的周期（但记录会被本流程删干净）。
+appId: host.exp.Exponent
+name: 07 周期 · 记录软删除 / 撤销 / 回收站
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+
+# —— 准备：一处「Maestro周期」+ 一段进行中的周期（与 05 同一套做法）——
+- tapOn: '.*周期, tab.*'
+- assertVisible: '+ 新建周期定义'
+- runFlow:
+    when:
+      notVisible: '.*Maestro周期.*'
+    commands:
+      - tapOn: '+ 新建周期定义'
+      - assertVisible: '例如：生理期'
+      - tapOn: '例如：生理期'
+      - inputText: 'Maestro周期'
+      - pressKey: Enter
+      - scrollUntilVisible:
+          element:
+            text: '创建'
+          direction: DOWN
+      - tapOn: '创建'
+      - assertVisible: '.*Maestro周期.*'
+- scrollUntilVisible:
+    element:
+      text: '.*Maestro周期.*'
+    direction: DOWN
+- tapOn: '.*Maestro周期.*'
+- assertVisible: '定义信息'
+- runFlow:
+    when:
+      visible: '.*~ 进行中.*'
+    commands:
+      - tapOn: '.*~ 进行中.*'
+- runFlow:
+    when:
+      notVisible: '周期区间'
+    commands:
+      - tapOn: '2026-10-19'
+      - eraseText: 12
+      - inputText: '2026-10-01'
+      - pressKey: Enter
+      - tapOn: '开始新周期'
+- assertVisible: '周期区间'
+
+# —— 记一天（日期默认是「夹进区间的今天」，落在区间内）——
+- scrollUntilVisible:
+    element:
+      text: '保存记录'
+    direction: DOWN
+- tapOn: '保存记录'
+- scrollUntilVisible:
+    element:
+      text: '.*已保存.*'
+    direction: UP
+- assertVisible: '.*已保存.*'
+- scrollUntilVisible:
+    element:
+      text: '每日记录'
+    direction: DOWN
+- assertVisible: '1 条'
+- takeScreenshot: 07-entry-saved
+
+# —— 删除 = 软删除：行消失、出现撤销提示条 ——
+- tapOn:
+    text: '删除'
+    below:
+      text: '每日记录'
+- scrollUntilVisible:
+    element:
+      text: '.*回收站.*找回.*'
+    direction: DOWN
+- assertVisible: '.*回收站.*找回.*'
+- assertVisible: '.*还没有记录.*'
+- takeScreenshot: 07-entry-soft-deleted
+
+# —— 撤销：记录回到列表 ——
+- tapOn: '撤销'
+- assertNotVisible: '.*回收站.*找回.*'
+- assertVisible: '1 条'
+- takeScreenshot: 07-entry-undo
+
+# —— 再删一次，这次不撤销：去回收站的「已删除的周期记录」里恢复 ——
+- tapOn:
+    text: '删除'
+    below:
+      text: '每日记录'
+- assertVisible: '.*还没有记录.*'
+- tapOn: '返回'
+- tapOn: '返回'
+- tapOn: '.*时间轴, tab.*'
+- tapOn: '回收站'
+- assertVisible: '已删除的周期记录'
+- assertVisible: '.*Maestro周期.*'
+- takeScreenshot: 07-trash-cycle-entry
+- tapOn:
+    text: '恢复'
+    below:
+      text: '已删除的周期记录'
+- assertNotVisible: '已删除的周期记录'
+- takeScreenshot: 07-trash-restored
+
+# —— 三删：这次走到底——永久删除（原生二次确认，不可撤销）——
+- tapOn: '返回'
+- tapOn: '.*周期, tab.*'
+- scrollUntilVisible:
+    element:
+      text: '.*Maestro周期.*'
+    direction: DOWN
+- tapOn: '.*Maestro周期.*'
+- runFlow:
+    when:
+      visible: '.*~ 进行中.*'
+    commands:
+      - tapOn: '.*~ 进行中.*'
+- assertVisible: '周期区间'
+- scrollUntilVisible:
+    element:
+      text: '每日记录'
+    direction: DOWN
+- assertVisible: '1 条'
+- tapOn:
+    text: '删除'
+    below:
+      text: '每日记录'
+- assertVisible: '.*还没有记录.*'
+- tapOn: '返回'
+- tapOn: '返回'
+- tapOn: '.*时间轴, tab.*'
+- tapOn: '回收站'
+- assertVisible: '已删除的周期记录'
+- tapOn:
+    text: '永久删除'
+    below:
+      text: '已删除的周期记录'
+- assertVisible: '彻底删除记录'
+- assertVisible: '.*无法恢复.*'
+- takeScreenshot: 07-permanent-alert
+# 弹窗按钮说「彻底删除」，与列表里那两个「永久删除」不同名——全文匹配下没有歧义
+- tapOn: '彻底删除'
+- assertNotVisible: '彻底删除记录'
+- assertNotVisible: '已删除的周期记录'
+- takeScreenshot: 07-after-permanent-delete
