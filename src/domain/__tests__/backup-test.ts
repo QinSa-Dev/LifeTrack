@@ -3,6 +3,7 @@ import {
   BACKUP_FORMAT_VERSION,
   assertBackupCompatible,
   assertBackupIntegrity,
+  backupFileName,
   createBackup,
   emptyBackupData,
   mergeBackup,
@@ -230,6 +231,17 @@ describe('createBackup / serializeBackup', () => {
     sortBackupData(data);
 
     expect(data.eventGroups).toEqual(original);
+  });
+});
+
+describe('backupFileName', () => {
+  it('按导出日期命名，备份与记录表格分开', () => {
+    expect(backupFileName('2026-10-22T13:45:00.000Z', 'json')).toBe('lifetrack-backup-2026-10-22.json');
+    expect(backupFileName('2026-10-22T13:45:00.000Z', 'csv')).toBe('lifetrack-records-2026-10-22.csv');
+  });
+
+  it('时间戳不合法时报错，而不是拼出一个奇怪的文件名', () => {
+    expect(() => backupFileName('昨天', 'json')).toThrow();
   });
 });
 

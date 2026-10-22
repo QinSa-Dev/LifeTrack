@@ -269,6 +269,18 @@ describe('BackupRepository.importAll', () => {
     expect(await context.meta.get('app.installed_at')).toBe('很久以前');
   });
 
+  it('预演导入不写库：只报计数，数据库一字未改', async () => {
+    await seed(context);
+    const file = parseBackup(await exportToText(context));
+    const before = sortBackupData(await context.backup.readAll());
+
+    const summary = await context.backup.previewImport(file);
+
+    expect(summary.totals.added).toBe(0);
+    expect(summary.totals.kept).toBe(9);
+    expect(sortBackupData(await context.backup.readAll())).toEqual(before);
+  });
+
   it('备份来自更新版本时拒绝导入，且数据库一字未改', async () => {
     await seed(context);
     const before = sortBackupData(await context.backup.readAll());

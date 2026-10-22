@@ -1,12 +1,27 @@
 import Constants from 'expo-constants';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 
-import { AppText, Badge, Card, Screen } from '@/components';
+import { AppText, Badge, Button, Card, Screen } from '@/components';
 import { readSchemaVersion, useReadyDatabase, type MigrationResult } from '@/db';
+import { toAppError } from '@/domain/errors';
+import {
+  exportBackupFile,
+  exportRecordsCsv,
+  isSharingAvailable,
+  pickBackupFile,
+} from '@/features/backup/transfer';
+import { recordsToCsv } from '@/features/backup/csv';
+import type { BackupFile, ImportSummary } from '@/domain/backup';
 import type { MetaEntry } from '@/repositories';
-import { MetaRepository } from '@/repositories';
+import {
+  BackupRepository,
+  EventGroupRepository,
+  EventRecordRepository,
+  MetaRepository,
+  TagRepository,
+} from '@/repositories';
 import { palette, spacing } from '@/theme';
 
 interface Diagnostics {
@@ -31,6 +46,12 @@ function Row({ label, value, mono = false }: { label: string; value: string; mon
   );
 }
 
+/** 把「新增 / 覆盖 / 保留」摆成一句人话 */
+function describeSummary(summary: ImportSummary): string {
+  const { added, updated, kept } = summary.totals;
+  return `新增 ${added} 条、覆盖 ${updated} 条、保留本地 ${kept} 条`;
+}
+
 export default function SettingsScreen() {
   const { db, databasePath, migration } = useReadyDatabase();
   const [diagnostics, setDiagnostics] = useState<Diagnostics>({
@@ -41,6 +62,8 @@ export default function SettingsScreen() {
     databasePath,
     entries: [],
   });
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -78,6 +101,81 @@ export default function SettingsScreen() {
     }, [db, databasePath, migration]),
   );
 
+  /** 导出 / 导入的共同外壳：忙碌标记 + 统一错误文案 */
+  const runBackupTask = useCallback(async (task: () => Promise<void>) => {
+    setBackupBusy(true);
+    setBackupMessage(null);
+    try {
+      await task();
+    } catch (cause) {
+      const error = toAppError(cause, '备份操作失败');
+      setBackupMessage(`失败：${error.message}`);
+    } finally {
+      setBackupBusy(false);
+    }
+  }, []);
+
+  const handleExportBackup = useCallback(() => {
+    return runBackupTask(async () => {
+      const backup = new BackupRepository(db);
+      const exportedAt = new Date().toISOString();
+      const file = await backup.exportAll(exportedAt, Constants.expoConfig?.version);
+      const counts = file.data;
+
+      if (!(await isSharingAvailable())) {
+        setBackupMessage('当前环境不支持分享面板，导出已取消');
+        return;
+      }
+      const saved = await exportBackupFile(file, exportedAt);
+      setBackupMessage(
+        `已导出 ${saved.name}（分组 ${counts.eventGroups.length} / 标签 ${counts.tags.length} / ` +
+          `事件定义 ${counts.eventDefinitions.length} / 记录 ${counts.eventRecords.length} / ` +
+          `周期 ${counts.cycleDefinitions.length} 个、实例 ${counts.cycleInstances.length} 段、` +
+          `每日记录 ${counts.cycleEntries.length} 条）`,
+      );
+    });
+  }, [db, runBackupTask]);
+
+  const handleExportCsv = useCallback(() => {
+    return runBackupTask(async () => {
+      const exportedAt = new Date().toISOString();
+      const [records, tags, groups] = await Promise.all([
+        new EventRecordRepository(db).list({ includeDeleted: true }),
+        new TagRepository(db).list(),
+        new EventGroupRepository(db).list(),
+      ]);
+
+      const csv = recordsToCsv(records, {
+        tagNameById: new Map(tags.map((tag) => [tag.id, tag.name])),
+        groupNameById: new Map(groups.map((group) => [group.id, group.name])),
+      });
+      const saved = await exportRecordsCsv(csv, exportedAt);
+      setBackupMessage(`已导出 ${saved.name}（${records.length} 条记录，含已软删除的）`);
+    });
+  }, [db, runBackupTask]);
+
+  /** 选文件 → 预演 → 二次确认 → 合并导入 */
+  const handleImport = useCallback(() => {
+    return runBackupTask(async () => {
+      const picked = await pickBackupFile();
+      if (!picked) {
+        setBackupMessage('已取消');
+        return;
+      }
+
+      const backup = new BackupRepository(db);
+      const summary = await backup.previewImport(picked.file);
+      const confirmed = await confirmImport(picked.name, picked.file, summary);
+      if (!confirmed) {
+        setBackupMessage('已取消导入，本地数据未改动');
+        return;
+      }
+
+      const applied = await backup.importAll(picked.file);
+      setBackupMessage(`导入完成：${describeSummary(applied)}`);
+    });
+  }, [db, runBackupTask]);
+
   const version = Constants.expoConfig?.version ?? '未知';
   const sdkVersion = Constants.expoConfig?.sdkVersion ?? '未知';
   const runtime = String(Constants.executionEnvironment ?? '未知');
@@ -92,6 +190,41 @@ export default function SettingsScreen() {
         <Row label="应用版本" value={version} />
         <Row label="Expo SDK" value={sdkVersion} />
         <Row label="运行环境" value={runtime} />
+      </Card>
+
+      <Card
+        title="备份与恢复"
+        subtitle="导出 JSON 备份 / 记录表格；导入时按 id 合并，不删本地数据"
+        style={styles.spaced}
+      >
+        <View style={styles.buttonRow}>
+          <Button
+            label="导出 JSON 备份"
+            onPress={handleExportBackup}
+            disabled={backupBusy}
+            style={styles.button}
+          />
+          <Button
+            label="导出记录 CSV"
+            tone="secondary"
+            onPress={handleExportCsv}
+            disabled={backupBusy}
+            style={styles.button}
+          />
+        </View>
+        <Button
+          label="从备份导入（合并）"
+          tone="secondary"
+          onPress={handleImport}
+          disabled={backupBusy}
+          style={styles.spacedSmall}
+        />
+        <AppText variant="caption" color={palette.textMuted} style={styles.spacedSmall}>
+          {backupBusy
+            ? '处理中…'
+            : (backupMessage ??
+              '导入只会「合并」：本地独有的数据一定保留。周期越界、引用缺失等非法备份会被整体拒绝，不会写进半截数据。')}
+        </AppText>
       </Card>
 
       <Card title="本地数据库" subtitle="SQLite（expo-sqlite）" style={styles.spaced}>
@@ -125,14 +258,46 @@ export default function SettingsScreen() {
   );
 }
 
+/**
+ * 导入前的二次确认。摘要先说清「会发生什么」，版本不符这一类问题已经在
+ * `previewImport` 阶段被拒绝、根本走不到这里。
+ */
+function confirmImport(name: string, file: BackupFile, summary: ImportSummary): Promise<boolean> {
+  const { added, updated, kept } = summary.totals;
+  const message =
+    `文件：${name}\n` +
+    `备份时间：${file.exportedAt}（schema v${file.schemaVersion}）\n` +
+    `备份内容：定义 ${file.data.eventDefinitions.length} 个、记录 ${file.data.eventRecords.length} 条、` +
+    `周期 ${file.data.cycleDefinitions.length} 个\n\n` +
+    `合并结果：新增 ${added} 条、覆盖 ${updated} 条、保留本地 ${kept} 条。\n` +
+    '本地独有的数据不会被删除。';
+
+  return new Promise((resolve) => {
+    Alert.alert('确认导入并合并？', message, [
+      { text: '取消', style: 'cancel', onPress: () => resolve(false) },
+      { text: '导入', onPress: () => resolve(true) },
+    ]);
+  });
+}
+
 const styles = StyleSheet.create({
   spaced: {
     marginTop: spacing.md,
+  },
+  spacedSmall: {
+    marginTop: spacing.sm,
   },
   badgeRow: {
     flexDirection: 'row',
     gap: spacing.sm,
     marginBottom: spacing.md,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  button: {
+    flex: 1,
   },
   row: {
     marginBottom: spacing.sm,

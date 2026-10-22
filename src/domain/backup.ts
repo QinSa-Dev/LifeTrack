@@ -567,6 +567,25 @@ export function serializeBackup(file: BackupFile): string {
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
+/** 默认文件名的主干：备份（可恢复）与记录表格（只读）分开，用户一眼能区分。 */
+const BACKUP_FILE_STEM = 'lifetrack-backup';
+const RECORDS_FILE_STEM = 'lifetrack-records';
+
+/**
+ * 默认文件名，例如 `lifetrack-backup-2026-10-22.json`。
+ *
+ * 日期取导出时间戳的日期部分（UTC，与备份内部的 ISO 文本一致），
+ * 所以同一份备份在任何设备上命名都一样；命名规则属于「备份格式契约」的一部分，
+ * 放在领域层，界面只负责用它。
+ */
+export function backupFileName(exportedAt: IsoDateTime, extension: 'json' | 'csv'): string {
+  const date = exportedAt.slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new ValidationError(`导出时间不是合法的 ISO-8601 时间：${exportedAt}`);
+  }
+  return `${extension === 'json' ? BACKUP_FILE_STEM : RECORDS_FILE_STEM}-${date}.${extension}`;
+}
+
 /** 解析备份文本：JSON 语法错误、格式不符、字段非法都收敛为 ImportError。 */
 export function parseBackup(source: string): BackupFile {
   let raw: unknown;

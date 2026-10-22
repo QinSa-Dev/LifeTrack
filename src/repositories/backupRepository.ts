@@ -111,11 +111,7 @@ export class BackupRepository {
    */
   async importAll(file: BackupFile): Promise<ImportSummary> {
     return guard('导入备份', async () => {
-      assertBackupCompatible(file, LATEST_SCHEMA_VERSION);
-      assertBackupIntegrity(file.data);
-
-      const current = await this.readAll();
-      const { data, summary } = mergeBackup(current, file.data);
+      const { data, summary } = await this.planImport(file);
 
       await this.db.withExclusiveTransactionAsync(async (txn) => {
         await this.clearAll(txn);
@@ -126,6 +122,23 @@ export class BackupRepository {
 
       return summary;
     });
+  }
+
+  /**
+   * 只读预演：真的导入会发生什么（校验 + 合并都跑一遍，但不写库）。
+   * 界面可以在用户点「导入」之前先把「将新增 / 覆盖 / 保留」摆出来。
+   */
+  async previewImport(file: BackupFile): Promise<ImportSummary> {
+    return guard('预演导入', async () => (await this.planImport(file)).summary);
+  }
+
+  /** 校验版本与完整性 → 读本地 → 合并。写库前的准备都在这一个地方。 */
+  private async planImport(file: BackupFile): Promise<{ data: BackupData; summary: ImportSummary }> {
+    assertBackupCompatible(file, LATEST_SCHEMA_VERSION);
+    assertBackupIntegrity(file.data);
+
+    const current = await this.readAll();
+    return mergeBackup(current, file.data);
   }
 
   private async clearAll(txn: SqlExecutor): Promise<void> {
