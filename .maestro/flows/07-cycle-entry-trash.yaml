@@ -106,6 +106,11 @@ tags:
     below:
       text: '每日记录'
 - assertVisible: '.*还没有记录.*'
+# 走到这一步页面已经滚下来了，页头（返回）会跟着滚出屏幕——先滚回顶部再点
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
 - tapOn: '返回'
 - tapOn: '返回'
 - tapOn: '.*时间轴, tab.*'
@@ -121,6 +126,11 @@ tags:
 - takeScreenshot: 07-trash-restored
 
 # —— 三删：这次走到底——永久删除（原生二次确认，不可撤销）——
+# 回收站页也滚下去过，页头的「返回」同样先滚回来
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
 - tapOn: '返回'
 - tapOn: '.*周期, tab.*'
 - scrollUntilVisible:
@@ -144,6 +154,11 @@ tags:
     below:
       text: '每日记录'
 - assertVisible: '.*还没有记录.*'
+# 走到这一步页面已经滚下来了，页头（返回）会跟着滚出屏幕——先滚回顶部再点
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
 - tapOn: '返回'
 - tapOn: '返回'
 - tapOn: '.*时间轴, tab.*'

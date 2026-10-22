@@ -20,12 +20,21 @@ import { findDatesOutside, isOngoingInstance, predictNextCycle } from '@/domain/
 import type { CycleDefinition, CycleEntry, CycleInstance } from '@/domain/models';
 import { localDateText } from '@/features/common/datetime';
 import {
+  buildMonthGrid,
+  clampMonthToRange,
+  indexEntriesByDate,
+  monthIntersectsRange,
+  monthLabel,
+  shiftMonth,
+} from '@/features/cycles/calendar';
+import {
   COMMON_PHASES,
   describeInstanceRange,
   describePrediction,
   joinSymptoms,
   splitSymptoms,
 } from '@/features/cycles/labels';
+import { MonthCalendar } from '@/features/cycles/MonthCalendar';
 import { UndoBar } from '@/features/records/UndoBar';
 import { CycleDefinitionRepository, CycleEntryRepository, CycleInstanceRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
@@ -54,10 +63,12 @@ function clampDate(date: string, startDate: string, endDate?: string): string {
 /**
  * 周期实例详情：一段真实周期 + 它每天的记录。
  *
- * 三个关键交互都对应领域规则：
+ * 四个关键交互都对应领域规则：
  * - 「保存边界」如果会让已有记录越界，仓储会拒绝，页面把原因原样显示（不会悄悄删记录）。
- * - 删除某一天的记录、删除整段周期都是**永久删除**，所以都有 `Alert` 二次确认。
+ * - 删除某一天的记录是**软删除**：页面立刻给一个「撤销」提示条，回收站里还能永久删除；
+ *   只有「删除整段周期」是不可逆的永久删除，所以只有它需要 `Alert` 二次确认。
  * - 一天只有一条记录，所以「保存记录」在已有那天时是覆盖更新。
+ * - 月视图（`MonthCalendar`）点一天与点列表行是**同一个入口**：都填进同一个表单。
  */
 export default function CycleInstanceScreen() {
   const router = useRouter();
@@ -72,6 +83,8 @@ export default function CycleInstanceScreen() {
   const [boundaryStart, setBoundaryStart] = useState('');
   const [boundaryEnd, setBoundaryEnd] = useState('');
   const [form, setForm] = useState<EntryForm>(EMPTY_FORM);
+  // 月视图当前显示的月份（月初）；加载时按「今天」夹进周期区间
+  const [month, setMonth] = useState('');
   const [boundaryBusy, setBoundaryBusy] = useState(false);
   const [entryBusy, setEntryBusy] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -109,9 +122,14 @@ export default function CycleInstanceScreen() {
         setDefinition(loadedDefinition);
         setEntries(loadedEntries);
         setDefinitionInstances(loadedInstances);
+        const todayText = localDateText(new Date());
         // 表单的日期只在第一次填入时给默认值，之后不覆盖用户正在编辑的内容
-        const defaultDate = clampDate(localDateText(new Date()), loaded.startDate, loaded.endDate);
+        const defaultDate = clampDate(todayText, loaded.startDate, loaded.endDate);
         setForm((current) => (current.date === '' ? { ...current, date: defaultDate } : current));
+        // 月视图默认停在「今天」所在的月（区间在将来 / 已结束就夹到那一头）
+        setMonth((current) =>
+          current === '' ? clampMonthToRange(todayText, loaded.startDate, loaded.endDate) : current,
+        );
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
@@ -143,6 +161,8 @@ export default function CycleInstanceScreen() {
         setInstance(updated);
         setBoundaryStart(updated.startDate);
         setBoundaryEnd(updated.endDate ?? '');
+        // 边界缩走之后，月视图可能整个落在区间外（整月变灰）——把它拉回区间内
+        setMonth((current) => clampMonthToRange(current, updated.startDate, updated.endDate));
         setFlash(`边界已更新：${updated.startDate} ~ ${updated.endDate ?? '进行中'}`);
       })
       .catch((cause: unknown) => {
@@ -166,6 +186,7 @@ export default function CycleInstanceScreen() {
       .then((updated) => {
         setInstance(updated);
         setBoundaryEnd(updated.endDate ?? '');
+        setMonth((current) => clampMonthToRange(current, updated.startDate, updated.endDate));
         setFlash(`周期已结束于 ${updated.endDate}`);
       })
       .catch((cause: unknown) => {
@@ -213,6 +234,24 @@ export default function CycleInstanceScreen() {
       feelings: entry.feelings ?? '',
       note: entry.note ?? '',
     });
+  };
+
+  /**
+   * 点月视图里的一天：那天有记录就填进表单（等同于点列表行），
+   * 没有记录就把表单的日期换成那天，等着填写。
+   *
+   * 为什么复用 `editEntry` / 同一个表单，而不是点开一个弹窗：
+   * 保存、校验、软删除都只有一条路，「一天一条」这个约束在哪都成立。
+   */
+  const pickCalendarDate = (date: string) => {
+    const existing = entries.find((entry) => entry.date === date);
+    if (existing) {
+      editEntry(existing);
+      return;
+    }
+    setFlash(null);
+    setError(null);
+    setForm({ ...EMPTY_FORM, date });
   };
 
   /**
@@ -309,6 +348,10 @@ export default function CycleInstanceScreen() {
     );
   }, [entries, boundaryStart, boundaryEnd]);
 
+  // 月视图：哪几天有记录（标记）与这个月的格子。都是纯计算，随数据/月份变化重算。
+  const marks = useMemo(() => indexEntriesByDate(entries), [entries]);
+  const cells = useMemo(() => (month === '' ? [] : buildMonthGrid(month)), [month]);
+
   if (instance === undefined) {
     return (
       <Screen contentStyle={styles.centered}>
@@ -329,6 +372,14 @@ export default function CycleInstanceScreen() {
   const today = localDateText(new Date());
   const ongoing = isOngoingInstance(instance);
   const prediction = definition ? predictNextCycle(definitionInstances, definition) : undefined;
+
+  // 月视图只在「这个月里还有落在区间内的日子」时才允许翻过去，
+  // 否则会翻到一整屏都不能点的月份。
+  const canShiftBack =
+    month !== '' && monthIntersectsRange(shiftMonth(month, -1), instance.startDate, instance.endDate);
+  const canShiftForward =
+    month !== '' && monthIntersectsRange(shiftMonth(month, 1), instance.startDate, instance.endDate);
+  const selectedDate = isValidIsoDate(form.date) ? form.date : undefined;
 
   return (
     <Screen scroll contentStyle={styles.content}>
@@ -400,6 +451,29 @@ export default function CycleInstanceScreen() {
             {describePrediction(prediction)}
           </AppText>
         ) : null}
+      </Card>
+
+      <Card title="月视图" subtitle="点一天，就能把那一天填进下方的表单" style={styles.spaced}>
+        {month === '' ? (
+          <ActivityIndicator color={palette.primary} />
+        ) : (
+          <MonthCalendar
+            label={monthLabel(month)}
+            cells={cells}
+            marks={marks}
+            startDate={instance.startDate}
+            endDate={instance.endDate}
+            today={today}
+            selectedDate={selectedDate}
+            onSelectDate={pickCalendarDate}
+            onShiftMonth={(offset) => setMonth((current) => shiftMonth(current, offset))}
+            canShiftBack={canShiftBack}
+            canShiftForward={canShiftForward}
+          />
+        )}
+        <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
+          当前选中：{selectedDate ?? '（还没有填一个合法的日期）'}
+        </AppText>
       </Card>
 
       <Card title="每日记录" subtitle={`${entries.length} 条`} style={styles.spaced}>

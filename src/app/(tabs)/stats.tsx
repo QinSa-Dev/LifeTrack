@@ -4,8 +4,9 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AppText, Card, Chip, EmptyState, ListRow, Screen } from '@/components';
 import { useReadyDatabase } from '@/db';
-import type { EventRecord } from '@/domain/models';
+import type { CycleEntry, EventRecord } from '@/domain/models';
 import { eventKindLabel } from '@/features/definitions/labels';
+import { SymptomStatsCard } from '@/features/cycles/SymptomStatsCard';
 import {
   aggregateByDay,
   aggregateByDefinition,
@@ -20,7 +21,7 @@ import {
   type PeriodTotal,
 } from '@/features/stats/aggregate';
 import { describeComparison, describeDefinitionChange } from '@/features/stats/labels';
-import { EventRecordRepository } from '@/repositories';
+import { CycleEntryRepository, EventRecordRepository } from '@/repositories';
 import { palette, radius, spacing } from '@/theme';
 
 type Mode = 'day' | 'week';
@@ -80,6 +81,8 @@ export default function StatsScreen() {
   const { db } = useReadyDatabase();
 
   const [records, setRecords] = useState<EventRecord[]>([]);
+  // 周期内记录（症状统计用；仓储已过滤软删除）。与事件记录是两套事实，分开统计。
+  const [cycleEntries, setCycleEntries] = useState<CycleEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>('day');
@@ -90,11 +93,11 @@ export default function StatsScreen() {
     useCallback(() => {
       let cancelled = false;
       setLoading(true);
-      new EventRecordRepository(db)
-        .list()
-        .then((loaded) => {
+      Promise.all([new EventRecordRepository(db).list(), new CycleEntryRepository(db).listVisible()])
+        .then(([loadedRecords, loadedEntries]) => {
           if (!cancelled) {
-            setRecords(loaded);
+            setRecords(loadedRecords);
+            setCycleEntries(loadedEntries);
             setError(null);
           }
         })
@@ -134,6 +137,7 @@ export default function StatsScreen() {
   }, [records, windows]);
 
   const hasData = !loading && records.length > 0;
+  const hasCycleData = !loading && cycleEntries.length > 0;
 
   return (
     <Screen scroll contentStyle={styles.content}>
@@ -149,78 +153,103 @@ export default function StatsScreen() {
         <View style={styles.loading}>
           <ActivityIndicator color={palette.primary} />
         </View>
-      ) : records.length === 0 ? (
+      ) : !hasData && !hasCycleData ? (
         <EmptyState
           title="还没有可统计的数据"
-          description="先到「事件」标签记录几次，这里会按天/周汇总、按事件统计总条数与取值合计，并与前一段或上年同期对比。"
+          description="先到「事件」标签记录几次，这里会按天/周汇总、按事件统计总条数与取值合计，并与前一段或上年同期对比；周期里记的症状也会在这里汇总。"
           footnote="统计从事实记录实时计算，不含已软删除的记录，也不落汇总表。"
         />
       ) : (
         <>
-          <Card title="概览" style={styles.spaced}>
-            <View style={styles.metrics}>
-              <Metric label="记录总数" value={String(summary.recordCount)} />
-              <Metric label="涉及事件" value={String(summary.definitionCount)} />
-            </View>
-            {summary.firstDate && summary.lastDate ? (
-              <AppText variant="caption" color={palette.textMuted} style={styles.range}>
-                覆盖 {summary.firstDate} ~ {summary.lastDate}
-              </AppText>
-            ) : null}
-          </Card>
+          {hasData ? (
+            <>
+              <Card title="概览" style={styles.spaced}>
+                <View style={styles.metrics}>
+                  <Metric label="记录总数" value={String(summary.recordCount)} />
+                  <Metric label="涉及事件" value={String(summary.definitionCount)} />
+                </View>
+                {summary.firstDate && summary.lastDate ? (
+                  <AppText variant="caption" color={palette.textMuted} style={styles.range}>
+                    覆盖 {summary.firstDate} ~ {summary.lastDate}
+                  </AppText>
+                ) : null}
+              </Card>
 
-          <Card
-            title="趋势"
-            subtitle={
-              mode === 'day' ? `最近 ${RANGES.day} 天（按本地日期）` : `最近 ${RANGES.week} 周（按周一起算）`
-            }
-            style={styles.spaced}
-          >
-            <View style={styles.modeRow}>
-              <Chip label="按天" selected={mode === 'day'} onPress={() => setMode('day')} />
-              <Chip label="按周" selected={mode === 'week'} onPress={() => setMode('week')} />
-            </View>
-            <TrendBars periods={periods} />
+              <Card
+                title="趋势"
+                subtitle={
+                  mode === 'day'
+                    ? `最近 ${RANGES.day} 天（按本地日期）`
+                    : `最近 ${RANGES.week} 周（按周一起算）`
+                }
+                style={styles.spaced}
+              >
+                <View style={styles.modeRow}>
+                  <Chip label="按天" selected={mode === 'day'} onPress={() => setMode('day')} />
+                  <Chip label="按周" selected={mode === 'week'} onPress={() => setMode('week')} />
+                </View>
+                <TrendBars periods={periods} />
 
-            <AppText variant="label" color={palette.textMuted} style={styles.compareLabel}>
-              对比（窗口长度同上）
-            </AppText>
-            <View style={styles.modeRow}>
-              <Chip label="较前一段" selected={basis === 'previous'} onPress={() => setBasis('previous')} />
-              <Chip label="较上年同期" selected={basis === 'lastYear'} onPress={() => setBasis('lastYear')} />
-            </View>
-            <AppText variant="caption" color={palette.textMuted}>
-              {describeComparison(comparison, basis)}
-            </AppText>
-            <AppText variant="caption" color={palette.textMuted} style={styles.range}>
-              对照窗口：{comparison.previous.window.startDate} ~ {comparison.previous.window.endDate}
-              （本期 {comparison.current.window.startDate} ~ {comparison.current.window.endDate}）
-            </AppText>
-          </Card>
+                <AppText variant="label" color={palette.textMuted} style={styles.compareLabel}>
+                  对比（窗口长度同上）
+                </AppText>
+                <View style={styles.modeRow}>
+                  <Chip
+                    label="较前一段"
+                    selected={basis === 'previous'}
+                    onPress={() => setBasis('previous')}
+                  />
+                  <Chip
+                    label="较上年同期"
+                    selected={basis === 'lastYear'}
+                    onPress={() => setBasis('lastYear')}
+                  />
+                </View>
+                <AppText variant="caption" color={palette.textMuted}>
+                  {describeComparison(comparison, basis)}
+                </AppText>
+                <AppText variant="caption" color={palette.textMuted} style={styles.range}>
+                  对照窗口：{comparison.previous.window.startDate} ~ {comparison.previous.window.endDate}
+                  （本期 {comparison.current.window.startDate} ~ {comparison.current.window.endDate}）
+                </AppText>
+              </Card>
 
-          <Card
-            title="按事件统计"
-            subtitle={`累计 ${definitions.length} 个事件，按条数排序；行内变化是上面窗口的对比`}
-            style={styles.spaced}
-          >
-            {hasData
-              ? definitions.map((total) => {
-                  const change = changeById.get(total.definitionId);
-                  const changeText = change ? describeDefinitionChange(change, basis) : undefined;
-                  const subtitle = [`${eventKindLabel(total.kind)} · ${total.recordCount} 条`, changeText]
-                    .filter((part): part is string => Boolean(part))
-                    .join(' · ');
-                  return (
-                    <ListRow
-                      key={total.definitionId}
-                      title={total.name}
-                      subtitle={subtitle}
-                      right={<AppText variant="subtitle">{formatTotalValue(total)}</AppText>}
-                    />
-                  );
-                })
-              : null}
-          </Card>
+              <Card
+                title="按事件统计"
+                subtitle={`累计 ${definitions.length} 个事件，按条数排序；行内变化是上面窗口的对比`}
+                style={styles.spaced}
+              >
+                {hasData
+                  ? definitions.map((total) => {
+                      const change = changeById.get(total.definitionId);
+                      const changeText = change ? describeDefinitionChange(change, basis) : undefined;
+                      const subtitle = [`${eventKindLabel(total.kind)} · ${total.recordCount} 条`, changeText]
+                        .filter((part): part is string => Boolean(part))
+                        .join(' · ');
+                      return (
+                        <ListRow
+                          key={total.definitionId}
+                          title={total.name}
+                          subtitle={subtitle}
+                          right={<AppText variant="subtitle">{formatTotalValue(total)}</AppText>}
+                        />
+                      );
+                    })
+                  : null}
+              </Card>
+            </>
+          ) : null}
+
+          {hasCycleData ? (
+            <View style={styles.spaced}>
+              <SymptomStatsCard
+                entries={cycleEntries}
+                title="周期症状"
+                limit={5}
+                emptyHint="到「周期」标签页记录每天的阶段与症状后，这里会汇总。"
+              />
+            </View>
+          ) : null}
         </>
       )}
     </Screen>

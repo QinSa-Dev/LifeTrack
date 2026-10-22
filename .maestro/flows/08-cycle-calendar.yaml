@@ -1,0 +1,173 @@
+# 写入路径 8：周期月视图（日历选日期）+ 症状统计。
+#
+# 这是「周期月视图与症状统计」这一项的端到端回归：
+#   1. 周期实例页出现月视图，默认停在「今天」所在的月，区间外的日子点不动；
+#   2. 点某一天 = 把那天填进表单（`当前选中：…` 会跟着变），保存后那格变成「有记录」；
+#   3. 回到周期定义页，「症状统计」把刚才那两个症状统计出来；
+#   4. 收尾：把这条记录软删除 → 回收站里彻底删除，不留 Maestro 数据。
+#
+# 自产自销：只动本流程自己刚记的那一天（定义「Maestro周期」 + 它的一段进行中周期）。
+# 回收站里**还有使用者自己软删除的事件记录**，所以周期区的按钮用相对选择器
+# `below: 已删除的周期记录` 消歧，不用 index。
+#
+# 前提：
+#   - 运行日期要晚于 2026-10-05（这样「今天」一定落在 2026-10-01 起的区间内，写这段时是 2026-10-22）；
+#   - `Maestro周期` 在 2026-10-02 上还没有记录（本流程跑完会删掉，重复跑没问题；
+#     上次跑到一半留下的软删除记录会让最后一步的断言多出一条，去回收站手工清一下即可）。
+# 副作用：留下定义「Maestro周期」与一段进行中的周期（记录会删干净）。
+appId: host.exp.Exponent
+name: 08 周期 · 月视图选日期 + 症状统计
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+
+# —— 准备：定义 + 一段 2026-10-01 起的进行中周期（与 05 / 07 同一套做法）——
+- tapOn: '.*周期, tab.*'
+- assertVisible: '+ 新建周期定义'
+- runFlow:
+    when:
+      notVisible: '.*Maestro周期.*'
+    commands:
+      - tapOn: '+ 新建周期定义'
+      - assertVisible: '例如：生理期'
+      - tapOn: '例如：生理期'
+      - inputText: 'Maestro周期'
+      - pressKey: Enter
+      - scrollUntilVisible:
+          element:
+            text: '创建'
+          direction: DOWN
+      - tapOn: '创建'
+      - assertVisible: '.*Maestro周期.*'
+- scrollUntilVisible:
+    element:
+      text: '.*Maestro周期.*'
+    direction: DOWN
+- tapOn: '.*Maestro周期.*'
+- assertVisible: '定义信息'
+- runFlow:
+    when:
+      visible: '.*~ 进行中.*'
+    commands:
+      - tapOn: '.*~ 进行中.*'
+- runFlow:
+    when:
+      notVisible: '周期区间'
+    commands:
+      - tapOn: '2026-10-19'
+      - eraseText: 12
+      - inputText: '2026-10-01'
+      - pressKey: Enter
+      - tapOn: '开始新周期'
+- assertVisible: '周期区间'
+
+# —— 月视图：默认停在今天所在的月，2026-10-02 这一格还没有记录 ——
+- scrollUntilVisible:
+    element:
+      text: '月视图'
+    direction: DOWN
+- assertVisible: '2026 年 10 月'
+- assertVisible: '.*日历 2026-10-02，无记录.*'
+- takeScreenshot: 08-calendar
+
+# —— 点这一天 = 填进表单（「当前选中」跟着变）——
+- tapOn: '.*日历 2026-10-02，无记录.*'
+- scrollUntilVisible:
+    element:
+      text: '当前选中：2026-10-02'
+    direction: DOWN
+- assertVisible: '当前选中：2026-10-02'
+- takeScreenshot: 08-calendar-picked
+
+# —— 就给这一天填症状并保存（证明点的确实是 10-02）——
+- scrollUntilVisible:
+    element:
+      text: '症状（可选）'
+    direction: DOWN
+- tapOn: '用逗号分隔，例如：头痛、乏力'
+- inputText: '头痛,乏力'
+- pressKey: Enter
+- scrollUntilVisible:
+    element:
+      text: '保存记录'
+    direction: DOWN
+- tapOn: '保存记录'
+- scrollUntilVisible:
+    element:
+      text: '.*已保存 2026-10-02.*'
+    direction: UP
+- assertVisible: '.*已保存 2026-10-02.*'
+- takeScreenshot: 08-entry-saved
+
+# —— 月视图上那一格变成「有记录（2 个症状）」——
+- scrollUntilVisible:
+    element:
+      text: '月视图'
+    direction: UP
+- assertVisible: '.*日历 2026-10-02，有记录（2 个症状）.*'
+- takeScreenshot: 08-calendar-marked
+
+# —— 症状统计（周期定义页，按这个定义汇总）——
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
+- tapOn: '返回'
+- scrollUntilVisible:
+    element:
+      text: '症状统计'
+    direction: DOWN
+- assertVisible: '.*其中 1 条记了症状，共 2 种.*'
+- assertVisible: '头痛'
+- assertVisible: '乏力'
+- assertVisible: '1 天 · 100%'
+- takeScreenshot: 08-symptom-stats
+
+# —— 收尾：删掉 2026-10-02 那条，再回回收站彻底删除 ——
+- scrollUntilVisible:
+    element:
+      text: '周期记录'
+    direction: UP
+- tapOn: '.*2026-10-01 ~ 进行中.*'
+- assertVisible: '周期区间'
+- scrollUntilVisible:
+    element:
+      text: '每日记录'
+    direction: DOWN
+# 列表按日期正序，所以「每日记录」下面第一个「删除」就是 10-02 那条
+- tapOn:
+    text: '删除'
+    below:
+      text: '每日记录'
+# 月视图在列表上方，先滚回去再断言（也在核对软删除之后格子确实变回了「无记录」）
+- scrollUntilVisible:
+    element:
+      text: '月视图'
+    direction: UP
+- assertVisible: '.*日历 2026-10-02，无记录.*'
+# 页头的「返回」也要先滚回视野：这一步页面刚滚过
+- scrollUntilVisible:
+    element:
+      text: '返回'
+    direction: UP
+- tapOn: '返回'
+- tapOn: '返回'
+- tapOn: '.*时间轴, tab.*'
+- tapOn: '回收站'
+- assertVisible: '已删除的周期记录'
+- assertVisible: '.*Maestro周期.*'
+- takeScreenshot: 08-trash
+- tapOn:
+    text: '永久删除'
+    below:
+      text: '已删除的周期记录'
+- assertVisible: '彻底删除记录'
+- tapOn: '彻底删除'
+- assertNotVisible: '已删除的周期记录'
+- takeScreenshot: 08-after-cleanup

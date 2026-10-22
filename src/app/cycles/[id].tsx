@@ -6,11 +6,12 @@ import { AppText, Badge, Button, Card, EmptyState, Header, ListRow, Screen, Text
 import { useReadyDatabase } from '@/db';
 import { addDays } from '@/domain/dates';
 import { instanceLengthDays, latestInstance, predictNextCycle } from '@/domain/cycles';
-import type { CycleDefinition, CycleInstance } from '@/domain/models';
+import type { CycleDefinition, CycleEntry, CycleInstance } from '@/domain/models';
 import { CycleDefinitionForm } from '@/features/cycles/CycleDefinitionForm';
 import { describeCycleDefinition, describePrediction } from '@/features/cycles/labels';
+import { SymptomStatsCard } from '@/features/cycles/SymptomStatsCard';
 import { localDateText } from '@/features/common/datetime';
-import { CycleDefinitionRepository, CycleInstanceRepository } from '@/repositories';
+import { CycleDefinitionRepository, CycleEntryRepository, CycleInstanceRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
 function maxIsoDate(a: string, b: string): string {
@@ -31,6 +32,8 @@ export default function CycleDefinitionScreen() {
   // undefined = 加载中，null = 未找到
   const [definition, setDefinition] = useState<CycleDefinition | null | undefined>(undefined);
   const [instances, setInstances] = useState<CycleInstance[]>([]);
+  // 这个定义下全部的每日记录（症状统计用；仓储已过滤软删除）
+  const [entries, setEntries] = useState<CycleEntry[]>([]);
   const [editing, setEditing] = useState(false);
   const [newStart, setNewStart] = useState('');
   const [busy, setBusy] = useState(false);
@@ -41,13 +44,15 @@ export default function CycleDefinitionScreen() {
     Promise.all([
       new CycleDefinitionRepository(db).getById(id),
       new CycleInstanceRepository(db).list({ definitionId: id }),
+      new CycleEntryRepository(db).listVisible(id),
     ])
-      .then(([loadedDefinition, loadedInstances]) => {
+      .then(([loadedDefinition, loadedInstances, loadedEntries]) => {
         if (cancelled) {
           return;
         }
         setDefinition(loadedDefinition);
         setInstances(loadedInstances);
+        setEntries(loadedEntries);
         const latest = latestInstance(loadedInstances);
         const today = localDateText(new Date());
         setNewStart(latest?.endDate ? maxIsoDate(today, addDays(latest.endDate, 1)) : today);
@@ -257,6 +262,13 @@ export default function CycleDefinitionScreen() {
           />
         </View>
       </Card>
+
+      <View style={styles.spaced}>
+        <SymptomStatsCard
+          entries={entries}
+          emptyHint="进入某一段周期，在月视图上点一天，就能记录那天的阶段与症状；记过之后这里会汇总。"
+        />
+      </View>
 
       <Card title="状态与删除" subtitle="归档可随时取消；永久删除需二次确认" style={styles.spaced}>
         <View style={styles.actions}>

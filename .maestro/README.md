@@ -2,7 +2,7 @@
 
 这里的 YAML 是 [Maestro](https://maestro.mobile.dev) 的流程文件，用来在 iOS 模拟器上
 **真的点击 App**：点记录、删除并撤销、回收站真删、导出、周期边界预演、统计对比、
-周期内记录的软删除与回收站。
+周期内记录的软删除与回收站、周期月视图选日期与症状统计。
 
 它补的是 `HANDOFF.md` 第 8 节里那一串「❌ 写入路径没有真手点过」——
 这些路径原先只有单元测试覆盖。走读版说明见 `docs/learning/15-maestro-e2e.md`。
@@ -65,7 +65,7 @@ export JAVA_HOME=/opt/homebrew/opt/openjdk@17
 export PATH="$HOME/.maestro/bin:$PATH"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
-maestro test .maestro/flows                 # 跑全部（约 2 分钟）
+maestro test .maestro/flows                 # 跑全部（约 5 分钟）
 maestro test .maestro/flows/00-smoke.yaml   # 只跑一个
 maestro test --include-tags smoke .maestro/flows
 maestro hierarchy                           # 排错：打印当前屏幕的视图树
@@ -94,7 +94,7 @@ maestro studio                              # 交互式：点着看哪个选择�
   会多出「Maestro…」开头的事件 / 周期定义。`07` 复用 `05` 建的那个「Maestro周期」，
   自己造的那条每日记录在流程末尾被真删，所以不累加。这些都是正常的，可以在 App 里删掉。
 
-### 选择器上的三个坑（都是踩过的）
+### 选择器与导航上的几个坑（都是踩过的）
 
 1. **匹配是全文匹配**：底部标签栏的文字是 `事件, tab, 3 of 5`，所以
    `tapOn: '事件'` 找不到；要写 `.*事件, tab.*`。部分匹配一律自己写 `.*`。
@@ -121,6 +121,17 @@ maestro studio                              # 交互式：点着看哪个选择�
    `below` 的判定是「元素在参照物的下方」（按顶边比较），**不是**「最近的那个」，
    所以参照物要选得比目标更靠上、而且唯一——否则会点到别的同名按钮
    （`07` 第一次跑就是这么挂在最后一步的）。
+4. **页头也会滚出屏幕**：「返回」在 `Screen scroll` 的滚动内容里，不是固定页头。
+   页面一长（周期实例页加了月视图之后尤其明显），滚到下面再 `tapOn: '返回'` 就会
+   报 `Element not found`。做法是点之前先把它滚回视野：
+
+   ```yaml
+   - scrollUntilVisible:
+       element:
+         text: '返回'
+       direction: UP
+   - tapOn: '返回'
+   ```
 
 ### 键盘与遮挡
 
@@ -143,12 +154,13 @@ maestro studio                              # 交互式：点着看哪个选择�
 | `04-backup-export.yaml` | 设置页「导出 JSON 备份」→ 系统分享面板出现（`lifetrack-backup-2026-10-22`, `JSON · 19 KB`）→ 关闭 | ✅ 11s |
 | `05-cycle-boundary-preview.yaml` | 建周期定义 → 开周期 → 记一天 → 把结束日改到那天之前 → **黄色越界预演** → **保存被仓储拒绝** | ✅ 37s |
 | `06-stats-comparison.yaml` | 统计页「较前一段 / 较上年同期」切换 → 对照窗口与结论文案 | ✅ 13s |
-| `07-cycle-entry-trash.yaml` | 周期里记一天 → 删除（软删）→「撤销」找回 → 再删 → 回收站「已删除的周期记录」里恢复 → 三删 →「彻底删除」+ 原生二次确认 | ✅ 56s |
+| `07-cycle-entry-trash.yaml` | 周期里记一天 → 删除（软删）→「撤销」找回 → 再删 → 回收站「已删除的周期记录」里恢复 → 三删 →「彻底删除」+ 原生二次确认 | ✅ 1m20s |
+| `08-cycle-calendar.yaml` | 周期实例页月视图 → 点 `2026-10-02`（「当前选中」跟着变）→ 填症状保存 → 那格变成「有记录（2 个症状）」→ 定义页「症状统计」列出头痛 / 乏力 → 收尾把这条彻底删除 | ✅ 1m3s |
 
-8/8 通过，合计 3m11s（iPhone 16e / iOS 26.3 / Expo Go 58.0.5）。
+9/9 通过，合计 4m39s（iPhone 16e / iOS 26.3 / Expo Go 58.0.5）。
 
-`05` / `06` / `07` 分别对应当前最后三项改动（周期边界预演、统计环比同比、
-周期内记录软删除），是「新增功能也要能真手点通」的回归。
+`05` / `06` / `07` / `08` 分别对应当前最后四项改动（周期边界预演、统计环比同比、
+周期内记录软删除、周期月视图与症状统计），是「新增功能也要能真手点通」的回归。
 
 ## 跑完之后怎么核对（不止看 PASS）
 
@@ -165,13 +177,25 @@ sqlite3 "$DB" "select name from event_definitions where name like 'Maestro%';"  
 ```
 
 跑完全套后的实测：使用者的 `15 条记录 / 4 条周期记录`（含 1 条软删的 `喝水`、10-18）一条没少；
-回收站里**没有 `Maestro*` 残留**——`03` / `07` 各自把自己造的那条删干净了；
+回收站里**没有 `Maestro*` 残留**——`03` / `07` / `08` 各自把自己造的那条删干净了；
 `05` 留下的 `Maestro周期` 每日记录还在（越界保存被拒，拒绝没有删数据）。
 收尾时把 `Maestro*` 的定义与记录删掉，库就回到使用者的 `15 条 / 1 条软删`。
+
+> 收尾时注意：`event_records` **没有指向 `event_definitions` 的外键**（历史独立于定义，
+> 见领域规则第 1 条），所以删掉 `Maestro喝水` 定义**不会**连带删掉它的记录，要显式删：
+>
+> ```sql
+> DELETE FROM event_definitions WHERE name LIKE 'Maestro%';   -- 周期定义会级联（实例 + 记录）
+> DELETE FROM event_records WHERE snapshot_name LIKE 'Maestro%';
+> ```
+>
+> 删完再跑一次 `PRAGMA foreign_key_check`（应为空）核对。
 
 ## 已知限制
 
 - **只在 iOS 模拟器上跑过**；Android 与真机未跑。
 - **「选文件导入」没覆盖**：只走到系统分享面板，没有跨 App 去文件选择器。
 - `05` / `07` 假定运行日期晚于 `2026-10-05`（写这段时是 `2026-10-22`）。
+- `08` 假定 `Maestro周期` 的 `2026-10-02` 上还没有记录（跑完它会删掉；上次跑到一半留下的
+  软删除记录会让最后一步多出一条，去回收站手工清一下就好）。
 - 重复跑会在库里留下 `Maestro*` 开头的定义与记录（可以随手删掉）。
