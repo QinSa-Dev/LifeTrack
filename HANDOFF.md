@@ -9,31 +9,33 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 技术栈：React Native + Expo SDK 58 + TypeScript + SQLite（expo-sqlite）。
 数据全部在设备本地，**无后端、无账号、无云同步**。
 
-## 1. 当前状态快照（写于「周期月视图与按症状统计」完成、并已在本机模拟器真手点验证之后）
+## 1. 当前状态快照（写于「时间轴与记录详情改版」完成、并已在本机模拟器真手点验证之后）
 
 - 分支：`main`；工作区干净。
 - 最新提交：用 `git log -1` 查看
 - schema 版本：**v5**（`PRAGMA user_version = 5`）；v5 只做一件事——给 `cycle_entries`
-  加 `deleted_at`（周期内记录也能软删除）。此后的统计、回收站、导入导出、周期/统计增强与
-  **月视图 / 症状统计**都**没有新增迁移**（统计与对比是纯聚合、月视图不落库，事件记录的回收站是改
-  `deleted_at`，导入导出是读全表 + 重写已有行）
+  加 `deleted_at`（周期内记录也能软删除）。此后的统计、回收站、导入导出、周期/统计增强、
+  **月视图 / 症状统计**与**时间轴改版**都**没有新增迁移**
+  （时间轴的「逐条 / 同类合并」偏好只是 `app_meta` 里的一个键：`app.timeline_view`）
 - 验证状态（全部真实跑过）：
 
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 24 个套件 / 390 个用例通过
+npm test             # 27 个套件 / 411 个用例通过
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（js bundle 3.1MB；本次只改 JS / 文案，无新增原生依赖）
 npx expo-doctor      # 19/20：8 个旧依赖 patch 版本漂移（与最近改动无关）
-maestro test .maestro/flows      # 9/9 通过（4m39s；需先起 Metro，见 .maestro/README.md）
+maestro test .maestro/flows      # 10/10 通过（5m42s；需先起 Metro，见 .maestro/README.md）
 ```
 
 > ✅ **已在本机 iOS 模拟器实机跑起来**，并且**写入路径已经用 Maestro 真手点过**（见第 8 节）：
-> 点记录、删除并撤销、回收站恢复/永久删除（含原生二次确认）、导出 JSON 到分享面板、
-> 周期边界预演 + 越界保存被拒、统计环比/同比切换、周期记录软删除 → 撤销 → 回收站恢复 → 彻底删除、
-> **月视图点日期 → 保存 → 症状统计**，9 条流程全绿，跑完还直接读模拟器的 `lifetrack.db` 核对过（使用者数据一条没少）。
-> 走读见 `docs/learning/15-maestro-e2e.md`。
+> 点记录、**时间轴行内【+1】（点下去就落库、不弹确认）**、**「逐条 / 同类合并」开关与就地展开**、
+> **点行进记录详情页 → 修改（改发生日期并保存）→ 删除 → 撤销**、回收站恢复/永久删除（含原生二次确认）、
+> 导出 JSON 到分享面板、周期边界预演 + 越界保存被拒、统计环比/同比切换、
+> 周期记录软删除 → 撤销 → 回收站恢复 → 彻底删除、**月视图点日期 → 保存 → 症状统计**，
+> 10 条流程全绿，跑完还直接读模拟器的 `lifetrack.db` 核对过（使用者数据一条没少）。
+> 走读见 `docs/learning/15-maestro-e2e.md`（时间轴改版那部分见 `16-timeline-row-and-detail.md`）。
 > ⚠️ 仍未验证：**Android 与真机**、**组件级测试**。（**「选文件导入」已补上**，见第 8 节与
 > `.maestro/README.md` 的「选文件导入」一节：手工两段式，模拟器上跨 App 那段没有端到端闭环。）
 >
@@ -73,7 +75,7 @@ export PATH="$HOME/.maestro/bin:$PATH"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer   # 本机 xcode-select 指向 CLT，simctl 要靠它
 
 npx expo start                     # 另一个终端，保持运行
-maestro test .maestro/flows        # 9/9，4m39s
+maestro test .maestro/flows        # 10/10，5m42s
 maestro hierarchy                  # 排错：打印当前屏幕的视图树
 ```
 
@@ -147,7 +149,9 @@ src/theme/         设计令牌
     同比按 **52 周（364 天）** 对齐——星期几与周桶都对得上，代价是它不是自然年，界面因此写「上年同期」
     （`src/features/stats/aggregate.ts` / `labels.ts`）。
 11. **导入是合并（取并集），不是覆盖**：本地独有的数据一律保留；同 id 冲突「较新的 `updatedAt` 胜出」，
-    完全相同则保留本地不重写；事件记录不可篡改，**只合并软删除标记**（本地已删除不会被旧备份复活）。
+    完全相同则保留本地不重写；事件记录不可篡改，**只合并软删除标记**（本地已删除不会被旧备份复活）——
+    记录本身现在可以在详情页更正（规则 15），但**备份合并仍只看软删除标记**：编辑只在本地生效、
+    不会通过备份传到另一份库（记录没有 `updated_at`，见第 10 节）。
     导入在单个独占事务里重写九张表，并在事务内核对行数 + `PRAGMA foreign_key_check`，
     **失败整体回滚，不留半截数据**（`src/domain/backup.ts` / `src/repositories/backupRepository.ts`）。
 12. **外部输入（备份 JSON）严格解析**：逐字段守卫、错误带路径（`data.eventRecords[0].value`）、
@@ -159,17 +163,29 @@ src/theme/         设计令牌
     返回 `basis` / `observedGaps` 让界面说清依据；间隔按日历日算（`observedCycleLength`）。
 14. **同一条规则只写一遍**：`findDatesOutside` 既用于仓储保存时的拒绝，也用于界面保存前的预演，
     所以两者不可能不一致；因为记录已在界面上，仓储里那个重复的只读查询 `listOutsideEntryDates` 已删除。
+15. **快照不可改，事实可更正**：`EventRecordRepository.update` 只改**事实**（取值 / 发生时间 / 备注），
+    快照（名称、单位、分组、标签）永不更新——定义改名换单位之后，历史仍是记录当时的样子；
+    取值仍按类型校验、发生时间仍不能晚于录入时间（与补录同一条规则）、**已软删除的记录拒绝修改**
+    （先撤销删除再改，免得「改了又躺在回收站里」对不上）。
+16. **【+1】即时落库、不弹二次确认**：点一下就以该行取值「现在」再记一条（来源记 `quick`）。
+    撤销与修改都不在列表里做，而在**那条记录的详情页**（`/records/[id]` 的「更多操作」）——
+    列表行只留「信息 + 一下就能再记一条」，低频操作（改 / 删）收进详情页。
+    计数型且增量为 1 的行不重复显示取值（否则和按钮上的「+1」撞脸）。
+17. **纯展示偏好存 `app_meta`，不为它加表或加列**：时间轴的「逐条 / 同类合并」=
+    `app.timeline_view`（默认逐条）；读失败只当「没记住」（用默认值），不弹错误卡片打断人。
+    已归档定义的【+1】禁用并标「已归档」；定义被永久删除时标「定义已删除」且不再渲染按钮
+    （历史不依赖定义，所以这一行仍然能看）。
 
 ## 6. 关键文件索引
 
 - 迁移与 schema：`src/db/schema.ts`、`src/db/migrations.ts`
 - 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`
 - 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `isVisibleRecord` / `isVisibleEntry` / `DeletedCycleEntry`）、`src/domain/validation.ts`（含 `requireNotFuture`、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `observedCycleLength` / `predictNextCycle`）、`src/domain/backup.ts`（备份格式契约 `BACKUP_FORMAT` / 严格解析 `parseBackup` / 引用完整性 `assertBackupIntegrity` / 合并 `mergeBackup` / 稳定排序 `sortBackupData` / 文件名 `backupFileName`）
-- 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until`）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`cycleDefinitionRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`）
-- 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `RecordRow` / `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `CycleDefinitionForm` / `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
-- 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴 + 撤销，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/cycles.tsx`、`src/app/(tabs)/settings.tsx`（诊断 + 备份与恢复）、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/records/deleted.tsx`（回收站）、`src/app/events/[id].tsx`、`src/app/cycles/[id].tsx`、`src/app/cycle-instances/[id].tsx`
-- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`
-- 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`08`（9 条流程）、`.maestro/subflows/record-once.yaml`
+- 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / **`update` 更正事实** / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until`）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`cycleDefinitionRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`）、`metaRepository.ts`（键值偏好，时间轴显示方式用它）
+- 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime`）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `timelineView.ts`（显示方式偏好）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `CycleDefinitionForm` / `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
+- 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 同类合并 + 行内【+1】，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/cycles.tsx`、`src/app/(tabs)/settings.tsx`（诊断 + 备份与恢复）、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/records/[id].tsx`（**单条记录详情：快照 + 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/events/[id].tsx`、`src/app/cycles/[id].tsx`、`src/app/cycle-instances/[id].tsx`
+- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`
+- 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`09`（10 条流程）、`.maestro/subflows/record-once.yaml`
 
 ## 7. 必须遵守的工作约定
 
@@ -186,17 +202,18 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ 静态检查、390 个单元用例（真实内存 SQLite）、iOS 打包（3.1MB）。
+- ✅ 静态检查、411 个单元用例（真实内存 SQLite）、iOS 打包（3.1MB）。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go 58.0.5）：5 个标签页 + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
-- ✅ **写入路径已经真手点过**（Maestro，`9/9` 通过，4m39s）：点一下记录、删除并撤销、
+- ✅ **写入路径已经真手点过**（Maestro，`10/10` 通过，5m42s）：点一下记录、
+  **行内【+1】即时落库**、**「逐条 / 同类合并」切换与就地展开**、**点行进详情 → 修改 → 删除 → 撤销**、
   回收站「恢复 / 永久删除」（含原生二次确认）、导出 JSON 到系统分享面板、
   改周期边界的越界预演 + 越界保存被拒绝、统计页的环比 / 同比切换、
   周期内记录软删除 → 撤销 → 回收站恢复 → 彻底删除、
   **周期月视图点日期 → 保存 → 定义页症状统计**。
-  流程在 `.maestro/`，走读见 `docs/learning/15-maestro-e2e.md`，结果明细见 `README.md`
-  的「端到端：Maestro 真手点」一节。
+  流程在 `.maestro/`，走读见 `docs/learning/15-maestro-e2e.md`（时间轴改版见 `16`），
+  结果明细见 `README.md` 的「端到端：Maestro 真手点」一节。
   另外，跑完会**直接读模拟器里的 `lifetrack.db`** 核对：使用者数据一条没少，
   流程只新增自己造的 `Maestro*` 数据（收尾会把这些清掉）。
 - ✅ **v4 → v5 的真实库升级也验过**：在模拟器上把使用者的 v4 库升到 v5（`user_version 4 → 5`），
@@ -214,10 +231,11 @@ src/theme/         设计令牌
 
 ## 9. 下一步任务：第二阶段剩余项
 
-「回收站与永久删除」、「导入导出」、「周期功能的增强（预测依据 / 边界预演）」与
-「统计的增强（环比 / 同比）」都已完成
+「回收站与永久删除」、「导入导出」、「周期功能的增强（预测依据 / 边界预演）」、
+「统计的增强（环比 / 同比）」与「时间轴与记录详情改版」都已完成
 （见 `docs/learning/13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、
-`11-cycle-tracking.md` 的 4.2 与 4.8 节、`12-statistics.md` 的 3.9–3.11 节）。剩下的候选按推荐顺序：
+`11-cycle-tracking.md` 的 4.2 与 4.8 节、`12-statistics.md` 的 3.9–3.11 节、
+`16-timeline-row-and-detail.md`）。剩下的候选按推荐顺序：
 
 ### 9.1 周期功能的增强（推荐，穿插）
 
@@ -251,6 +269,26 @@ src/theme/         设计令牌
   可考虑提示「这看起来不是一份完整备份」。
 - 导出体积优化（当前是缩进 JSON，记录很多时偏大）。
 
+### 9.4 时间轴与记录详情改版（✅ 已完成）
+
+目标就是「简洁快速」：列表行只保留「这条记录的信息 + 一下就能再记一条」。
+
+- 行内右侧 = 取值 + 【+1】；点行进记录详情页（`/records/[id]`），改 / 删 / 撤销都在那里。
+- 【+1】点下去即时落库，**不弹二次确认、不给撤销条**。
+- 列表头「逐条 / 同类合并」开关（偏好存 `app_meta.app.timeline_view`，默认逐条）。
+- 仓储新增 `EventRecordRepository.update`（只改事实，快照不动）。
+
+走读：`docs/learning/16-timeline-row-and-detail.md`；端到端：`.maestro/flows/02`、`03`、`09`。
+
+### 9.5 后面两项（方向已定，**均未开始**）
+
+1. **自定义字段（标签字段化）**：事件的「标签」从全局实体改成每个事件自己的自定义字段
+   （枚举单选 / 多选、时间点、时间段），全局标签入口与标签管理页退化，改在编辑事件 / 分组时内联建；
+   记录时把字段值写进快照，CSV 加「字段值」列，备份 `formatVersion` 评估升 2（schema 预计 v6）。
+2. **周期并入事件**：周期是事件类型的一种，不该有单独菜单——新建事件时可选「周期事件」并切到周期字段；
+   周期分「自动循环」（按规律自动生成，先只做「每 N 天一次 + 时长 M 天」，打开 App 时懒补齐）
+   与「手动标记」（自己点开始/结束）。现有周期定义 / 实例 / 每日记录三张表保留，统一入口与 UI。
+
 ### 提交与验证习惯
 
 沿用提交拆分：数据层（迁移/仓储 + 用例）→ 界面 → 文档同步（README + 学习指北 + 新增 `NN-*.md`）。
@@ -271,6 +309,12 @@ src/theme/         设计令牌
   一条快照 / 单位一致性），代价是同一套规则在 SQL 里再写一遍（纯函数那份 `summarize` /
   `aggregateByDefinition` 会失去调用方）——**先测量再决定**，本次已把数字记在 3.13 节。
 - **撤销状态不跨页面**：离开页面后撤销入口消失（记录仍是软删除状态）。若要跨页面持久化，按 `docs/learning/06` 3.9 评估（优先 `Context + useReducer`，不要直接上第三方库）。
+  时间轴现在**没有**撤销条（【+1】点下去就完事），撤销在记录详情页里；`UndoBar` 仍服务于
+  记录页与回收站 / 周期记录那几处。
+- **记录可以更正，但编辑不会通过备份传播**：`event_records` 没有 `updated_at`（它是历史，
+  不参与时间戳竞争），所以导入合并对记录**只比较软删除标记**——在 A 机改了取值再导出，
+  导入到一份**没改过**的 B 库会被「保留本地」挡住。要传播就得给记录加 `updated_at`
+  （迁移 + 合并规则 + 备份格式），收益有限，**记在案不顺手做**。
 - **软删除的周期记录可以落在实例区间外**：软删除不挡边界（这是有意的），所以「软删 → 缩边界」之后
   回收站里那条就在区间外；恢复会被拒并提示先改回边界。备份的完整性检查因此对已软删除的行放行区间校验
   （否则 App 自己导出的备份会被自己拒绝）。
@@ -300,13 +344,20 @@ src/theme/         设计令牌
 - **CSV 只导出不导入**：CSV 没有主键与快照，无法无损往返；若要「从表格导入」，需要一套「按事件名匹配」
   的映射规则与冲突策略（属于新功能，不是补丁）。
 - **导入导出没有体积/性能测试**：几万条记录下的导出耗时与文件大小未测。
+- **界面布局受 Expo Go 的浮球约束**：Expo Go 的开发菜单浮球压在屏幕右上角（原生浮层，
+  实测约 `[341,60]-[367,86]`），页头右侧的按钮在 Expo Go 里**点不到**（Maestro 会点到浮球，
+  `03` 一开始的三次失败就是这个）。所以记录详情页的改 / 删放在页面底部的「更多操作」卡片里，
+  而不是页头右侧菜单。做独立构建时没有这颗浮球，届时可以再评估放回页头。
+- **「同类合并」视图里点行 = 就地展开，不是进详情**：这是个刻意的取舍（合并行的一下
+  先用来「看逐条」），但它意味着在合并视图里进详情要先展开再点那一条。如果以后觉得别扭，
+  可以给合并行加一个「详情」次级入口（注意别再放到右上角，见上一条）。
 
 ## 11. 快速自检清单（接手后第一件事）
 
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：24 套件 / 390 用例通过
+npm run verify             # 应为：27 套件 / 411 用例通过
 npx expo export --platform ios   # 应能打包（3.1MB 左右）
 npm start                  # Expo Go 扫码（或走下面的自动流程）
 
@@ -314,7 +365,7 @@ npm start                  # Expo Go 扫码（或走下面的自动流程）
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17
 export PATH="$HOME/.maestro/bin:$PATH"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-maestro test .maestro/flows      # 应为 9/9 通过（4m39s）
+maestro test .maestro/flows      # 应为 10/10 通过（5m42s）
 sqlite3 "$(xcrun simctl get_app_container booted host.exp.Exponent data)"/Documents/ExponentExperienceData/@anonymous/lifetrack-*/SQLite/lifetrack.db \
   "select count(*), sum(deleted_at is not null) from event_records;"   # 跑完核对：多的应该只有 Maestro* 那条记录
 ```
@@ -322,10 +373,14 @@ sqlite3 "$(xcrun simctl get_app_container booted host.exp.Exponent data)"/Docume
 手动走一遍（想看得更细时）：
 
 ```
-建事件 → 记录 → 补录 → 看时间轴 → 删除并撤销 → 归档/删除定义
+建事件 → 记录 → 补录 → 看时间轴 → 点行进详情 → 改 / 删 / 撤销 → 归档/删除定义
+时间轴点【+1】：应立刻多一条（来源「快捷」），不弹任何确认；列表头切「同类合并」：一个事件一行，
+  点行就地展开成逐条、再点收起（重启 App 后应记得住上次的选择）
+进那条记录的详情页 → 底部「更多操作」：改发生日期并保存（来源应变成「事后补记的」）、
+  删除（页面出现「已删除」）、再撤销删除（记录回来）
 切到「统计」：看概览 / 按天按周趋势 / 按事件统计；删一条记录再看数字是否变化
 统计页切「较前一段 / 较上年同期」：对照窗口日期应相隔 52 周；对照期为空时不该出现百分比
-时间轴删一条 → 进「回收站」→ 恢复 / 永久删除（应弹二次确认）
+回收站：恢复 / 永久删除（应弹二次确认）
 建周期定义 → 开始新周期 → 记某天的阶段/症状 → 结束周期
 再开第二段（间隔不同）→ 回定义详情看预测是否按「实际间隔」给，且写明依据
 把结束日提前到某条记录之前 → 应立刻出现黄色预演提示，保存被拒绝（数据不能少）
