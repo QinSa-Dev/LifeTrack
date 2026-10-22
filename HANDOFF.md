@@ -9,32 +9,33 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 技术栈：React Native + Expo SDK 58 + TypeScript + SQLite（expo-sqlite）。
 数据全部在设备本地，**无后端、无账号、无云同步**。
 
-## 1. 当前状态快照（写于「回收站与永久删除」完成、并已在本机模拟器跑起来之后）
+## 1. 当前状态快照（写于「导入导出」与「周期 / 统计增强」完成、并已在本机模拟器跑起来之后）
 
 - 分支：`main`；工作区干净。
 - 最新提交：用 `git log -1` 查看
-- schema 版本：**v4**（`PRAGMA user_version = 4`）；统计、回收站与导入导出**都没有新增迁移**
-  （统计是纯聚合，回收站是 `DELETE` 已有行，导入导出是读全表 + 重写已有行）
+- schema 版本：**v4**（`PRAGMA user_version = 4`）；统计、回收站、导入导出与周期/统计增强**都没有新增迁移**
+  （统计与对比是纯聚合，回收站是 `DELETE` 已有行，导入导出是读全表 + 重写已有行）
 - 验证状态（全部真实跑过）：
 
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 21 个套件 / 291 个用例通过
+npm test             # 22 个套件 / 319 个用例通过
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（js bundle 3.1MB）
 npx expo-doctor      # 19/20：8 个旧依赖 patch 版本漂移（与最近改动无关）
 ```
 
 > ✅ **已在本机 iOS 模拟器实机跑起来**（见第 8 节）：第二阶段的功能都能打开、渲染真实数据。
-> ⚠️ 但**写入路径没有真手点过**（点记录 / 删除撤销 / 回收站真删 / 导出分享 / 选文件导入），
+> ⚠️ 但**写入路径没有真手点过**（点记录 / 删除撤销 / 回收站真删 / 导出分享 / 选文件导入 /
+> 周期边界预览 / 统计页的对比切换），
 > 只靠单元测试；Android 与真机未跑。
 > 接手后建议：`npm start` + Expo Go 手动点一遍再动新代码。
 >
 > 本机访问 GitHub Releases 很慢，`expo start --ios` 会卡在「Fetching Expo Go」超时。变通办法见
 > `README.md`「本机 iOS 模拟器实机运行」末尾的排障备注（手动分片下载 Expo Go → `simctl install`）。
 
-**远端提醒**：本地 `main` 比 `origin/main` 领先 4 个提交（远端为 `git@github.com:QinSa-Dev/LifeTrack.git`；
+**远端提醒**：本地 `main` 比 `origin/main` 领先 7 个提交（远端为 `git@github.com:QinSa-Dev/LifeTrack.git`；
 `origin/main` 当前为 `1ada659`）。推送前先确认目标分支。
 
 ## 2. 环境与命令
@@ -111,8 +112,11 @@ src/theme/         设计令牌
 9. **周期内记录一天一条**：`UNIQUE(instance_id, date)` + UPSERT（`CycleEntryRepository.save`）；
    写入前校验日期必须在实例区间内。
 10. **统计从事实数据算，不落汇总表**：打开统计页时对事实记录实时聚合，只统计未软删除的记录；
-    「一天/一周」按设备本地时区划分（ISO 周，周一起算）；数量型不同单位的值不合并计量
-    （`src/features/stats/aggregate.ts`）。
+    「一天/一周」按设备本地时区划分（ISO 周，周一起算）；数量型不同单位的值不合并计量；
+    **对比（环比 / 同比）只比条数**（不同单位的值本来就不可相加），且**对照期为 0 时不给变化率**
+    （返回 `undefined`，界面说「无法算变化率」，不编造 `+100%`）。
+    同比按 **52 周（364 天）** 对齐——星期几与周桶都对得上，代价是它不是自然年，界面因此写「上年同期」
+    （`src/features/stats/aggregate.ts` / `labels.ts`）。
 11. **导入是合并（取并集），不是覆盖**：本地独有的数据一律保留；同 id 冲突「较新的 `updatedAt` 胜出」，
     完全相同则保留本地不重写；事件记录不可篡改，**只合并软删除标记**（本地已删除不会被旧备份复活）。
     导入在单个独占事务里重写九张表，并在事务内核对行数 + `PRAGMA foreign_key_check`，
@@ -133,7 +137,7 @@ src/theme/         设计令牌
 - 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`
 - 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `isVisibleRecord`）、`src/domain/validation.ts`（含 `requireNotFuture`、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `observedCycleLength` / `predictNextCycle`）、`src/domain/backup.ts`（备份格式契约 `BACKUP_FORMAT` / 严格解析 `parseBackup` / 引用完整性 `assertBackupIntegrity` / 合并 `mergeBackup` / 稳定排序 `sortBackupData` / 文件名 `backupFileName`）
 - 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / `softDelete` / `restore` / `remove` 真删）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 导出用的 `listAll`）、`cycleDefinitionRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`）
-- 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `RecordRow` / `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `CycleDefinitionForm`）、`src/features/stats/aggregate.ts`（统计聚合，纯函数）、`src/features/backup/csv.ts`（记录 CSV）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
+- 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `RecordRow` / `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `CycleDefinitionForm`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数）、`src/features/stats/labels.ts`（对比的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
 - 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴 + 撤销，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/cycles.tsx`、`src/app/(tabs)/settings.tsx`（诊断 + 备份与恢复）、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/records/deleted.tsx`（回收站）、`src/app/events/[id].tsx`、`src/app/cycles/[id].tsx`、`src/app/cycle-instances/[id].tsx`
 - 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`
 
@@ -150,22 +154,24 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ 静态检查、291 个单元用例（真实内存 SQLite）、iOS 打包（3.1MB）。
+- ✅ 静态检查、319 个单元用例（真实内存 SQLite）、iOS 打包（3.1MB）。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go 58.0.5）：5 个标签页 + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
 - ❌ **没有手动走通写入路径**：本机无法自动化点击（模拟器未授予辅助功能权限），所以「点一下记录」
   「删除并撤销」「回收站恢复/永久删除的二次确认」「导出 JSON/CSV 的分享面板」「从备份导入的文件选择器」
-  「改周期边界时的越界预演」都只由单元测试覆盖，没有真手点过。也**没在 Android 与真机上跑过**。
+  「改周期边界时的越界预演」「统计页的对比切换」都只由单元测试覆盖，没有真手点过。
+  也**没在 Android 与真机上跑过**。
 - ❌ 界面交互的自动化测试（项目暂无组件测试）。
 - ❌ 导入导出的**文件层面**未验证：`expo-file-system` / `expo-sharing` / `expo-document-picker`
   只保证「能打包」，没有真机验证过「文件存得下来、选得回来」。
 
 ## 9. 下一步任务：第二阶段剩余项
 
-「回收站与永久删除」、「导入导出」与「周期功能的增强（预测依据 / 边界预演）」都已完成
+「回收站与永久删除」、「导入导出」、「周期功能的增强（预测依据 / 边界预演）」与
+「统计的增强（环比 / 同比）」都已完成
 （见 `docs/learning/13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、
-`11-cycle-tracking.md` 的 4.2 与 4.8 节）。剩下的候选按推荐顺序：
+`11-cycle-tracking.md` 的 4.2 与 4.8 节、`12-statistics.md` 的 3.9–3.11 节）。剩下的候选按推荐顺序：
 
 ### 9.1 周期功能的增强（推荐，穿插）
 
@@ -179,9 +185,12 @@ src/theme/         设计令牌
 
 ### 9.2 统计的增强（可选，穿插）
 
-- 目前只做「按天 / 按周」的条数与合计，没有环比/同比。
+已完成：环比 / 同比对比（窗口对齐、差值与变化率、对照期为 0 时不给百分比，见
+`docs/learning/12-statistics.md` 的 3.9–3.11、4.6 节）。剩下：
+
 - 统计页一次性读取全部记录再做聚合（没有把时间范围下推到 SQL）；若记录量很大，可在仓储层加
-  `occurred_at` 范围过滤后再聚合，纯函数接口不用变。
+  `occurred_at` 范围过滤后再聚合，纯函数接口不用变。对比同样是对两个窗口各扫一遍，值得一起压测。
+- 「按周」的本期包含还没过完的本周；可考虑另给一个「只比已结束的周」的口径（现在没有，因为那偏外推）。
 
 ### 9.3 导入导出的收尾（可选）
 
@@ -203,6 +212,7 @@ src/theme/         设计令牌
 - **时间轴只取最近 100 条**：已用 `FlatList` 虚拟化，但没有分页 / 无限滚动；更早的记录要去事件页看。
 - **统计页全量读取记录**：`EventRecordRepository.list()` 无上限，记录很多时会一次性读进内存再聚合；
   可在仓储层加 `occurred_at` 范围过滤后再聚合（纯函数接口不用变，见第 9.2 节）。
+  对比（`compareWindows` / `compareDefinitions`）会对两个窗口各扫一遍全量记录，同样受益。
 - **撤销状态不跨页面**：离开页面后撤销入口消失（记录仍是软删除状态）。若要跨页面持久化，按 `docs/learning/06` 3.9 评估（优先 `Context + useReducer`，不要直接上第三方库）。
 - **补录采用的是文本输入而非原生日期选择器**：因为原生 picker 不在 Expo Go 内置，会强制引入 development build。
   若将来接受 dev build，可再评估 `@react-native-community/datetimepicker`。
@@ -228,11 +238,12 @@ src/theme/         设计令牌
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：21 套件 / 291 用例通过
+npm run verify             # 应为：22 套件 / 319 用例通过
 npx expo export --platform ios   # 应能打包（3.1MB 左右）
 npm start                  # Expo Go 扫码，手动走一遍：
                            #   建事件 → 记录 → 补录 → 看时间轴 → 删除并撤销 → 归档/删除定义
                            #   切到「统计」：看概览 / 按天按周趋势 / 按事件统计；删一条记录再看数字是否变化
+                           #   统计页切「较前一段 / 较上年同期」：对照窗口日期应相隔 52 周；对照期为空时不该出现百分比
                            #   时间轴删一条 → 进「回收站」→ 恢复 / 永久删除（应弹二次确认）
                            #   建周期定义 → 开始新周期 → 记某天的阶段/症状 → 结束周期
                            #   再开第二段（间隔不同）→ 回定义详情看预测是否按「实际间隔」给，且写明依据
