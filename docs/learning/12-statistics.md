@@ -20,20 +20,26 @@
 
 数据库 schema **没有变化，仍为 v4**：统计不新建表、不加列，纯从 `event_records` 现算。
 
-**本次明确不做**：导入导出、事件记录的永久删除入口、周期日历月视图、按症状统计。
+**本次明确不做**：导入导出、事件记录的永久删除入口、周期日历月视图（后来做完，见
+[11 周期](./11-cycle-tracking.md) 4.10 节）、按症状统计（后来做完，见本文第 3.12、4.8 节）。
 
 **后来补的增强**（本文档已同步，见第 3.9、4.6 节）：
 
 - 加了**环比 / 同比对比**：`recentComparisonWindows` 算出「本期」与「对照期」两个窗口，
   `compareWindows` / `compareDefinitions` 给出差值与变化率。
 - 明确了一条纪律：**对照期没有记录时不编造百分比**（除数为 0，变化率返回 `undefined`）。
+- 统计页多了「**周期症状**」卡片（第 3.12、4.8 节）：从周期内记录的 `symptoms` 汇总，
+  与事件记录是两套事实、两个纯函数聚合器，空状态也因此改判。
 
 ## 2. 改了哪些文件
 
 | 文件 | 角色 | 本次新增/修改 |
 | --- | --- | --- |
 | `src/features/stats/aggregate.ts` | 统计聚合（纯函数） | **新增**：`aggregateByDefinition` / `aggregateByDay` / `aggregateByWeek` / `summarize`；后来补上 `recentComparisonWindows` / `summarizeWindow` / `compareWindows` / `compareDefinitions` |
-| `src/features/stats/labels.ts` | 展示文案（纯函数） | **后来新增**：对比的说法（`describeComparison` / `describeDefinitionChange` / `formatDelta` / `formatRate`） |
+| `src/features/stats/symptoms.ts` | 症状统计（纯函数） | **后来新增**：`aggregateSymptoms` / `summarizeSymptoms`（输入是周期记录，不是事件记录） |
+| `src/features/stats/labels.ts` | 展示文案（纯函数） | **后来新增**：对比的说法（`describeComparison` / `describeDefinitionChange` / `formatDelta` / `formatRate`）与症状说法（`formatSymptomRatio` / `describeSymptomSummary` / `describeSymptomTotal`） |
+| `src/features/cycles/SymptomStatsCard.tsx` | 通用卡片 | **后来新增**：症状统计卡片（定义详情页与统计页共用；放 `features/cycles` 是因为数据是周期记录） |
+| `src/features/stats/__tests__/symptoms-test.ts` | 测试 | **后来新增**：9 个症状统计用例 |
 | `src/features/stats/__tests__/aggregate-test.ts` | 测试 | **新增**：14 个用例；后来补 15 个窗口对比用例 |
 | `src/app/(tabs)/stats.tsx` | 页面 | **新增**：统计标签页 |
 | `src/app/(tabs)/_layout.tsx` | 导航 | 新增「统计」标签（时间轴 / 统计 / 事件 / 周期 / 设置） |
@@ -202,6 +208,25 @@
 **用在哪**：`ComparisonSummary` 里只有条数差与条数变化率；`DefinitionChange` 也只有 `currentCount` / `previousCount`。
 
 **不用会怎样**：出现「比上周多 500」这种把毫升和公里加在一起的说法。
+
+### 3.12 周期里的症状是另一套事实，但统计口径要一致
+
+**是什么**：统计页除了事件记录，还汇总**周期内记录**里的症状（`aggregateSymptoms`）：
+每个症状出现过多少天、占「记了症状的记录数」的比例。
+
+**为什么另写一份而不是塞进 `aggregate.ts`**：输入根本不同——事件记录带**发生时刻**与取值，
+要分桶、要算单位、要做窗口对比；周期记录只有**哪一天** + 一个症状文本数组，
+既没有取值也没有单位。硬凑一个接口只会让两边都变复杂。相同的是**纪律**：
+
+1. **只算可见记录**（软删除的不算，`isVisibleEntry` 兜底）——与 3.2 同一条；
+2. **敢说算不出来**：一条症状都没记时，比例返回 `undefined`，界面不显示百分比——与 3.10 同一条；
+3. **不替使用者做归一**：`头痛` 与 `头疼` 是两种症状，没有词典就不合并，
+   界面上如实列出，改名 / 合并交给使用者自己决定。
+
+**用在哪**：周期定义详情页的「症状统计」卡片、统计页的「周期症状」卡片（同一份纯函数 + 同一个展示组件）。
+
+**不用会怎样**：要么把症状硬塞进「事件」模型（一天一条、没有时刻，模型会变扭），
+要么在界面上各算一份（两处口径迟早不一致）。
 
 ## 4. 关键代码逐段解释
 
@@ -408,25 +433,73 @@ const subtitle = [`${eventKindLabel(total.kind)} · ${total.recordCount} 条`, c
 而行内的对比是**窗口内**的。卡片副标题里写明了这一点
 （「累计 N 个事件，按条数排序；行内变化是上面窗口的对比」）。
 
+### 4.8 按症状统计（`src/features/stats/symptoms.ts`）
+
+```ts
+export function aggregateSymptoms(entries: readonly CycleEntry[]): SymptomTotal[] {
+  const counts = new Map<string, number>();
+  let withSymptomsCount = 0;
+
+  for (const entry of entries) {
+    if (!isVisibleEntry(entry)) continue;          // 软删除不算
+    const unique = uniqueSymptoms(entry);          // 去空、去首尾空白、当天去重
+    if (unique.length === 0) continue;
+    withSymptomsCount += 1;                        // 只给「记了症状的记录」进分母
+    for (const symptom of unique) counts.set(symptom, (counts.get(symptom) ?? 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .map(([symptom, dayCount]) => ({
+      symptom,
+      dayCount,
+      ratio: withSymptomsCount === 0 ? undefined : dayCount / withSymptomsCount,
+    }))
+    .sort((a, b) => b.dayCount - a.dayCount || a.symptom.localeCompare(b.symptom));
+}
+```
+
+三点值得留意：
+
+- **分母是 `withSymptomsCount`，不是 `entries.length`**。把「没记症状的天」算进分母，
+  「头痛 3 天」会被稀释成看起来很罕见——那句话的意思应该是「在这 3 天里有头痛」。
+- **一条都没记时 `ratio` 是 `undefined`**，不是 0；文案函数 `formatSymptomRatio` 据此返回 `undefined`，
+  界面就不显示百分比（与 3.10 同一条纪律）。
+- **排序是「条数降序 → 名称」**：`localeCompare` 让同样的输入产生同样的顺序，便于断言与阅读。
+
+`summarizeSymptoms` 与它共用同一套「可见 + 当天去重」的口径，给出
+`entryCount` / `withSymptomsCount` / `distinctSymptoms`，界面上是卡片副标题那一行
+（「5 条记录，其中 3 条记了症状，共 2 种」）——**先讲底数，再讲比例**，否则百分比会被误读成
+「占全部记录」。
+
+数据从哪来：`CycleEntryRepository.listVisible(definitionId?)`——
+不传定义是全部（统计页），传定义是这个周期定义下的记录（定义详情页）。
+**导出用的 `listAll` 仍带软删除**，两者在仓储注释里写明差别。
+
 ## 5. 一次完整数据流：记录几次后打开统计
 
 ```mermaid
 flowchart TD
   A[用户点「统计」标签] --> B[StatsScreen useFocusEffect]
   B --> C[EventRecordRepository.list 默认过滤 deleted_at IS NULL]
+  B --> N[CycleEntryRepository.listVisible 同样过滤软删除]
   C --> D[得到 EventRecord 数组]
   D --> E[summarize 概览]
   D --> F[aggregateByDefinition 按事件]
   D --> G[aggregateByDay / aggregateByWeek 趋势]
   D --> K[compareWindows / compareDefinitions 对比]
+  N --> S[aggregateSymptoms / summarizeSymptoms 按症状]
   E --> H[渲染概览卡片]
   F --> I[渲染按事件统计]
   G --> J[渲染趋势条]
   K --> L[渲染对比结论与「较前一段 / 较上年同期」]
+  S --> M[渲染「周期症状」卡片]
 ```
 
 关键点：**没有任何写库**。仓储只做「过滤软删除 + 读出事实记录」，聚合与对比全在纯函数里
 （对比窗口由 `recentComparisonWindows` 现算，长度与趋势图共用同一个 `RANGES`）。
+事件记录与周期记录是**两套事实、两个聚合器**：前者按时刻分桶、算单位与窗口对比，
+后者只有「哪一天」+ 症状数组，汇总成「哪些症状常见」。
+两者共用同一条纪律：只算可见记录、算不出来就不给数字。
 
 ## 6. 如何验证
 
@@ -447,7 +520,7 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
 | --- | --- |
 | `npm run typecheck` | 通过 |
 | `npm run lint` | 通过（0 error / 0 warning） |
-| `npm test` | **22 个套件 / 319 个用例通过**（含后来补的 28 个对比用例） |
+| `npm test` | **24 个套件 / 381 个用例通过**（统计相关含后来补的 28 个对比用例、9 个症状用例） |
 | `npm run format:check` | 通过 |
 | `npx expo export --platform ios` | 通过（js bundle 3.1MB） |
 
@@ -467,7 +540,12 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
 - **逐事件对比**：本期/对照期条数与差值、名字取窗口内最新快照、排序规则、
   两个窗口都没出现过的定义不进结果、排除软删除。
 - **对比文案**（`labels-test.ts`）：`+3` / `-3` / `±0` 与百分比格式；
-  三种措辞（有记录给百分比、对照期为空说「无法算变化率」、两边都空明说）。
+  三种措辞（有记录给百分比、对照期为空说「无法算变化率」、两边都空明说）；
+  以及症状文案 `33%` / `1 天 · 100%` 与「先讲底数」的那一行。
+- **按症状**（`symptoms-test.ts`）：条数从多到少、同条数按名称排；**比例分母是「记了症状的记录数」**
+  （没记症状的天不进分母）；同一天重复写同一个症状只算一次；去空去空白；
+  不做同义归一（`头痛` / `头疼` 分开）；排除软删除；没有任何症状时返回空数组而不是除以 0；
+  `summarizeSymptoms` 的 `entryCount` / `withSymptomsCount` / `distinctSymptoms`。
 
 > 测试用**本地时间字段**构造 `Date` 再转 ISO（见 `makeRecord` 的 `at` 参数），
 > 因此无论测试机在哪个时区，断言里的日期都成立——测试不依赖运行环境时区。
@@ -477,7 +555,11 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
 - **没有组件/界面测试**：统计页、趋势条、时间轴 `FlatList` 的渲染没有自动化用例。
   对比新增的两个 `Chip`（较前一段 / 较上年同期）与那句对比文案也**没有界面测试**——
   文案逻辑由 `labels-test.ts` 覆盖，但「点一下真的会切」只能靠人看。
-- **没有在模拟器/真机上手动走过本次功能**：与前几项一致，只做静态检查、单元测试与打包。
+- **没有在模拟器/真机上手动走过「统计」这项功能本身**：与前几项一致，只做静态检查、单元测试与打包。
+  （后来用 Maestro 补了「对比 Chip 切换」`06` 与「月视图保存后症状统计更新」`08`，
+  见 [15 端到端](./15-maestro-e2e.md)。）
+- **症状统计没有时间窗口**：`aggregateSymptoms` 只吃「一组记录」，界面给的是全量
+  （定义页按定义、统计页按全部），没有「最近 N 段 / 某个区间」的口径。
 - **没有大数据量压测**：`FlatList` 的收益是原理上的，尚未用上千条记录实测。
   对比是对两个窗口各扫一遍记录，记录很多时同样值得压测（见 `HANDOFF` 技术债）。
 
@@ -533,6 +615,17 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
 **不是矛盾**：行里的数字是**累计**条数（有史以来），对比文案是**窗口内**的对比（见 4.7）。
 卡片副标题已经写明这一点。
 
+### 问题：只用周期、几乎不记事件，统计页会不会是空的
+
+**不会**：空状态只在「事件记录与周期记录**都**为空」时才显示。
+只要周期里记过症状，底部就有「周期症状」卡片（只列前 5 种，剩下的在周期定义页看）。
+
+### 问题：「周期症状」里的百分比加起来不是 100%
+
+**正常**：同一天可以记多个症状，所以每个症状各自算「出现在几天」，
+百分比之和自然可能超过 100%（一个人一天可以又头痛又乏力）。
+分母是「记了症状的记录数」，不是全部周期记录数（见 3.12）。
+
 ## 8. 学习总结与练习
 
 **掌握的核心概念**
@@ -545,6 +638,9 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
 - 对比的难点在**窗口对齐**，不在减法：把「跟谁比、比多长」定义清楚，
   结果才能和趋势图对得上（3.9）；「52 周」比「一个自然年」更适合按周的粒度。
 - 口径要写在界面上：累计与窗口内是两个数字，混在一起用户就会以为统计错了（4.7）。
+- **两套事实、两个聚合器、同一条纪律**：周期症状既不该硬塞进事件模型，也不该在界面上各算一份；
+  写第二份聚合器时，把「只算可见记录」「算不出来就不给数字」这些纪律**照抄一遍**（3.12）。
+- 百分比要先说清分母：`ratio` 的分母与它的说明文字必须一起来，否则「3 天」会被读成「很少见」。
 - `FlatList` 的虚拟化把「容器」和「行」的职责分开，`ListHeaderComponent` /
   `ListEmptyComponent` 负责原本 `ScrollView` 里塞在上下两端的部分。
 
@@ -558,5 +654,10 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
    确认对比那句话变成「无法算变化率」，而不是出现 `+100%`。
 6. **验证同比对齐**：把「按天」窗口切到「较上年同期」，看对照窗口的起止日期——
    相隔正好 364 天，星期几与本期相同。
+7. **验证症状口径**：在周期里记两天（一天记「头痛」，一天记「头痛、乏力」），
+   看定义页「症状统计」——`头痛 2 天 · 100%`、`乏力 1 天 · 50%`；再去掉一天的症状再记一次，
+   观察分母（「记了症状的记录数」）跟着变，而不是总记录数。
+8. **只记周期不记事件**：想象一个只用周期功能的使用者——统计页应仍能看到「周期症状」卡片；
+   想清楚为什么空状态要改成「两套数据都为空」才显示（提示：`hasData` / `hasCycleData`）。
 
 以上练习都不改动已验收代码的结构，可以放心做。

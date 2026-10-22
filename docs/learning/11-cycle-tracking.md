@@ -32,8 +32,11 @@
 - 预测不再只看配置值：改成「最近若干段实际间隔的平均」，并把**依据**（算出来的 / 按配置推的）显示出来。
 - 越界提示提前到保存之前：界面用已加载的记录 + 同一个纯函数实时预演，
   因此删掉了仓储里那个重复的只读查询 `listOutsideEntryDates`（规则只留一份）。
+- **月视图（可点选的日历）**：实例页多了一张「月视图」卡片，点某一天 = 把那一天填进同一个表单（第 4.10 节）。
 
-**本次明确不做**：日历式可点选的月视图、按症状统计、周期与事件的统一时间轴。
+**当时明确不做、后来又做的**：日历式可点选的月视图（第 4.10 节）；按症状统计挂在统计侧，
+见 [12 统计](./12-statistics.md) 3.12 节。
+**至今仍未做**：周期与事件的统一时间轴。
 
 ## 2. 改了哪些文件
 
@@ -51,7 +54,9 @@
 | `src/features/cycles/CycleDefinitionForm.tsx` | 功能组件 | **新增**：新建 / 编辑周期定义共用表单 |
 | `src/app/(tabs)/cycles.tsx` | 页面 | **新增**：周期标签页（定义列表） |
 | `src/app/cycles/new.tsx`、`src/app/cycles/[id].tsx` | 页面 | **新增**：新建定义 / 定义详情（周期列表、开始新周期、归档、删除） |
-| `src/app/cycle-instances/[id].tsx` | 页面 | **新增**：一段周期 + 每日记录 + 边界调整 + 删除 |
+| `src/app/cycle-instances/[id].tsx` | 页面 | **新增**：一段周期 + 每日记录 + 边界调整 + 删除；后来加「月视图」卡片（第 4.10 节） |
+| `src/features/cycles/calendar.ts` | 功能组件 | **后来新增**：月视图的纯计算（`buildMonthGrid` / `shiftMonth` / `monthIntersectsRange` / `clampMonthToRange` / `indexEntriesByDate` / `describeCalendarDay`） |
+| `src/features/cycles/MonthCalendar.tsx` | 功能组件 | **后来新增**：月视图网格（纯展示，无状态） |
 | `src/app/(tabs)/_layout.tsx` | 页面 | 底部由三标签变**四标签**（时间轴 / 事件 / 周期 / 设置） |
 
 ## 3. 相关技术概念
@@ -511,6 +516,72 @@ async softDelete(id: string, now: IsoDateTime = new Date().toISOString()): Promi
 提示条里写明回收站在哪；回收站页则多了一个「已删除的周期记录」区
 （一行显示：**日期 · 所属周期与区间 · 删除时间**，带「恢复 / 永久删除」）。
 
+### 4.10 月视图：把「哪一天有记录」摊开在一个月里（日历）
+
+列表能回答「这段周期记了哪些天」，但要回答「这几周的日子密不密、哪天忘了记」得靠日历。
+实例页因此多了一张「月视图」卡片——**不落库**，每次由可见记录现算。
+
+三件事分开写，各有各的纯函数：
+
+| 层 | 文件 | 负责 |
+| --- | --- | --- |
+| 日期算术 | `src/domain/dates.ts` | `startOfMonth` / `daysInMonth` / `addMonths`（日号超出目标月份**夹到月末**）/ `weekdayIndex`（**周一为 0**） |
+| 月视图纯计算 | `src/features/cycles/calendar.ts` | 网格补白、翻月、月份与区间相交、把标记与朗读文字算出来 |
+| 摆出来 | `src/features/cycles/MonthCalendar.tsx` | 七列网格 + 上下月按钮；**无状态、无副作用** |
+
+网格的难点不在画，而在**补白**：月初要空出 `weekdayIndex(1 号)` 格才对得上一~日这行表头，
+月末补到 7 的整数倍，闰年 2 月（29 天）也不能破：
+
+```ts
+// src/features/cycles/calendar.ts
+export function buildMonthGrid(month: IsoDate): MonthCalendarCell[] {
+  const first = startOfMonth(month);
+  const yearMonth = first.slice(0, 8); // `2026-10-`
+  const lead = weekdayIndex(first);    // 2026-10-01 是周四 → 3
+  const total = daysInMonth(first);    // 31
+
+  const cells: MonthCalendarCell[] = [];
+  for (let blank = 0; blank < lead; blank += 1) cells.push({});
+  for (let day = 1; day <= total; day += 1) cells.push({ date: `${yearMonth}${padDay(day)}` });
+  while (cells.length % 7 !== 0) cells.push({});
+  return cells;
+}
+```
+
+**区间之外的日子是灰的、点不动**。这不是偷懒：仓储保存时本来就会拒绝（第 4.5 节），
+与其让使用者填完再吃一个错误，不如一开始就不给点——`isDateWithin` 判一下即可。
+同理，翻月用 `monthIntersectsRange` 判断「这个月里还有落在区间内的日子」，
+没有就禁用按钮；把边界缩走之后，界面还会用 `clampMonthToRange` 把当前月份拉回区间内，
+避免停在一整屏都不能点的月份上。
+
+**点一天 = 把那天填进同一个表单**，与点列表行是同一个入口（`editEntry` 回填、空表单只是换日期），
+所以「一天一条」的 UPSERT、区间校验、软删除仍然只有一条路：
+
+```tsx
+const pickCalendarDate = (date: string) => {
+  const existing = entries.find((entry) => entry.date === date);
+  if (existing) {
+    editEntry(existing);        // 与列表行完全一样的回填
+    return;
+  }
+  setForm({ ...EMPTY_FORM, date });   // 没有记录：只把日期换过去，等着填
+};
+```
+
+每格的**朗读文字**也由纯函数产出，形状固定（同时是自动化测试的抓手，见第 6 节）：
+
+```
+日历 2026-10-22，今天，有记录（经期，2 个症状）
+日历 2026-10-02，无记录
+日历 2026-10-30，不在周期区间内
+```
+
+前缀「日历」是有用的：每日记录列表里的行标题就是 `2026-10-02`，没有前缀两者在自动化里会撞车
+（见 [15 端到端](./15-maestro-e2e.md) 的选择器一节）。
+
+标记（哪几天有记录、有几天症状）由 `indexEntriesByDate` 在**可见记录**上算：
+软删除的那天不出现在月视图上，与列表、统计口径一致。
+
 ## 5. 一次完整数据流：把结束日提前，但那天有记录
 
 ```mermaid
@@ -551,14 +622,18 @@ npx expo export --platform ios           # 打包（不需要模拟器）
 ### 真实跑过的结果
 
 ```bash
-npm test    # 22 个套件 / 338 个用例通过（含预测与边界预演增强、v5 软删除）
+npm test    # 24 个套件 / 381 个用例通过（含预测与边界预演增强、v5 软删除、月视图）
 npx expo export --platform ios   # 通过（js bundle 3.1MB）
-maestro test .maestro/flows      # 8/8 通过（含周期边界预演与周期记录软删除，见 docs/learning/15）
+maestro test .maestro/flows      # 9/9 通过（含周期边界预演、周期记录软删除、月视图选日期，见 docs/learning/15）
 ```
 
 其中与周期直接相关的用例：
 
-- `src/domain/__tests__/dates-test.ts`：格式、闰年、2 月 31 日、跨月跨年、闭区间、进行中只约束下界。
+- `src/domain/__tests__/dates-test.ts`：格式、闰年、2 月 31 日、跨月跨年、闭区间、进行中只约束下界；
+  以及月视图用的 `startOfMonth` / `daysInMonth`（平年闰年 2 月）/ `addMonths`（跨年、**日号夹到月末**）/ `weekdayIndex`（周一为 0、周日为 6）。
+- `src/features/cycles/__tests__/calendar-test.ts`：格子数是 7 的整数倍、2026-10 补 3 格且 1 号在第 4 格、
+  2024-02 含 29 日、日期连续；`monthLabel` / `shiftMonth` / `monthIntersectsRange` / `clampMonthToRange`；
+  `indexEntriesByDate` 跳过软删除；`describeCalendarDay` 四种形状。
 - `src/domain/__tests__/cycles-test.ts`：`findDatesOutside`、`rangesOverlap`（含进行中）、长度；
   以及 `observedCycleLength`（取最近 N 个间隔、不足两段不猜、乱序不影响结果）与
   `predictNextCycle`（观察值优先于配置值、退回配置值、两者都没有则不预测）。
@@ -572,7 +647,8 @@ maestro test .maestro/flows      # 8/8 通过（含周期边界预演与周期�
   以及**回收站里的记录不挡边界**（软删除之后可以缩到它外面，未删的那条被完整保留）。
 - `src/repositories/__tests__/cycleEntryRepository-test.ts`：UPSERT 更新同一天（`id` 不变、`created_at` 不变）、
   区间外被拒且不写库、症状去空去重、空数组存成 `'[]'`；v5 的软删除幂等、
-  恢复幂等、「保存即复活」、`listDeleted` 的顺序与上下文、恢复被区间拒绝（失败后仍是软删除状态）。
+  恢复幂等、「保存即复活」、`listDeleted` 的顺序与上下文、恢复被区间拒绝（失败后仍是软删除状态）；
+  以及 `listVisible`（跨实例只返回可见记录、传定义 id 只返回该定义的记录、不存在的定义返回空数组）。
 
 ### 测试覆盖了什么
 
@@ -597,14 +673,15 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
 ### 没覆盖什么（诚实记录）
 
 - **当时没有在模拟器 / 真机上手动运行过**：本项与第二阶段其它项一样，只做了静态检查、单元测试与打包验证。
-  （后来用 Maestro 在真实界面上补了点：周期边界预演 `05`、周期记录软删除 `07`，见
+  （后来用 Maestro 在真实界面上补了点：周期边界预演 `05`、周期记录软删除 `07`、月视图选日期 `08`，见
   [15 端到端](./15-maestro-e2e.md)；Android 与真机仍未跑。）
 - **没有组件 / 界面测试**：项目至今没有引入 `@testing-library/react-native`，
-  所以「点某一行回填表单」「`Alert` 二次确认」这些交互没有自动化验证。
-- **边界预演与软删除只有端到端覆盖**：`outsideDates` 用的是被单测覆盖的纯函数 `findDatesOutside`，
-  「输入没填完整时不提示」「提示文案带出了哪些日期」与「软删除 → 撤销 → 回收站恢复」这些
-  交互层结论，只有 Maestro 流程（`05` / `07`，见 [15](./15-maestro-e2e.md)）在真实界面上断言过，
-  没有组件级断言。
+  所以「点某一行回填表单」「`Alert` 二次确认」「点日历的某一格」这些交互没有自动化验证。
+- **边界预演、软删除与月视图只有端到端覆盖**：`outsideDates` 用的是被单测覆盖的纯函数 `findDatesOutside`，
+  「输入没填完整时不提示」「提示文案带出了哪些日期」「软删除 → 撤销 → 回收站恢复」与
+  「点某一天之后那格变成『有记录』」这些交互层结论，只有 Maestro 流程（`05` / `07` / `08`，
+  见 [15](./15-maestro-e2e.md)）在真实界面上断言过，没有组件级断言。
+  （`buildMonthGrid` / `describeCalendarDay` 这些**纯计算**本身是有单测的，缺的是「组件确实按它渲染」。）
 - **没有并发测试**：`withExclusiveTransactionAsync` 的行为在真实设备上与测试环境可能不同。
 
 ## 7. 常见问题与排查
@@ -655,6 +732,23 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
 只有软删除期间这段周期的边界又被缩小、导致那天落在区间外时，「恢复」才会被拒绝并说明原因
 （先把边界改回来，或彻底删除它）。详见 [13](./13-permanent-delete-and-trash.md) 第 6 节。
 
+### 问题：月视图里有些日子点不动
+
+那是**区间之外**的日子（灰掉、点不动）。仓储保存时本来也会拒绝，
+不如一开始就不给点。把那段周期的边界改到包含这天，或者把那一天记到正确的周期里。
+
+### 问题：点了月视图里的某天，怎么没有那天的记录
+
+点一天不会凭空造记录。那天**已经记过**就把内容回填到下方表单（等同于点列表行）；
+**没记过**只是把表单的日期换成那天，等填完点「保存记录」才有记录。
+所以点完可以看卡片下方那行 `当前选中：2026-10-02`，它是表单当前日期，不是「已保存」。
+
+### 问题：症状统计里的百分比是怎么算的
+
+分母是**「记了症状的记录数」**，不是全部记录数——「头痛出现在 3 天」的意思是
+「在这 3 天里有头痛」，不该把「没记症状的天」也算进分母。同一天里重复写的同一个症状只算一次；
+`头痛` 与 `头疼` 算两种（不做同义归一）。详见 [12 统计](./12-statistics.md) 3.12 节。
+
 ## 8. 学习总结与练习
 
 本项练习到的能力：
@@ -672,6 +766,11 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
   备份的完整性检查、UPSERT 的「复活」语义——每一条都要跟着更新，否则规则之间会互相矛盾
   （第 4.9 节那张表）。
 - **字典序即时间序**：定长 `YYYY-MM-DD` 字符串可以直接比较，不必转 `Date`。
+- **把「月历」拆成三层**：日期算术（`domain/dates.ts`）→ 网格与标记的纯计算（`features/cycles/calendar.ts`）
+  → 只会摆的组件（`MonthCalendar.tsx`）。补白、闰年、翻月边界因此都能单测，组件没有状态。
+- **「点一天」不新开一条路**：复用同一个表单与 `editEntry`，所以保存 / 校验 / 软删除的规则不需要写第二遍。
+- **给无障碍文字定一个固定形状**：`日历 2026-10-22，今天，有记录（经期，2 个症状）` 既是读屏文案，
+  也是自动化里唯一能点准那一格的抓手——顺手解决的问题，比事后补选择器便宜。
 - **三层下钻路由**与 `typedRoutes` 的重新生成。
 
 可以自己动手的练习：
@@ -685,3 +784,9 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
    `findOverlappingInstance`，数据是同一份 `definitionInstances`）。试着把它也提前到保存之前。
 4. 想一想：如果允许「周期实例换定义」（把一段周期从「生理期」改到另一个定义），
    需要额外校验什么？为什么本项选择**不允许**？
+5. `buildMonthGrid` 现在只补白到周一、只按 7 的整数倍收尾。试试写一个
+   「周视图」（只渲染某一周 7 格）或「年视图」（12 个小月历），要求仍然**先写纯函数再写组件**：
+   哪些函数可以复用？哪些必须新写？（提示：`startOfMonth` / `weekdayIndex` / `addMonths` 都还能用。）
+6. 月视图目前把「有记录」和「有症状」画成底色 + 小圆点。如果要画「阶段」（例如经期/排卵期用不同颜色），
+   需要改哪一层？（提示：`indexEntriesByDate` 已经把 `phase` 带出来了，缺的是颜色映射——那属于主题，
+   不该塞进纯计算。）
