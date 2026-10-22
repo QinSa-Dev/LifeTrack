@@ -115,7 +115,7 @@ describe('CycleEntryRepository', () => {
     });
   });
 
-  it('删除某一天的记录；不存在时抛 NotFoundError', async () => {
+  it('永久删除某一天的记录；不存在时抛 NotFoundError', async () => {
     const saved = await entries.save(instanceId, { date: '2026-10-02' }, T1);
     await entries.remove(saved.id);
 
@@ -129,5 +129,93 @@ describe('CycleEntryRepository', () => {
     await entries.remove(saved.id);
 
     expect(await instances.getById(instanceId)).not.toBeNull();
+  });
+
+  describe('软删除与恢复（v5）', () => {
+    it('软删除后不再出现在实例列表里，但行还在库里（备份要带上）', async () => {
+      const saved = await entries.save(instanceId, { date: '2026-10-02', phase: '经期' }, T1);
+
+      const deleted = await entries.softDelete(saved.id, T2);
+
+      expect(deleted.deletedAt).toBe(T2);
+      // 界面用的列表看不到
+      expect(await entries.listByInstance(instanceId)).toEqual([]);
+      // 导出用的全量仍在，且带着删除标记
+      expect(await entries.listAll()).toEqual([deleted]);
+      expect((await entries.getById(saved.id))?.deletedAt).toBe(T2);
+    });
+
+    it('重复软删除是幂等的：保留第一次的删除时间', async () => {
+      const saved = await entries.save(instanceId, { date: '2026-10-02' }, T1);
+
+      await entries.softDelete(saved.id, T1);
+      const again = await entries.softDelete(saved.id, T2);
+
+      expect(again.deletedAt).toBe(T1);
+    });
+
+    it('删除不存在的记录抛 NotFoundError', async () => {
+      await expect(entries.softDelete('missing', T2)).rejects.toThrow(NotFoundError);
+      await expect(entries.restore('missing')).rejects.toThrow(NotFoundError);
+    });
+
+    it('恢复后重新出现在列表里，删除标记被清掉', async () => {
+      const saved = await entries.save(instanceId, { date: '2026-10-02', phase: '经期' }, T1);
+      await entries.softDelete(saved.id, T2);
+
+      const restored = await entries.restore(saved.id);
+
+      expect(restored.deletedAt).toBeUndefined();
+      expect(restored.phase).toBe('经期');
+      expect(await entries.listByInstance(instanceId)).toEqual([restored]);
+      // 已经恢复的再恢复一次也是幂等的
+      expect(await entries.restore(saved.id)).toEqual(restored);
+    });
+
+    it('保存被软删除的那一天会把它复活（不会出现「说保存成功、列表里却没有」）', async () => {
+      const saved = await entries.save(instanceId, { date: '2026-10-02', symptoms: ['头痛'] }, T1);
+      await entries.softDelete(saved.id, T2);
+
+      const revived = await entries.save(instanceId, { date: '2026-10-02', symptoms: ['乏力'] }, T2);
+
+      expect(revived.id).toBe(saved.id);
+      expect(revived.deletedAt).toBeUndefined();
+      expect(revived.symptoms).toEqual(['乏力']);
+      expect((await entries.listByInstance(instanceId)).map((entry) => entry.date)).toEqual(['2026-10-02']);
+    });
+
+    it('边界缩到软删除记录之外后：恢复被拒绝并说明原因（不造出区间外的记录）', async () => {
+      const saved = await entries.save(instanceId, { date: '2026-10-04' }, T1);
+      await entries.softDelete(saved.id, T1);
+      // 软删除的记录不挡边界，所以这里能缩到 10-02
+      await instances.update(instanceId, { startDate: '2026-10-01', endDate: '2026-10-02' }, T2);
+
+      await expect(entries.restore(saved.id)).rejects.toThrow(ValidationError);
+      // 失败后仍是软删除状态，没有留下半成品
+      expect((await entries.getById(saved.id))?.deletedAt).toBe(T1);
+      expect(await entries.listByInstance(instanceId)).toEqual([]);
+    });
+
+    it('listDeleted 带上所属定义与实例区间，按删除时间倒序', async () => {
+      const first = await entries.save(instanceId, { date: '2026-10-02' }, T1);
+      const second = await entries.save(instanceId, { date: '2026-10-03' }, T1);
+      await entries.softDelete(first.id, T1);
+      await entries.softDelete(second.id, T2);
+
+      const trashed = await entries.listDeleted();
+
+      expect(trashed.map((item) => item.entry.date)).toEqual(['2026-10-03', '2026-10-02']);
+      expect(trashed[0]).toMatchObject({
+        definitionName: '生理期',
+        instanceStartDate: '2026-10-01',
+        instanceEndDate: '2026-10-05',
+      });
+      expect(trashed[0]?.entry.deletedAt).toBe(T2);
+    });
+
+    it('listDeleted 在没有任何软删除记录时返回空数组', async () => {
+      await entries.save(instanceId, { date: '2026-10-02' }, T1);
+      expect(await entries.listDeleted()).toEqual([]);
+    });
   });
 });

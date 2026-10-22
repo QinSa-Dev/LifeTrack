@@ -128,6 +128,29 @@ describe('CycleInstanceRepository', () => {
     });
   });
 
+  it('回收站里的记录不挡边界：软删除之后可以缩到它外面', async () => {
+    const created = await create({ startDate: '2026-10-01', endDate: '2026-10-10' });
+    const kept = await entries.save(created.id, { date: '2026-10-02' }, T1);
+    const trashed = await entries.save(created.id, { date: '2026-10-08' }, T1);
+
+    // 没软删除时 10-08 会挡住缩减
+    await expect(
+      instances.update(created.id, { startDate: '2026-10-01', endDate: '2026-10-05' }, T2),
+    ).rejects.toThrow(ConflictError);
+
+    await entries.softDelete(trashed.id, T2);
+
+    const updated = await instances.update(
+      created.id,
+      { startDate: '2026-10-01', endDate: '2026-10-05' },
+      T2,
+    );
+    expect(updated.endDate).toBe('2026-10-05');
+    // 未删除的那条被完整保留，软删除的那条也还在库里（只是不再可见）
+    expect((await entries.listByInstance(created.id)).map((entry) => entry.id)).toEqual([kept.id]);
+    expect((await entries.listAll()).map((entry) => entry.id).sort()).toEqual([kept.id, trashed.id].sort());
+  });
+
   it('更新成与其它实例重叠时拒绝', async () => {
     const first = await create({ startDate: '2026-09-01', endDate: '2026-09-05' });
     await create({ startDate: '2026-10-01', endDate: '2026-10-05' });

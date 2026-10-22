@@ -374,6 +374,41 @@ describe('parseBackup', () => {
     ).toThrow(/data\.cycleEntries\[0\]\.date/);
   });
 
+  it('周期记录的软删除标记：缺失即「未删除」，写了就照原样读回', () => {
+    const parsed = parseBackup(
+      rawFile({
+        cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+        cycleInstances: [jsonOf(makeCycleInstance(1))],
+        // v5 之前的备份里没有 deletedAt 这个字段
+        cycleEntries: [jsonOf(makeCycleEntry(1))],
+      }),
+    );
+    expect(parsed.data.cycleEntries[0]?.deletedAt).toBeUndefined();
+
+    const withFlag = parseBackup(
+      rawFile({
+        cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+        cycleInstances: [jsonOf(makeCycleInstance(1))],
+        cycleEntries: [{ ...jsonOf(makeCycleEntry(1)), deletedAt: T1 }],
+      }),
+    );
+    expect(withFlag.data.cycleEntries[0]?.deletedAt).toBe(T1);
+  });
+
+  it('已软删除的周期记录允许落在实例区间外（缩走边界后它就在外面）', () => {
+    // 同一条记录、同一个越界日期：未删除时拒绝，已软删除时放行——
+    // 否则 App 自己导出的备份会在导入时被自己拒绝
+    expect(() =>
+      parseBackup(
+        rawFile({
+          cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+          cycleInstances: [jsonOf(makeCycleInstance(1))],
+          cycleEntries: [{ ...jsonOf(makeCycleEntry(1, { date: '2026-10-09' })), deletedAt: T1 }],
+        }),
+      ),
+    ).not.toThrow();
+  });
+
   it('主键重复 / 周期记录同一天重复都被拒绝', () => {
     expect(() => parseBackup(rawFile({ eventGroups: [jsonOf(makeGroup(1)), jsonOf(makeGroup(1))] }))).toThrow(
       /id 重复/,
@@ -489,6 +524,26 @@ describe('mergeBackup', () => {
     const incoming = fixtureData({ eventRecords: [makeRecord(1, { deletedAt: T2 })] });
 
     expect(mergeBackup(local, incoming).data.eventRecords[0]?.deletedAt).toBe(T2);
+  });
+
+  it('周期记录：删除状态跟着 updatedAt 走（较新的一方胜出）', () => {
+    // 备份里删得更晚 → 合进来
+    const local = fixtureData({ cycleEntries: [makeCycleEntry(1, { updatedAt: T1 })] });
+    const incoming = fixtureData({
+      cycleEntries: [makeCycleEntry(1, { updatedAt: T3, deletedAt: T3 })],
+    });
+    const merged = mergeBackup(local, incoming);
+    expect(merged.data.cycleEntries[0]?.deletedAt).toBe(T3);
+    expect(merged.summary.collections.cycleEntries).toEqual({ added: 0, updated: 1, kept: 0 });
+
+    // 本地删得更晚 → 不被备份复活
+    const deletedLocal = fixtureData({
+      cycleEntries: [makeCycleEntry(1, { updatedAt: T3, deletedAt: T3 })],
+    });
+    const stale = fixtureData({ cycleEntries: [makeCycleEntry(1, { updatedAt: T1 })] });
+    const kept = mergeBackup(deletedLocal, stale);
+    expect(kept.data.cycleEntries[0]?.deletedAt).toBe(T3);
+    expect(kept.summary.collections.cycleEntries.updated).toBe(0);
   });
 
   it('结果按固定顺序排序，且不修改入参', () => {

@@ -193,12 +193,33 @@ export const MIGRATION_V4_CYCLE: Migration = {
   ],
 };
 
+/**
+ * v5：周期内记录也能软删除（第二阶段第 6 项）。
+ *
+ * v4 里 `cycle_entries` 是**真删**，防手滑只能靠二次确认。现在补 `deleted_at`，
+ * 与 `event_records` 的软删除对齐：周期页的删除先变成软删除（可撤销），
+ * 由回收站决定恢复还是永久删除。
+ *
+ * 为什么不改 v4：迁移一旦在别人的库上跑过就是历史，改它等于让两份历史分叉；
+ * 而且 `ALTER TABLE ... ADD COLUMN` 正是 SQLite 支持的增量操作——
+ * 旧行自动是 NULL，语义天然是「未删除」，不需要回填。
+ *
+ * 不加 `deleted_at` 索引：回收站一次只列出软删除的行（数量很小），
+ * 按实例查记录走的是已有的 `idx_cycle_entries_instance_date`。
+ */
+export const MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE: Migration = {
+  version: 5,
+  name: 'cycle_entry_soft_delete',
+  statements: [`ALTER TABLE cycle_entries ADD COLUMN deleted_at TEXT;`],
+};
+
 /** 全部迁移，顺序即执行顺序。 */
 export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V1_BASELINE,
   MIGRATION_V2_EVENT_DEFINITIONS,
   MIGRATION_V3_EVENT_RECORDS,
   MIGRATION_V4_CYCLE,
+  MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE,
 ];
 
 /** 当前应用支持的 schema 版本。 */

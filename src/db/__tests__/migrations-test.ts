@@ -6,6 +6,7 @@ import {
   MIGRATION_V2_EVENT_DEFINITIONS,
   MIGRATION_V3_EVENT_RECORDS,
   MIGRATION_V4_CYCLE,
+  MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE,
 } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { MigrationError } from '@/domain/errors';
@@ -38,7 +39,7 @@ describe('迁移清单校验', () => {
 
   it('当前仓库的迁移清单是合法的', () => {
     expect(() => validateMigrations(MIGRATIONS)).not.toThrow();
-    expect(LATEST_SCHEMA_VERSION).toBe(4);
+    expect(LATEST_SCHEMA_VERSION).toBe(5);
   });
 });
 
@@ -56,8 +57,8 @@ describe('runMigrations', () => {
   it('全新数据库：建表并提升 user_version', async () => {
     const result = await runMigrations(db, MIGRATIONS);
 
-    expect(result).toEqual({ from: 0, to: 4, applied: [1, 2, 3, 4] });
-    expect(await readSchemaVersion(db)).toBe(4);
+    expect(result).toEqual({ from: 0, to: 5, applied: [1, 2, 3, 4, 5] });
+    expect(await readSchemaVersion(db)).toBe(5);
     expect(tableExists(db, 'app_meta')).toBe(true);
     expect(tableExists(db, 'event_definitions')).toBe(true);
     expect(tableExists(db, 'event_records')).toBe(true);
@@ -83,7 +84,7 @@ describe('runMigrations', () => {
     await runMigrations(db, MIGRATIONS);
     const second = await runMigrations(db, MIGRATIONS);
 
-    expect(second).toEqual({ from: 4, to: 4, applied: [] });
+    expect(second).toEqual({ from: 5, to: 5, applied: [] });
   });
 
   it('数据库版本高于应用支持版本时拒绝启动，且不破坏数据', async () => {
@@ -261,7 +262,7 @@ describe('v2 事件定义结构', () => {
     ).toThrow();
   });
 
-  it('从已含 v1 数据的旧库升级：只跑 v2、v3、v4，旧数据不丢', async () => {
+  it('从已含 v1 数据的旧库升级：只跑 v2 之后的迁移，旧数据不丢', async () => {
     const legacy = createTestDatabase();
     try {
       await runMigrations(legacy, [MIGRATION_V1_BASELINE]);
@@ -269,8 +270,8 @@ describe('v2 事件定义结构', () => {
 
       const result = await runMigrations(legacy, MIGRATIONS);
 
-      expect(result).toEqual({ from: 1, to: 4, applied: [2, 3, 4] });
-      expect(await readSchemaVersion(legacy)).toBe(4);
+      expect(result).toEqual({ from: 1, to: 5, applied: [2, 3, 4, 5] });
+      expect(await readSchemaVersion(legacy)).toBe(5);
       expect(legacy.rawGet("SELECT value FROM app_meta WHERE key = 'keep'")).toEqual({ value: 'me' });
       expect(tableExists(legacy, 'event_definitions')).toBe(true);
       expect(tableExists(legacy, 'event_records')).toBe(true);
@@ -475,6 +476,113 @@ describe('v4 周期结构', () => {
         fresh.rawExec(statement);
       }
       expect(tableExists(fresh, 'cycle_entries')).toBe(true);
+    } finally {
+      fresh.close();
+    }
+  });
+});
+
+describe('v5 周期记录软删除', () => {
+  let db: TestDatabase;
+
+  beforeEach(async () => {
+    db = createTestDatabase();
+    await runMigrations(db, MIGRATIONS);
+    db.rawExec(
+      `INSERT INTO cycle_definitions (id, name, created_at, updated_at)
+       VALUES ('cd1', '生理期', 'now', 'now')`,
+    );
+    db.rawExec(
+      `INSERT INTO cycle_instances (id, definition_id, start_date, created_at, updated_at)
+       VALUES ('ci1', 'cd1', '2026-10-01', 'now', 'now')`,
+    );
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function insertEntry(id: string, date: string): void {
+    db.rawExec(
+      `INSERT INTO cycle_entries (id, instance_id, date, created_at, updated_at)
+       VALUES ('${id}', 'ci1', '${date}', 'now', 'now')`,
+    );
+  }
+
+  it('cycle_entries 多出 deleted_at 列，默认是 NULL（等于「未删除」）', () => {
+    const columns = db.rawAll<{ name: string; notnull: number; dflt_value: string | null }>(
+      'PRAGMA table_info(cycle_entries)',
+    );
+    const deletedAt = columns.find((column) => column.name === 'deleted_at');
+    expect(deletedAt).toBeDefined();
+    // 可空：旧行升级后天然是「未删除」，不需要回填
+    expect(deletedAt?.notnull).toBe(0);
+    expect(deletedAt?.dflt_value).toBeNull();
+  });
+
+  it('从已经写入 v4 数据的旧库升级：老记录一条不少，且都视为未删除', async () => {
+    const legacy = createTestDatabase();
+    try {
+      await runMigrations(legacy, [
+        MIGRATION_V1_BASELINE,
+        MIGRATION_V2_EVENT_DEFINITIONS,
+        MIGRATION_V3_EVENT_RECORDS,
+        MIGRATION_V4_CYCLE,
+      ]);
+      legacy.rawExec(
+        `INSERT INTO cycle_definitions (id, name, created_at, updated_at)
+         VALUES ('cd1', '生理期', 'now', 'now')`,
+      );
+      legacy.rawExec(
+        `INSERT INTO cycle_instances (id, definition_id, start_date, created_at, updated_at)
+         VALUES ('ci1', 'cd1', '2026-10-01', 'now', 'now')`,
+      );
+      legacy.rawExec(
+        `INSERT INTO cycle_entries (id, instance_id, date, created_at, updated_at)
+         VALUES ('ce1', 'ci1', '2026-10-02', 'now', 'now')`,
+      );
+
+      const result = await runMigrations(legacy, MIGRATIONS);
+
+      expect(result).toEqual({ from: 4, to: 5, applied: [5] });
+      expect(legacy.rawGet("SELECT deleted_at FROM cycle_entries WHERE id = 'ce1'")).toEqual({
+        deleted_at: null,
+      });
+    } finally {
+      legacy.close();
+    }
+  });
+
+  it('软删除只是写一个时间戳：记录行本身不受影响', () => {
+    insertEntry('ce1', '2026-10-02');
+
+    db.rawExec("UPDATE cycle_entries SET deleted_at = 'deleted-now' WHERE id = 'ce1'");
+
+    expect(db.rawGet("SELECT date, deleted_at FROM cycle_entries WHERE id = 'ce1'")).toEqual({
+      date: '2026-10-02',
+      deleted_at: 'deleted-now',
+    });
+  });
+
+  it('一天一条的 UNIQUE 约束不受软删除影响（同一天仍不能有两行）', () => {
+    insertEntry('ce1', '2026-10-02');
+    db.rawExec("UPDATE cycle_entries SET deleted_at = 'deleted-now' WHERE id = 'ce1'");
+
+    expect(() => insertEntry('ce2', '2026-10-02')).toThrow();
+  });
+
+  it('v5 语句本身可独立执行（在只有 v4 结构的库上）', () => {
+    const fresh = createTestDatabase();
+    try {
+      for (const statement of MIGRATION_V4_CYCLE.statements ?? []) {
+        fresh.rawExec(statement);
+      }
+      for (const statement of MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE.statements ?? []) {
+        fresh.rawExec(statement);
+      }
+
+      const columns = fresh.rawAll<{ name: string }>('PRAGMA table_info(cycle_entries)');
+      expect(columns.some((column) => column.name === 'deleted_at')).toBe(true);
     } finally {
       fresh.close();
     }

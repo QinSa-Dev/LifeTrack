@@ -394,6 +394,11 @@ function parseCycleEntry(value: unknown, path: string): CycleEntry {
     note: textOrUndefined(row.note, `${path}.note`),
     createdAt: dateTime(row.createdAt, `${path}.createdAt`),
     updatedAt: dateTime(row.updatedAt, `${path}.updatedAt`),
+    // 可选字段：v5 之前导出的备份没有这一项，缺失即「未删除」
+    deletedAt:
+      row.deletedAt === undefined || row.deletedAt === null
+        ? undefined
+        : dateTime(row.deletedAt, `${path}.deletedAt`),
   };
 }
 
@@ -457,7 +462,13 @@ export function assertBackupIntegrity(data: BackupData): void {
     }
     entryKeys.add(key);
     // 领域规则：周期记录的日期必须落在实例区间内（否则会变成「属于这个周期却在这个周期之外」的脏数据）
-    if (!isEntryWithinRange(entry.date, { startDate: instance.startDate, endDate: instance.endDate })) {
+    // 例外：已软删除的记录可以落在区间外——软删除的记录不挡边界，边界缩走之后
+    // 回收站里那条本来就在外面（restore 时会重新校验）。不放行的话，App 自己导出的备份
+    // 会在导入时被自己拒绝。
+    if (
+      entry.deletedAt === undefined &&
+      !isEntryWithinRange(entry.date, { startDate: instance.startDate, endDate: instance.endDate })
+    ) {
       fail(
         `${path}.date`,
         `${entry.date} 不在周期实例的区间内（${instance.startDate} ~ ${instance.endDate ?? '进行中'}）`,

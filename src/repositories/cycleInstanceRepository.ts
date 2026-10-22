@@ -213,10 +213,16 @@ export class CycleInstanceRepository {
     });
   }
 
-  /** 有记录落在新区间外就抛 ConflictError——这就是「不静默删除」的落点。 */
+  /**
+   * 有记录落在新区间外就抛 ConflictError——这就是「不静默删除」的落点。
+   *
+   * 只看**未软删除**的记录：已经躺在回收站里的那几天不该阻止用户缩小边界，
+   * 否则会出现「被一条看不见的记录卡住」这种说不通的状态。
+   * （软删除期间缩走边界后想恢复那条记录，`CycleEntryRepository.restore` 会说明原因。）
+   */
   private async assertNoOutsiders(txn: SqlExecutor, instanceId: string, range: DateRange): Promise<void> {
     const rows = await txn.getAllAsync<DateRow>(
-      'SELECT date FROM cycle_entries WHERE instance_id = ? ORDER BY date ASC',
+      'SELECT date FROM cycle_entries WHERE instance_id = ? AND deleted_at IS NULL ORDER BY date ASC',
       instanceId,
     );
     const outside = findDatesOutside(

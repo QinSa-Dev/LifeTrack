@@ -150,6 +150,26 @@ describe('BackupRepository.exportAll', () => {
       serializeBackup(await context.backup.exportAll(T1)),
     );
   });
+
+  it('软删除的周期记录也导出（备份必须无损）', async () => {
+    await seed(context);
+    const instance = (await context.instances.list())[0];
+    if (!instance) {
+      throw new Error('夹具数据缺失：周期实例');
+    }
+    const entry = (await context.entries.listByInstance(instance.id))[0];
+    if (!entry) {
+      throw new Error('夹具数据缺失：周期记录');
+    }
+    await context.entries.softDelete(entry.id, T4);
+
+    const file = await context.backup.exportAll(T1);
+
+    // 界面上看不到，但备份里带着删除标记
+    expect(await context.entries.listByInstance(instance.id)).toEqual([]);
+    expect(file.data.cycleEntries).toHaveLength(1);
+    expect(file.data.cycleEntries[0]?.deletedAt).toBe(T4);
+  });
 });
 
 describe('BackupRepository.importAll', () => {
@@ -254,6 +274,38 @@ describe('BackupRepository.importAll', () => {
 
       expect((await target.records.list({ onlyDeleted: true })).map((record) => record.value)).toEqual([2]);
       expect((await target.records.list()).map((record) => record.value)).toEqual([1]);
+    } finally {
+      target.db.close();
+    }
+  });
+
+  it('周期记录的软删除状态也随备份往返', async () => {
+    await seed(context);
+    const instance = (await context.instances.list())[0];
+    if (!instance) {
+      throw new Error('夹具数据缺失：周期实例');
+    }
+    const entry = (await context.entries.listByInstance(instance.id))[0];
+    if (!entry) {
+      throw new Error('夹具数据缺失：周期记录');
+    }
+    await context.entries.softDelete(entry.id, T4);
+
+    const file = parseBackup(await exportToText(context));
+
+    const target = await setup();
+    try {
+      await target.backup.importAll(file);
+
+      const targetInstance = (await target.instances.list())[0];
+      if (!targetInstance) {
+        throw new Error('导入后没有周期实例');
+      }
+      expect(await target.entries.listByInstance(targetInstance.id)).toEqual([]);
+      const trashed = await target.entries.listDeleted();
+      expect(trashed.map((item) => item.entry.date)).toEqual(['2026-10-02']);
+      expect(trashed[0]?.entry.deletedAt).toBe(T4);
+      expect(trashed[0]?.definitionName).toBe('生理期');
     } finally {
       target.db.close();
     }

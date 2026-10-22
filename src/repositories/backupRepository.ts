@@ -266,8 +266,8 @@ export class BackupRepository {
 
     for (const entry of data.cycleEntries) {
       await txn.runAsync(
-        `INSERT INTO cycle_entries (id, instance_id, date, phase, symptoms, feelings, note, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO cycle_entries (id, instance_id, date, phase, symptoms, feelings, note, created_at, updated_at, deleted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         entry.id,
         entry.instanceId,
         entry.date,
@@ -277,6 +277,7 @@ export class BackupRepository {
         entry.note ?? null,
         entry.createdAt,
         entry.updatedAt,
+        entry.deletedAt ?? null,
       );
     }
   }

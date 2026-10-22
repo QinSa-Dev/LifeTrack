@@ -155,11 +155,33 @@ export interface CycleEntry {
   note?: string;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
+  /** 软删除标记：设置后视为已删除，可撤销恢复 */
+  deletedAt?: IsoDateTime;
+}
+
+/**
+ * 回收站里的一条周期记录。
+ *
+ * 周期记录本身只有「哪一天」，光看它说不清是哪个周期的哪一天，
+ * 所以带上所属实例与定义的名字，让回收站里的每一行都能自证来历。
+ */
+export interface DeletedCycleEntry {
+  entry: CycleEntry;
+  /** 所属周期定义的名字（例如「生理期」） */
+  definitionName: string;
+  /** 所属实例的区间，用来说清这条记录属于哪一段 */
+  instanceStartDate: IsoDate;
+  instanceEndDate?: IsoDate;
 }
 
 /** 只有未软删除的记录参与展示与统计 */
 export function isVisibleRecord(record: EventRecord): boolean {
   return record.deletedAt === undefined;
+}
+
+/** 周期记录同理：软删除的那天不再参与展示、统计与「边界越界」判断 */
+export function isVisibleEntry(entry: CycleEntry): boolean {
+  return entry.deletedAt === undefined;
 }
 
 /** 归档不影响历史，只影响「能否新建记录」的入口 */
