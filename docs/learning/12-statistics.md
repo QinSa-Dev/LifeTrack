@@ -30,18 +30,21 @@
 - 明确了一条纪律：**对照期没有记录时不编造百分比**（除数为 0，变化率返回 `undefined`）。
 - 统计页多了「**周期症状**」卡片（第 3.12、4.8 节）：从周期内记录的 `symptoms` 汇总，
   与事件记录是两套事实、两个纯函数聚合器，空状态也因此改判。
+- **把时间范围下推给 SQL**（第 3.13 节）：趋势与对比只读窗口内的记录（`list({ from, until })`
+  + `statsReadRange`），累计口径的概览与按事件统计仍读全量；聚合规则**没有**搬进 SQL。
 
 ## 2. 改了哪些文件
 
 | 文件 | 角色 | 本次新增/修改 |
 | --- | --- | --- |
-| `src/features/stats/aggregate.ts` | 统计聚合（纯函数） | **新增**：`aggregateByDefinition` / `aggregateByDay` / `aggregateByWeek` / `summarize`；后来补上 `recentComparisonWindows` / `summarizeWindow` / `compareWindows` / `compareDefinitions` |
+| `src/features/stats/aggregate.ts` | 统计聚合（纯函数） | **新增**：`aggregateByDefinition` / `aggregateByDay` / `aggregateByWeek` / `summarize`；后来补上 `recentComparisonWindows` / `summarizeWindow` / `compareWindows` / `compareDefinitions`，以及窗口长度的唯一来源 `TREND_RANGES` 与「至少要读到哪一段」的 `statsReadRange`（3.13） |
 | `src/features/stats/symptoms.ts` | 症状统计（纯函数） | **后来新增**：`aggregateSymptoms` / `summarizeSymptoms`（输入是周期记录，不是事件记录） |
 | `src/features/stats/labels.ts` | 展示文案（纯函数） | **后来新增**：对比的说法（`describeComparison` / `describeDefinitionChange` / `formatDelta` / `formatRate`）与症状说法（`formatSymptomRatio` / `describeSymptomSummary` / `describeSymptomTotal`） |
 | `src/features/cycles/SymptomStatsCard.tsx` | 通用卡片 | **后来新增**：症状统计卡片（定义详情页与统计页共用；放 `features/cycles` 是因为数据是周期记录） |
+| `src/repositories/eventRecordRepository.ts` | 仓储 | **后来修改**：`list` 支持 `from` / `until`，把时间范围下推给 SQL（3.13） |
 | `src/features/stats/__tests__/symptoms-test.ts` | 测试 | **后来新增**：9 个症状统计用例 |
-| `src/features/stats/__tests__/aggregate-test.ts` | 测试 | **新增**：14 个用例；后来补 15 个窗口对比用例 |
-| `src/app/(tabs)/stats.tsx` | 页面 | **新增**：统计标签页 |
+| `src/features/stats/__tests__/aggregate-test.ts` | 测试 | **新增**：14 个用例；后来补 15 个窗口对比用例、4 个 `statsReadRange` 用例与 1 个下推一致性用例 |
+| `src/app/(tabs)/stats.tsx` | 页面 | **新增**：统计标签页；后来改为两段读取（全量给累计卡片、`from`/`until` 给趋势与对比），并把一次加载的 `now` 贯穿到底（4.4） |
 | `src/app/(tabs)/_layout.tsx` | 导航 | 新增「统计」标签（时间轴 / 统计 / 事件 / 周期 / 设置） |
 | `src/components/ListRow.tsx` | 通用 UI | 新增可选 `divider`（默认显示底部分隔线） |
 | `src/features/records/RecordRow.tsx` | 功能组件 | 透传 `divider` |
@@ -228,6 +231,46 @@
 **不用会怎样**：要么把症状硬塞进「事件」模型（一天一条、没有时刻，模型会变扭），
 要么在界面上各算一份（两处口径迟早不一致）。
 
+### 3.13 把「时间范围」下推给 SQL，而不是把「聚合」搬进 SQL
+
+**是什么**：趋势与对比只看窗口内的记录，所以用 `list({ from, until })` 让 SQL 直接把范围外的行
+滤掉（走已有的 `idx_event_records_occurred_at`）；「至少要读到哪一天」由纯函数 `statsReadRange`
+算出来，界面照它去读。
+
+**为什么值得**：统计页原本**一次读全表**，然后让 5 个纯函数各扫一遍——趋势与对比的那 3 遍
+（`aggregateByDay` / `compareWindows` / `compareDefinitions`）其实只看窗口，扫全表纯属浪费。
+实测（Node 内置 SQLite、2 万条记录、6 个定义）：
+
+| 环节 | 下推前 | 下推后 |
+| --- | --- | --- |
+| `list()` 全量读 + 映射 | 43ms | 43ms（概览 / 按事件统计仍需要） |
+| `summarize` + `aggregateByDefinition`（累计） | 35ms | 35ms |
+| `aggregateByDay` + `compareWindows` + `compareDefinitions`（窗口） | **71ms** | **7ms**（只扫窗口内的 3464 条） |
+| 合计 | **163ms** | **89ms** |
+
+**为什么不干脆把聚合也搬进 SQL**：那确实能到 ~18ms，但「取最近一条记录的快照名」「所有记录
+单位一致才给单位」「条数相同时按名称排序」这些规则现在都集中在纯函数里、各有单测；搬进
+`GROUP BY` 之后，同一套规则要在 SQL 里再写一遍（快照并列怎么取、`unit` 的 `NULL` 与 `''` 怎么算、
+时间戳带 `+08:00` 偏移时 `MAX(occurred_at)` 不是最大）。**规则只写一遍**比省这 70ms 重要，
+所以本次只下推**范围**，聚合仍留在纯函数里。
+
+**两条刻意的设计**：
+
+1. **边界只求超集**：`statsReadRange` 取四种窗口（按天/按周 × 环比/同比）的并集，再按 UTC 零点
+   前后各留一天。边界不需要精确，因为「某个时刻属于哪一天」仍由纯函数按**设备本地时区**判定
+   （`localDateText`），多读的行会被过滤掉——这样这里不必关心时区偏移与夏令时。
+2. **取并集而不是当前那一种**：读一次就够，切换「按天/按周」「较前一段/较上年同期」只是重新算，
+   不必再查库。
+
+```ts
+const range = statsReadRange(now);   // { from: '2025-08-31T00:00:00.000Z', until: '2026-10-27T00:00:00.000Z' }
+await records.list({ from: range.from, until: range.until });
+```
+
+这条假设（范围是超集 ⇒ 数字一模一样）有回归用例压着：同一批跨两年的记录，喂全量与只喂
+`statsReadRange` 内的记录，`compareWindows` / `compareDefinitions` / `aggregateByDay` /
+`aggregateByWeek` 的结果必须 `toEqual`。
+
 ## 4. 关键代码逐段解释
 
 ### 4.1 可见性与分桶（`src/features/stats/aggregate.ts`）
@@ -312,19 +355,40 @@ export function aggregateByDay(records, rangeDays, now = new Date().toISOString(
 
 ### 4.4 界面：统计标签页（`src/app/(tabs)/stats.tsx`）
 
-页面自己不做聚合，只负责「读数据 → 调纯函数 → 渲染」：
+页面自己不做聚合，只负责「读数据 → 调纯函数 → 渲染」。数据分**两段**读：累计口径要全量，
+窗口口径按 `statsReadRange` 下推给 SQL（见 3.13）：
+
+```tsx
+const loadedAt = new Date().toISOString();          // 读库、窗口、分桶共用同一个 now
+const range = statsReadRange(loadedAt);
+const recordRepository = new EventRecordRepository(db);
+Promise.all([
+  recordRepository.list(),                          // 全量：概览 / 按事件统计（累计口径）
+  recordRepository.list({ from: range.from, until: range.until }), // 窗口：趋势 / 对比
+  new CycleEntryRepository(db).listVisible(),
+]);
+```
 
 ```tsx
 const summary = useMemo(() => summarize(records), [records]);
 const definitions = useMemo(() => aggregateByDefinition(records), [records]);
 const periods = useMemo(
-  () => (mode === 'day' ? aggregateByDay(records, RANGES.day) : aggregateByWeek(records, RANGES.week)),
-  [records, mode],
+  () =>
+    mode === 'day'
+      ? aggregateByDay(recentRecords, TREND_RANGES.day, now)
+      : aggregateByWeek(recentRecords, TREND_RANGES.week, now),
+  [recentRecords, mode, now],
 );
-// 对比窗口与趋势窗口共用同一个 RANGES，所以「趋势」与「对比」说的是同一段时间
-const windows = useMemo(() => recentComparisonWindows(mode, RANGES[mode], basis), [mode, basis]);
-const comparison = useMemo(() => compareWindows(records, windows), [records, windows]);
+// 对比窗口与趋势窗口共用同一个 TREND_RANGES，所以「趋势」与「对比」说的是同一段时间
+const windows = useMemo(
+  () => recentComparisonWindows(mode, TREND_RANGES[mode], basis, now),
+  [mode, basis, now],
+);
+const comparison = useMemo(() => compareWindows(recentRecords, windows), [recentRecords, windows]);
 ```
+
+把 `now` 一起存进 state 是为了**一个 `now` 贯穿一次加载**：否则读库时算的是「最近 14 天」、
+分桶时可能已经跨零点算成 15 天，出现「读了却没摆出来」的桶。
 
 趋势条用 `flex` 表达比例，避免依赖字符串百分比宽度：
 
@@ -480,13 +544,16 @@ export function aggregateSymptoms(entries: readonly CycleEntry[]): SymptomTotal[
 ```mermaid
 flowchart TD
   A[用户点「统计」标签] --> B[StatsScreen useFocusEffect]
-  B --> C[EventRecordRepository.list 默认过滤 deleted_at IS NULL]
+  B --> R[statsReadRange 算出要读到哪一段]
+  B --> C[EventRecordRepository.list 全量：过滤 deleted_at IS NULL]
+  R --> W[EventRecordRepository.list from/until 只取窗口内的行]
   B --> N[CycleEntryRepository.listVisible 同样过滤软删除]
-  C --> D[得到 EventRecord 数组]
+  C --> D[得到全量 EventRecord 数组]
+  W --> P[得到窗口内 EventRecord 数组]
   D --> E[summarize 概览]
   D --> F[aggregateByDefinition 按事件]
-  D --> G[aggregateByDay / aggregateByWeek 趋势]
-  D --> K[compareWindows / compareDefinitions 对比]
+  P --> G[aggregateByDay / aggregateByWeek 趋势]
+  P --> K[compareWindows / compareDefinitions 对比]
   N --> S[aggregateSymptoms / summarizeSymptoms 按症状]
   E --> H[渲染概览卡片]
   F --> I[渲染按事件统计]
@@ -495,8 +562,9 @@ flowchart TD
   S --> M[渲染「周期症状」卡片]
 ```
 
-关键点：**没有任何写库**。仓储只做「过滤软删除 + 读出事实记录」，聚合与对比全在纯函数里
-（对比窗口由 `recentComparisonWindows` 现算，长度与趋势图共用同一个 `RANGES`）。
+关键点：**没有任何写库**。仓储只做「过滤软删除 + 按范围滤行 + 读出事实记录」，
+聚合与对比全在纯函数里（对比窗口由 `recentComparisonWindows` 现算，长度与趋势图共用同一个
+`TREND_RANGES`；「至少要读到哪一段」由 `statsReadRange` 从同一份窗口定义算出来，见 3.13）。
 事件记录与周期记录是**两套事实、两个聚合器**：前者按时刻分桶、算单位与窗口对比，
 后者只有「哪一天」+ 症状数组，汇总成「哪些症状常见」。
 两者共用同一条纪律：只算可见记录、算不出来就不给数字。
@@ -520,7 +588,7 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
 | --- | --- |
 | `npm run typecheck` | 通过 |
 | `npm run lint` | 通过（0 error / 0 warning） |
-| `npm test` | **24 个套件 / 381 个用例通过**（统计相关含后来补的 28 个对比用例、9 个症状用例） |
+| `npm test` | **24 个套件 / 388 个用例通过**（统计相关含后来补的 28 个对比用例、9 个症状用例、7 个窗口下推用例） |
 | `npm run format:check` | 通过 |
 | `npx expo export --platform ios` | 通过（js bundle 3.1MB） |
 
@@ -546,6 +614,11 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
   （没记症状的天不进分母）；同一天重复写同一个症状只算一次；去空去空白；
   不做同义归一（`头痛` / `头疼` 分开）；排除软删除；没有任何症状时返回空数组而不是除以 0；
   `summarizeSymptoms` 的 `entryCount` / `withSymptomsCount` / `distinctSymptoms`。
+- **窗口下推**（`aggregate-test.ts`）：`statsReadRange` 覆盖四种窗口的并集（断言具体边界）、
+  对每种窗口都满足「不早于窗口起点、不晚于窗口终点」、大约读到一年出头；
+  以及一致性回归——同一批跨两年的记录，喂全量与只喂范围之内的记录，趋势与对比的结果必须相同。
+  仓储那边另外覆盖 `list({ from, until })` 的半开区间语义、只给一侧、与 `includeDeleted` /
+  `definitionId` / `limit` 叠加、非法时间戳抛错。
 
 > 测试用**本地时间字段**构造 `Date` 再转 ISO（见 `makeRecord` 的 `at` 参数），
 > 因此无论测试机在哪个时区，断言里的日期都成立——测试不依赖运行环境时区。
@@ -560,8 +633,10 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
   见 [15 端到端](./15-maestro-e2e.md)。）
 - **症状统计没有时间窗口**：`aggregateSymptoms` 只吃「一组记录」，界面给的是全量
   （定义页按定义、统计页按全部），没有「最近 N 段 / 某个区间」的口径。
-- **没有大数据量压测**：`FlatList` 的收益是原理上的，尚未用上千条记录实测。
-  对比是对两个窗口各扫一遍记录，记录很多时同样值得压测（见 `HANDOFF` 技术债）。
+- **压测只在测试环境做过一次**：3.13 节那张表是 Node 内置 SQLite + 2 万条合成记录的实测，
+  不是真机、也没有用真实使用数据；`FlatList` 的收益仍是原理上的（时间轴只取 100 条，
+  没到需要压测的量级）。
+- **「累计」那一半没有下推**：概览与按事件统计仍要读全量，见 3.13 与 `HANDOFF` 技术债。
 
 ## 7. 常见问题与排查
 
@@ -626,6 +701,17 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
 百分比之和自然可能超过 100%（一个人一天可以又头痛又乏力）。
 分母是「记了症状的记录数」，不是全部周期记录数（见 3.12）。
 
+### 问题：统计页会不会把几万条记录都读进内存
+
+**不会全读**：趋势与对比只读「一年出头」那一段（`statsReadRange`，见 3.13），
+累计口径的「概览」与「按事件统计」才需要全量。所以记录攒到几万条时，统计页仍然是
+「一次全量 + 一次窗口」，而不是「全量读好几遍」。
+
+### 问题：为什么趋势图只看最近两周 / 两个月
+
+**设计如此**：窗口长度（`TREND_RANGES`）是趋势与对比共用的，切换粒度只换单位、不换长度，
+所以「趋势」和「对比」说的永远是同一段时间（3.9、4.7）。要看更早的，去时间轴或事件页翻。
+
 ## 8. 学习总结与练习
 
 **掌握的核心概念**
@@ -641,6 +727,10 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
 - **两套事实、两个聚合器、同一条纪律**：周期症状既不该硬塞进事件模型，也不该在界面上各算一份；
   写第二份聚合器时，把「只算可见记录」「算不出来就不给数字」这些纪律**照抄一遍**（3.12）。
 - 百分比要先说清分母：`ratio` 的分母与它的说明文字必须一起来，否则「3 天」会被读成「很少见」。
+- **先测量，再决定优化哪儿**：统计页看着「全是聚合」，压测之后才知道浪费在「窗口函数扫全表」，
+  而不是在聚合本身（3.13）。没有数字的优化，很容易把规则从纯函数搬进 SQL 换个说法叫「加速」。
+- **下推范围 ≠ 下推规则**：范围只要**是超集**就安全（多读的行会被纯函数筛掉），
+  规则一旦搬进 SQL 就得再写一遍——前者便宜且可逆，后者贵且容易漂。
 - `FlatList` 的虚拟化把「容器」和「行」的职责分开，`ListHeaderComponent` /
   `ListEmptyComponent` 负责原本 `ScrollView` 里塞在上下两端的部分。
 
@@ -659,5 +749,8 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
    观察分母（「记了症状的记录数」）跟着变，而不是总记录数。
 8. **只记周期不记事件**：想象一个只用周期功能的使用者——统计页应仍能看到「周期症状」卡片；
    想清楚为什么空状态要改成「两套数据都为空」才显示（提示：`hasData` / `hasCycleData`）。
+9. **自己压一次**：临时造 2 万条记录（一条 `WITH RECURSIVE` 的 INSERT 就够），
+   分别给 `list()` 与 `list({ from, until })` 计时，再看 `EXPLAIN QUERY PLAN` 是不是
+   `SEARCH ... USING INDEX idx_event_records_occurred_at`——顺手验证 3.13 那张表。
 
 以上练习都不改动已验收代码的结构，可以放心做。

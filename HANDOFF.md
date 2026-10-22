@@ -22,7 +22,7 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 24 个套件 / 381 个用例通过
+npm test             # 24 个套件 / 388 个用例通过
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（js bundle 3.1MB；本次只改 JS / 文案，无新增原生依赖）
 npx expo-doctor      # 19/20：8 个旧依赖 patch 版本漂移（与最近改动无关）
@@ -166,8 +166,8 @@ src/theme/         设计令牌
 - 迁移与 schema：`src/db/schema.ts`、`src/db/migrations.ts`
 - 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`
 - 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `isVisibleRecord` / `isVisibleEntry` / `DeletedCycleEntry`）、`src/domain/validation.ts`（含 `requireNotFuture`、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `observedCycleLength` / `predictNextCycle`）、`src/domain/backup.ts`（备份格式契约 `BACKUP_FORMAT` / 严格解析 `parseBackup` / 引用完整性 `assertBackupIntegrity` / 合并 `mergeBackup` / 稳定排序 `sortBackupData` / 文件名 `backupFileName`）
-- 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / `softDelete` / `restore` / `remove` 真删）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`cycleDefinitionRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`）
-- 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `RecordRow` / `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `CycleDefinitionForm` / `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
+- 仓储：`src/repositories/eventDefinitionRepository.ts`、`eventRecordRepository.ts`（记录 / 补录 / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until`）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`cycleDefinitionRepository.ts`、`eventGroupRepository.ts`、`tagRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`）
+- 功能组件：`src/features/definitions/`（定义表单）、`src/features/records/`（`format` / `RecordRow` / `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `CycleDefinitionForm` / `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
 - 界面：`src/app/(tabs)/definitions.tsx`、`src/app/(tabs)/index.tsx`（时间轴 + 撤销，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/cycles.tsx`、`src/app/(tabs)/settings.tsx`（诊断 + 备份与恢复）、`src/app/record/[id].tsx`（记录 / 补录）、`src/app/records/deleted.tsx`（回收站）、`src/app/events/[id].tsx`、`src/app/cycles/[id].tsx`、`src/app/cycle-instances/[id].tsx`
 - 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`
 - 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`08`（9 条流程）、`.maestro/subflows/record-once.yaml`
@@ -187,7 +187,7 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ 静态检查、381 个单元用例（真实内存 SQLite）、iOS 打包（3.1MB）。
+- ✅ 静态检查、388 个单元用例（真实内存 SQLite）、iOS 打包（3.1MB）。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go 58.0.5）：5 个标签页 + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
@@ -228,11 +228,13 @@ src/theme/         设计令牌
 ### 9.2 统计的增强（可选，穿插）
 
 已完成：环比 / 同比对比（窗口对齐、差值与变化率、对照期为 0 时不给百分比，见
-`docs/learning/12-statistics.md` 的 3.9–3.11、4.6 节）。剩下：
+`docs/learning/12-statistics.md` 的 3.9–3.11、4.6 节）、**把时间范围下推给 SQL**
+（趋势与对比只读窗口内的记录，见 `12-statistics.md` 的 3.13 节）。剩下：
 
-- 统计页一次性读取全部记录再做聚合（没有把时间范围下推到 SQL）；若记录量很大，可在仓储层加
-  `occurred_at` 范围过滤后再聚合，纯函数接口不用变。对比同样是对两个窗口各扫一遍，值得一起压测。
 - 「按周」的本期包含还没过完的本周；可考虑另给一个「只比已结束的周」的口径（现在没有，因为那偏外推）。
+- 「概览」与「按事件统计」是**累计**口径，仍要读全量（实测 2 万条记录时约占统计页耗时的一半）。
+  真要再往下压，只能把聚合本身搬进 SQL（`GROUP BY` + 快照名 / 单位一致性），那会把现在集中在
+  纯函数里的规则复制一份到 SQL——已在第 10 节记成待评估项，不顺手做。
 
 ### 9.3 导入导出的收尾（可选）
 
@@ -257,9 +259,12 @@ src/theme/         设计令牌
   但跑得慢、只能盖住主干路径；细粒度的界面交互（条件渲染、空状态、错误态）若要自动化，
   仍需 `@testing-library/react-native`。
 - **时间轴只取最近 100 条**：已用 `FlatList` 虚拟化，但没有分页 / 无限滚动；更早的记录要去事件页看。
-- **统计页全量读取记录**：`EventRecordRepository.list()` 无上限，记录很多时会一次性读进内存再聚合；
-  可在仓储层加 `occurred_at` 范围过滤后再聚合（纯函数接口不用变，见第 9.2 节）。
-  对比（`compareWindows` / `compareDefinitions`）会对两个窗口各扫一遍全量记录，同样受益。
+- **统计页的「累计」卡片要读全量**：`EventRecordRepository.list()` 无上限。趋势与对比已经把时间范围
+  下推给 SQL（`list({ from, until })` + `statsReadRange`，见 `12-statistics.md` 3.13 节），但「概览」与
+  「按事件统计」是**有史以来**的口径，仍会把全部记录读进内存再聚合（2 万条记录时，全量读 + 两个
+  累计聚合约占统计页耗时的一半）。再往下压就得把聚合搬进 SQL（`GROUP BY definition_id` + 取最近
+  一条快照 / 单位一致性），代价是同一套规则在 SQL 里再写一遍（纯函数那份 `summarize` /
+  `aggregateByDefinition` 会失去调用方）——**先测量再决定**，本次已把数字记在 3.13 节。
 - **撤销状态不跨页面**：离开页面后撤销入口消失（记录仍是软删除状态）。若要跨页面持久化，按 `docs/learning/06` 3.9 评估（优先 `Context + useReducer`，不要直接上第三方库）。
 - **软删除的周期记录可以落在实例区间外**：软删除不挡边界（这是有意的），所以「软删 → 缩边界」之后
   回收站里那条就在区间外；恢复会被拒并提示先改回边界。备份的完整性检查因此对已软删除的行放行区间校验
@@ -292,7 +297,7 @@ src/theme/         设计令牌
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：24 套件 / 381 用例通过
+npm run verify             # 应为：24 套件 / 388 用例通过
 npx expo export --platform ios   # 应能打包（3.1MB 左右）
 npm start                  # Expo Go 扫码（或走下面的自动流程）
 

@@ -181,15 +181,24 @@ sqlite3 "$DB" "select name from event_definitions where name like 'Maestro%';"  
 `05` 留下的 `Maestro周期` 每日记录还在（越界保存被拒，拒绝没有删数据）。
 收尾时把 `Maestro*` 的定义与记录删掉，库就回到使用者的 `15 条 / 1 条软删`。
 
-> 收尾时注意：`event_records` **没有指向 `event_definitions` 的外键**（历史独立于定义，
-> 见领域规则第 1 条），所以删掉 `Maestro喝水` 定义**不会**连带删掉它的记录，要显式删：
+> 收尾时注意两件事：
+>
+> 1. **`sqlite3` 命令行默认不开外键**，级联删除不会发生。先 `PRAGMA foreign_keys = ON;`，
+>    否则删掉周期定义之后，实例与每日记录会**留下来当孤儿行**（`PRAGMA foreign_key_check` 会报出来）。
+> 2. `event_records` **没有指向 `event_definitions` 的外键**（历史独立于定义，见领域规则第 1 条），
+>    所以删掉 `Maestro喝水` 定义**不会**连带删掉它的记录，要显式删。
 >
 > ```sql
-> DELETE FROM event_definitions WHERE name LIKE 'Maestro%';   -- 周期定义会级联（实例 + 记录）
-> DELETE FROM event_records WHERE snapshot_name LIKE 'Maestro%';
+> PRAGMA foreign_keys = ON;
+> DELETE FROM cycle_definitions WHERE name LIKE 'Maestro%';     -- 级联：实例 + 每日记录
+> DELETE FROM event_definitions WHERE name LIKE 'Maestro%';     -- 级联：快捷选项（记录不会跟走）
+> DELETE FROM event_records WHERE snapshot_name LIKE 'Maestro%'; -- 必须显式删
 > ```
 >
 > 删完再跑一次 `PRAGMA foreign_key_check`（应为空）核对。
+> 万一忘了开外键、留下了孤儿行，按外键方向补一次即可：
+> `DELETE FROM cycle_instances WHERE definition_id NOT IN (SELECT id FROM cycle_definitions);`
+> 再 `DELETE FROM cycle_entries WHERE instance_id NOT IN (SELECT id FROM cycle_instances);`。
 
 ## 已知限制
 
