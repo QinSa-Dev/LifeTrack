@@ -16,9 +16,12 @@
  * 3. **不同单位的值不相加成一个数**：数量型允许每条记录覆盖单位（如「1 杯」与
  *    「500 毫升」），此时合并没有意义。只有单位一致时才给出 `unit`，否则为
  *    `undefined`，界面只显示数值、不加单位。
+ *
+ * 对比（环比 / 同比）同样只用**条数**，不比较取值合计：
+ * 「上周 3 杯 + 1 公里」与「本周 2 杯 + 5 公里」在数值上不可比（第 3 条约定）。
  */
 
-import { addDays } from '@/domain/dates';
+import { addDays, daysBetween } from '@/domain/dates';
 import { ValidationError } from '@/domain/errors';
 import { isVisibleRecord, type EventDefinitionKind, type EventRecord, type IsoDate } from '@/domain/models';
 import { localDateText, shiftLocalDays } from '@/features/common/datetime';
@@ -256,4 +259,216 @@ export function summarize(records: readonly EventRecord[]): OverallSummary {
     firstDate,
     lastDate,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * 环比 / 同比：把「最近一段」与「前一段」或「上年同期」摆在一起
+ *
+ * 统计口径与上面完全一致（只算可见记录、按设备本地时区分桶），
+ * 所以对比结果与趋势图里的数字一定对得上。
+ * ------------------------------------------------------------------ */
+
+/** 一个**闭区间**的本地日历日窗口（含首尾）。 */
+export interface StatsWindow {
+  startDate: IsoDate;
+  endDate: IsoDate;
+}
+
+/** 窗口的单位：按天或按周（与趋势图的「按天 / 按周」同一套）。 */
+export type ComparisonUnit = 'day' | 'week';
+
+/** 跟谁比：前一段（环比）还是上年同期（同比）。 */
+export type ComparisonBasis = 'previous' | 'lastYear';
+
+/** 本期与对照期的窗口。 */
+export interface ComparisonWindows {
+  current: StatsWindow;
+  previous: StatsWindow;
+}
+
+/** 一个窗口内的汇总。 */
+export interface WindowSummary {
+  window: StatsWindow;
+  recordCount: number;
+  definitionCount: number;
+}
+
+/** 单个事件在两个窗口之间的变化。 */
+export interface DefinitionChange {
+  definitionId: string;
+  /** 展示名取这两个窗口里「最近一条记录」的快照名 */
+  name: string;
+  kind: EventDefinitionKind;
+  currentCount: number;
+  previousCount: number;
+  /** 本期 − 对照期（可为负；两个窗口都没记录的定义不会出现在结果里） */
+  delta: number;
+}
+
+/** 整体的对比结果。 */
+export interface ComparisonSummary {
+  current: WindowSummary;
+  previous: WindowSummary;
+  recordCountDelta: number;
+  /** 变化率（小数，如 0.3333）；**对照期为 0 时为 `undefined`**——不除零、也不编造「+100%」 */
+  recordCountRate?: number;
+  definitionDelta: number;
+}
+
+/**
+ * 「上年同期」按 **52 周（364 天）** 对齐，而不是自然年的 365/366 天。
+ *
+ * 这样对齐之后星期几完全相同，按天的窗口不会出现「今年这 14 天是周一到周日、
+ * 去年那 14 天是周三到周二」这种错位；按周的窗口也正好落在 52 周之后。
+ */
+const YEAR_ALIGN_DAYS = 364;
+
+/**
+ * 算出「本期」与「对照期」两个窗口。
+ *
+ * - 按天：本期是最近 `length` 个本地日历日（含今天）；
+ * - 按周：本期是最近 `length` 个 ISO 周（周一为起点），最后一桶是**今天所在的这一周**
+ *   （该周的周日可能还没到，与趋势图的「本周」口径一致）；
+ * - `previous`（环比）：紧挨着本期的、同样长度的前一段；
+ * - `lastYear`（同比）：把本期整体往前挪 52 周。
+ */
+export function recentComparisonWindows(
+  unit: ComparisonUnit,
+  length: number,
+  basis: ComparisonBasis = 'previous',
+  now: string = new Date().toISOString(),
+): ComparisonWindows {
+  assertRange(length);
+  const reference = parseReference(now);
+
+  let current: StatsWindow;
+  if (unit === 'day') {
+    const endDate = localDateText(reference);
+    current = { startDate: addDays(endDate, -(length - 1)), endDate };
+  } else {
+    const currentWeekStart = localWeekStart(reference);
+    current = {
+      startDate: addDays(currentWeekStart, -7 * (length - 1)),
+      endDate: addDays(currentWeekStart, 6),
+    };
+  }
+
+  const span = daysBetween(current.startDate, current.endDate) + 1;
+  const shift = basis === 'lastYear' ? YEAR_ALIGN_DAYS : span;
+  return {
+    current,
+    previous: {
+      startDate: addDays(current.startDate, -shift),
+      endDate: addDays(current.endDate, -shift),
+    },
+  };
+}
+
+/** 一个窗口内的事实汇总：条数 + 涉及多少个事件（只算可见记录）。 */
+export function summarizeWindow(records: readonly EventRecord[], window: StatsWindow): WindowSummary {
+  const definitionIds = new Set<string>();
+  let recordCount = 0;
+
+  for (const record of visibleRecords(records)) {
+    const ms = occurredAtMs(record);
+    if (ms === null) {
+      continue;
+    }
+    const date = localDateText(new Date(ms));
+    if (date < window.startDate || date > window.endDate) {
+      continue;
+    }
+    recordCount += 1;
+    definitionIds.add(record.definitionId);
+  }
+
+  return { window, recordCount, definitionCount: definitionIds.size };
+}
+
+/** 整体对比：两个窗口各自的汇总 + 条数差 + 变化率。 */
+export function compareWindows(
+  records: readonly EventRecord[],
+  windows: ComparisonWindows,
+): ComparisonSummary {
+  const current = summarizeWindow(records, windows.current);
+  const previous = summarizeWindow(records, windows.previous);
+  const recordCountDelta = current.recordCount - previous.recordCount;
+
+  return {
+    current,
+    previous,
+    recordCountDelta,
+    recordCountRate:
+      previous.recordCount === 0 ? undefined : roundValue(recordCountDelta / previous.recordCount),
+    definitionDelta: current.definitionCount - previous.definitionCount,
+  };
+}
+
+/**
+ * 逐个事件对比两个窗口：只列出**在任一窗口里出现过**的定义。
+ *
+ * 排序：本期条数从多到少 → 变化幅度从大到小 → 名称，先看「现在最多的」，
+ * 再看「动得最明显的」。
+ */
+export function compareDefinitions(
+  records: readonly EventRecord[],
+  windows: ComparisonWindows,
+): DefinitionChange[] {
+  interface Bucket {
+    currentCount: number;
+    previousCount: number;
+    latest: EventRecord;
+    latestMs: number;
+  }
+
+  const buckets = new Map<string, Bucket>();
+  const each = (window: StatsWindow, side: 'current' | 'previous') => {
+    for (const record of visibleRecords(records)) {
+      const ms = occurredAtMs(record);
+      if (ms === null) {
+        continue;
+      }
+      const date = localDateText(new Date(ms));
+      if (date < window.startDate || date > window.endDate) {
+        continue;
+      }
+      const bucket = buckets.get(record.definitionId);
+      if (!bucket) {
+        buckets.set(record.definitionId, {
+          currentCount: side === 'current' ? 1 : 0,
+          previousCount: side === 'previous' ? 1 : 0,
+          latest: record,
+          latestMs: ms,
+        });
+        continue;
+      }
+      bucket[side === 'current' ? 'currentCount' : 'previousCount'] += 1;
+      if (ms > bucket.latestMs) {
+        bucket.latest = record;
+        bucket.latestMs = ms;
+      }
+    }
+  };
+
+  // 先本期后对照期：同一条记录只会落在一个窗口里（两个窗口不重叠），
+  // 所以这里的计数不会重复。`latest` 取的是两个窗口里最新的那一条。
+  each(windows.current, 'current');
+  each(windows.previous, 'previous');
+
+  return [...buckets.entries()]
+    .map(([definitionId, bucket]) => ({
+      definitionId,
+      name: bucket.latest.snapshot.name,
+      kind: bucket.latest.kind,
+      currentCount: bucket.currentCount,
+      previousCount: bucket.previousCount,
+      delta: bucket.currentCount - bucket.previousCount,
+    }))
+    .sort(
+      (a, b) =>
+        b.currentCount - a.currentCount ||
+        Math.abs(b.delta) - Math.abs(a.delta) ||
+        a.name.localeCompare(b.name) ||
+        a.definitionId.localeCompare(b.definitionId),
+    );
 }

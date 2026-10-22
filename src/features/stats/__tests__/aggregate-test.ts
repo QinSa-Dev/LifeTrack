@@ -4,7 +4,11 @@ import {
   aggregateByDay,
   aggregateByDefinition,
   aggregateByWeek,
+  compareDefinitions,
+  compareWindows,
+  recentComparisonWindows,
   summarize,
+  summarizeWindow,
 } from '@/features/stats/aggregate';
 
 /**
@@ -217,5 +221,182 @@ describe('summarize', () => {
     expect(summary.definitionCount).toBe(0);
     expect(summary.firstDate).toBeUndefined();
     expect(summary.lastDate).toBeUndefined();
+  });
+});
+
+describe('recentComparisonWindows', () => {
+  const now = new Date(2026, 9, 19, 12, 0).toISOString(); // 本地 2026-10-19（周一）中午
+
+  it('按天：本期是最近 N 个本地日历日，环比是紧挨着的前 N 天', () => {
+    const windows = recentComparisonWindows('day', 3, 'previous', now);
+    expect(windows.current).toEqual({ startDate: '2026-10-17', endDate: '2026-10-19' });
+    expect(windows.previous).toEqual({ startDate: '2026-10-14', endDate: '2026-10-16' });
+  });
+
+  it('按天同比：整体往前挪 52 周，星期几对得上', () => {
+    const windows = recentComparisonWindows('day', 3, 'lastYear', now);
+    expect(windows.previous).toEqual({ startDate: '2025-10-18', endDate: '2025-10-20' });
+    // 2026-10-19 与 2025-10-20 都是周一
+    expect(new Date(2026, 9, 19).getDay()).toBe(new Date(2025, 9, 20).getDay());
+  });
+
+  it('按周：本期是最近 N 个 ISO 周，最后一桶是今天所在的那一周', () => {
+    const windows = recentComparisonWindows('week', 2, 'previous', now);
+    expect(windows.current).toEqual({ startDate: '2026-10-12', endDate: '2026-10-25' });
+    expect(windows.previous).toEqual({ startDate: '2026-09-28', endDate: '2026-10-11' });
+  });
+
+  it('按周同比：往前挪 52 周，正好落在同样的周一起点', () => {
+    const windows = recentComparisonWindows('week', 2, 'lastYear', now);
+    expect(windows.previous.startDate).toBe('2025-10-13');
+    expect(windows.previous.endDate).toBe('2025-10-26');
+  });
+
+  it('长度不是正整数时抛 ValidationError', () => {
+    expect(() => recentComparisonWindows('day', 0, 'previous', now)).toThrow(ValidationError);
+    expect(() => recentComparisonWindows('week', 2.5, 'previous', now)).toThrow(ValidationError);
+  });
+
+  it('参考时间不合法时抛 ValidationError', () => {
+    expect(() => recentComparisonWindows('day', 3, 'previous', '昨天')).toThrow(ValidationError);
+  });
+});
+
+describe('summarizeWindow', () => {
+  it('只算落在闭区间里的可见记录', () => {
+    const summary = summarizeWindow(
+      [
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 15] }),
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 17] }),
+        makeRecord({ definitionId: 'd2', at: [2026, 10, 19] }),
+        makeRecord({ definitionId: 'd3', at: [2026, 10, 20] }), // 区间外
+        makeRecord({ definitionId: 'd4', at: [2026, 10, 18], deletedAt: '2026-10-18T10:00:00.000Z' }),
+      ],
+      { startDate: '2026-10-15', endDate: '2026-10-19' },
+    );
+
+    expect(summary.recordCount).toBe(3);
+    expect(summary.definitionCount).toBe(2);
+  });
+});
+
+describe('compareWindows', () => {
+  const now = new Date(2026, 9, 19, 12, 0).toISOString();
+  const windows = recentComparisonWindows('day', 3, 'previous', now); // 本期 10-17~10-19，对照 10-14~10-16
+
+  it('给出条数差与变化率', () => {
+    const comparison = compareWindows(
+      [
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 14] }),
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 15] }),
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 17] }),
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 18] }),
+        makeRecord({ definitionId: 'd2', at: [2026, 10, 19] }),
+      ],
+      windows,
+    );
+
+    expect(comparison.current.recordCount).toBe(3);
+    expect(comparison.previous.recordCount).toBe(2);
+    expect(comparison.recordCountDelta).toBe(1);
+    expect(comparison.recordCountRate).toBe(0.5);
+  });
+
+  it('对照期没有记录时不给变化率（不除零、不编造百分比）', () => {
+    const comparison = compareWindows([makeRecord({ at: [2026, 10, 19] })], windows);
+
+    expect(comparison.previous.recordCount).toBe(0);
+    expect(comparison.recordCountRate).toBeUndefined();
+    expect(comparison.recordCountDelta).toBe(1);
+  });
+
+  it('变化率挡住浮点误差，并能给出负值', () => {
+    const comparison = compareWindows(
+      [
+        makeRecord({ at: [2026, 10, 14] }),
+        makeRecord({ at: [2026, 10, 15] }),
+        makeRecord({ at: [2026, 10, 16] }),
+        makeRecord({ at: [2026, 10, 17] }),
+      ],
+      windows,
+    );
+
+    expect(comparison.recordCountDelta).toBe(-2);
+    expect(comparison.recordCountRate).toBe(-0.6667);
+  });
+
+  it('两个窗口之外的记录不参与对比', () => {
+    const comparison = compareWindows([makeRecord({ at: [2026, 9, 1] })], windows);
+    expect(comparison.current.recordCount).toBe(0);
+    expect(comparison.previous.recordCount).toBe(0);
+  });
+});
+
+describe('compareDefinitions', () => {
+  const now = new Date(2026, 9, 19, 12, 0).toISOString();
+  const windows = recentComparisonWindows('day', 3, 'previous', now);
+
+  it('逐事件给出本期 / 对照期条数与差值，名字取最新的快照名', () => {
+    const changes = compareDefinitions(
+      [
+        makeRecord({ definitionId: 'd1', name: '喝水', at: [2026, 10, 17] }),
+        makeRecord({ definitionId: 'd1', name: '喝水（含茶）', at: [2026, 10, 19] }),
+        makeRecord({ definitionId: 'd2', name: '跑步', kind: 'quantity', at: [2026, 10, 15] }),
+        makeRecord({ definitionId: 'd2', name: '跑步', kind: 'quantity', at: [2026, 10, 16] }),
+        makeRecord({ definitionId: 'd2', name: '跑步', kind: 'quantity', at: [2026, 10, 18] }),
+      ],
+      windows,
+    );
+
+    const d1 = changes.find((change) => change.definitionId === 'd1');
+    expect(d1).toMatchObject({
+      name: '喝水（含茶）',
+      kind: 'counter',
+      currentCount: 2,
+      previousCount: 0,
+      delta: 2,
+    });
+
+    const d2 = changes.find((change) => change.definitionId === 'd2');
+    expect(d2).toMatchObject({ currentCount: 1, previousCount: 2, delta: -1 });
+  });
+
+  it('排序：先看本期条数多的，再看变化幅度大的', () => {
+    const changes = compareDefinitions(
+      [
+        makeRecord({ definitionId: 'd1', name: 'd1', at: [2026, 10, 17] }),
+        makeRecord({ definitionId: 'd1', name: 'd1', at: [2026, 10, 18] }),
+        makeRecord({ definitionId: 'd2', name: 'd2', at: [2026, 10, 19] }),
+        makeRecord({ definitionId: 'd2', name: 'd2', at: [2026, 10, 14] }),
+        makeRecord({ definitionId: 'd2', name: 'd2', at: [2026, 10, 15] }),
+        makeRecord({ definitionId: 'd3', name: 'd3', at: [2026, 10, 19] }),
+        makeRecord({ definitionId: 'd3', name: 'd3', at: [2026, 10, 16] }),
+      ],
+      windows,
+    );
+
+    // d1：本期 2 / 对照 0（+2）→ d2：本期 1 / 对照 2（-1，幅度 1）→ d3：本期 1 / 对照 1（0）
+    expect(changes.map((change) => change.definitionId)).toEqual(['d1', 'd2', 'd3']);
+  });
+
+  it('两个窗口都没出现过的定义不进入结果', () => {
+    const changes = compareDefinitions([makeRecord({ at: [2026, 9, 1] })], windows);
+    expect(changes).toEqual([]);
+  });
+
+  it('排除软删除的记录', () => {
+    const changes = compareDefinitions(
+      [
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 19] }),
+        makeRecord({
+          definitionId: 'd2',
+          at: [2026, 10, 19],
+          deletedAt: '2026-10-19T10:00:00.000Z',
+        }),
+      ],
+      windows,
+    );
+
+    expect(changes.map((change) => change.definitionId)).toEqual(['d1']);
   });
 });
