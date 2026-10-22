@@ -17,7 +17,8 @@
 | 第二阶段（周期事件） | 周期定义 / 周期实例 / 周期内记录、区间规则 | **已完成**（本文档 `11`） |
 | 第二阶段（统计） | 时间轴统计（从事实数据聚合）、时间轴 FlatList 虚拟化 | **已完成**（本文档 `12`） |
 | 第二阶段（永久删除） | 事件记录的回收站与真删（「软删除 → 撤销 → 真删」闭环） | **已完成**（本文档 `13`） |
-| 第二阶段剩余项 | 导入导出、周期日历/症状统计、周期记录回收站 | 未开始 |
+| 第二阶段（导入导出） | JSON 备份 / CSV 表格导出、按 id 合并的导入、事务一致性 | **已完成**（本文档 `14`） |
+| 第二阶段剩余项 | 周期日历/症状统计、周期记录回收站、统计增强 | 未开始 |
 
 第一阶段「已完成」的含义是：下面的命令都真实跑过并且通过了。
 
@@ -28,14 +29,14 @@ npm test            # Jest：4 个套件 / 32 个用例
 npm run doctor      # expo-doctor：20/20
 ```
 
-第二阶段各项完成后（目前 `npm test` 为 17 个套件 / 228 个用例），新增命令同样跑过：
+第二阶段各项完成后（目前 `npm test` 为 20 个套件 / 277 个用例），新增命令同样跑过：
 
 ```bash
 npm run typecheck                        # 通过
 npm run lint                             # 通过（0 error / 0 warning）
-npm test                                 # 17 个套件 / 228 个用例
+npm test                                 # 20 个套件 / 277 个用例
 npm run format:check                     # 通过
-npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
+npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
 ```
 
 运行验证（都是模拟器，不是真机）：
@@ -48,7 +49,8 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
   为了让页面有内容，示例数据是**直接写进模拟器数据库**的。
 - **仍未验证（如实记录）**：本机没有可用的自动化点击（模拟器未授予辅助功能权限），
   所以**没有手动点按走通写入路径**（点一下记录、删除并撤销、回收站恢复/永久删除的二次确认弹窗）；
-  这些目前只有单元测试覆盖。Android 与真机也没有跑过。
+  这些目前只有单元测试覆盖。**导入导出也一样**：设置页的三个按钮（导出 JSON / 导出 CSV /
+  从备份导入）与系统分享面板、文件选择器都没有真手点过。Android 与真机也没有跑过。
 
 ## 二、已完成功能 → 对应文档
 
@@ -67,12 +69,12 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
 | 周期事件：日历日期运算、区间重叠、边界修改「不静默删除」、一天一条的 UPSERT | [11-cycle-tracking.md](./11-cycle-tracking.md) |
 | 统计：从事实数据聚合（不落汇总表）、本地时区分天/周、单位不一致不合并、时间轴 FlatList 虚拟化 | [12-statistics.md](./12-statistics.md) |
 | 回收站与永久删除：软删除 vs 真删、`Alert` 二次确认、单条 DELETE 的原子性 | [13-permanent-delete-and-trash.md](./13-permanent-delete-and-trash.md) |
+| 备份与恢复：显式格式契约、外部 JSON 的严格解析、取并集合并、事务内体检、CSV 导出 | [14-backup-and-restore.md](./14-backup-and-restore.md) |
 
 ### 为什么还缺几篇编号
 
-建议目录里还列了和「数据备份恢复」「整体架构演进」对应的篇章。
-按「不以文件名和猜测充数、不制造空文档」的原则，它们会在功能真正落地时再写——
-导入导出（JSON/CSV）与架构演进仍属于第二阶段后续项，**代码还不存在**。
+建议目录里还列了和「整体架构演进」对应的篇章。
+按「不以文件名和猜测充数、不制造空文档」的原则，它会在真正有内容时再写——**架构演进仍属后续项**。
 
 `06-navigation-and-state.md` 提前写了，是因为「目录结构与基础导航」本身就是第一阶段的交付物，
 而且状态管理（Context + Hook）在第一阶段就已经有了真实代码可讲。
@@ -94,9 +96,10 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
 11. **[11 周期事件](./11-cycle-tracking.md)** —— 周期定义 / 实例 / 每日记录：日历日期运算、区间规则，以及「改边界不悄悄删记录」。
 12. **[12 统计](./12-statistics.md)** —— 从事实数据聚合（不落汇总表）、本地时区分天/周、单位不一致不合并，以及时间轴 `FlatList` 虚拟化。
 13. **[13 回收站与永久删除](./13-permanent-delete-and-trash.md)** —— 软删除与真删分成两级，回收站承载「恢复 / 永久删除」。
+14. **[14 备份与恢复](./14-backup-and-restore.md)** —— 显式格式契约、外部 JSON 的严格解析与带路径报错、取并集的合并规则、事务内体检、CSV 导出。
 
 如果只想快速走读一遍项目，读 **01 → 05 → 06** 这三篇就够；03、04 是用来建立类型与数据层认知的，
-08–13 用来了解业务功能是怎么一步步搭起来的。
+08–14 用来了解业务功能是怎么一步步搭起来的。
 
 ## 四、已经接触过的技术概念
 
@@ -151,6 +154,16 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
 | 「删除」其实是两级：可撤销的软删除 + 不可逆的真删 | 领域设计 | 13 |
 | 二次确认（`Alert`）：破坏性操作的界面护栏；仓储只负责原子地删 | 交互 / React Native | 13 |
 | 不必为单条 `DELETE` 套事务；`changes === 0` 视为「不存在」而不是成功 | SQLite / 架构 | 13 |
+| 交换格式的显式契约：`format` / `formatVersion` / `schemaVersion` 三层校验 | 数据交换 / 架构 | 14 |
+| 外部输入 ≠ 内部数据：`unknown` + 逐字段守卫 + 带路径的 `ImportError` | TypeScript / 架构 | 14 |
+| 引用完整性在写库前检查（含没有 SQL 约束保护的业务规则，如周期记录落在区间内） | 领域设计 / SQLite | 14 |
+| 导入的语义选择：「清空覆盖」vs「取并集」；冲突规则要能一句话说清 | 领域设计 | 14 |
+| 事件记录不可篡改 → 合并只针对软删除标记（已删除不被旧备份复活） | 领域设计 | 14 |
+| 事务内体检：`COUNT(*)` 核对行数 + `PRAGMA foreign_key_check` | SQLite | 14 |
+| 稳定排序让导出可 `diff`、让「相同即不重写」可验证 | 领域设计 / 测试 | 14 |
+| 纯函数合并 + 仓储只落库：预演与真导入共用一条校验路径 | 架构 | 14 |
+| `expo-file-system`（`File` / `Paths`）/ `expo-sharing` / `expo-document-picker` 与 Expo Go 内置判断 | React Native / Expo | 14 |
+| CSV 的 RFC 4180 转义、BOM 与 CRLF（Excel 打开中文不乱码） | 数据交换 | 14 |
 
 ## 五、还没有学到的内容
 
@@ -163,7 +176,8 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
 - 日历式界面（可点选的月视图、按症状统计）—— 周期已能记录与回看，但还没有日历与统计视图。
 - 记录的**永久删除**与一致性 —— 已在 [13](./13-permanent-delete-and-trash.md) 落地（事件记录的回收站与真删）；
   **周期内记录**仍是直接真删，回收站属后续项。
-- JSON / CSV 导入导出、冲突合并、事务一致性校验 —— 第二阶段后续项。
+- JSON / CSV 导入导出、冲突合并、事务一致性校验 —— 已在 [14](./14-backup-and-restore.md) 落地
+  （JSON 可往返、CSV 只导出；**云备份 / 多端同步**仍不做）。
 - 深链接与通知跳转 —— 目前只有 `scheme: "lifetrack"` 配置，没有业务用途。
 - 深色主题 —— `theme/index.ts` 里留了 `useTheme()` 的接口，但还没接。
 
@@ -176,6 +190,7 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
                       │  (tabs)/_layout.tsx → Tabs（五标签）          │
                       │  (tabs)/index.tsx（时间轴，FlatList）          │
                       │  (tabs)/stats.tsx（统计：概览 / 趋势 / 按事件） │
+                      │  (tabs)/settings.tsx（诊断 + 备份与恢复）      │
                       │  events/new.tsx / events/[id].tsx             │
                       │  record/[id].tsx（记录 / 补录 / 删除）          │
                       │  records/deleted.tsx（回收站：恢复 / 永久删除） │
@@ -194,6 +209,8 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
                       │ records/：format / RecordRow / UndoBar        │
                       │ cycles/：labels / CycleDefinitionForm         │
                       │ stats/：aggregate（从事实数据聚合，纯函数）    │
+                      │ backup/：csv（记录表格，纯函数）/ transfer      │
+                      │        （写文件 + 分享 + 选文件，唯一碰文件系统）│
                       │ common/：datetime（本地时间 ↔ UTC）            │
                       └───────────────┬─────────────────────────────┘
                                       │ 只读 Hook，不写 SQL
@@ -214,6 +231,7 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
                       │ CycleDefinitionRepository（周期定义）           │
                       │ CycleInstanceRepository（周期实例 + 边界规则）   │
                       │ CycleEntryRepository（每天一条，UPSERT）        │
+                      │ BackupRepository（导出全表 / 合并导入 + 体检）  │
                       └───────────────┬─────────────────────────────┘
                                       │
                       ┌───────────────▼─────────────────────────────┐
@@ -221,6 +239,7 @@ npx expo export --platform ios           # 打包通过（js bundle 2.9MB）
                       │ validation.ts 输入类型与校验规则               │
                       │ dates.ts  纯日历日期运算（不沾时区）            │
                       │ cycles.ts 周期规则（越界 / 重叠 / 预测）        │
+                      │ backup.ts 备份格式 / 严格解析 / 合并（纯函数）  │
                       │ errors.ts 统一错误（AppError + code）          │
                       │ id.ts     UUID v7                             │
                       └─────────────────────────────────────────────┘
