@@ -1,0 +1,24 @@
+# 写入路径 1：记录一次事件，然后回到时间轴确认它真的进了库。
+#
+# 覆盖：事件页 →（必要时新建定义）→ 记录页「手动记录」→ 时间轴可见。
+# 副作用：会留下一个定义「Maestro喝水」和一条记录（累加，不会自己删）。
+appId: host.exp.Exponent
+name: 01 记录一次事件（自建定义 → 手动记录 → 时间轴可见）
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+- tapOn: '.*事件, tab.*'
+- assertVisible: '+ 新建事件'
+- runFlow: ../subflows/record-once.yaml
+- takeScreenshot: 01-record-flash
+# 记录页在标签栏之上，要先用「返回」回标签页（iOS 上 Maestro 的 back 手势在这里不起作用）
+- tapOn: '返回'
+- tapOn: '.*时间轴, tab.*'
+- assertVisible: '.*Maestro喝水.*'
+- takeScreenshot: 01-timeline

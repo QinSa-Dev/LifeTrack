@@ -1,0 +1,101 @@
+# 写入路径 5：周期边界预演 + 越界保存被拒。
+#
+# 这是最后一项改动的回归（docs/learning/11-cycle-tracking.md 第 4.8 节）：
+#   1. 输入新边界后，界面**本地**算出「哪些记录会落在区间外」，先给提示；
+#   2. 真去保存时，仓储会拒绝，并把原因原样显示——记录不会被悄悄删掉。
+#
+# 步骤：
+#   建定义「Maestro周期」→ 开一段 2026-10-01 起的周期 → 记今天一条（落在区间内，存得进）
+#   → 把结束日改成 2026-10-05（今天这条就落在区间外了）→ 黄色预演出现
+#   → 点「保存边界」→ 被拒绝（已取消修改）。
+#
+# 前提：当前日期晚于 2026-10-05（写这段时是 2026-10-22），这样「今天」一定在 2026-10-05 之后。
+# 可重复跑：已有进行中的周期就直接进去用，不再新建。
+# 副作用：会留下定义「Maestro周期」、一段周期、以及每天一条的记录（累加）。
+appId: host.exp.Exponent
+name: 05 周期 · 边界预演 + 越界保存被拒
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+- tapOn: '.*周期, tab.*'
+- assertVisible: '+ 新建周期定义'
+- runFlow:
+    when:
+      notVisible: '.*Maestro周期.*'
+    commands:
+      - tapOn: '+ 新建周期定义'
+      - assertVisible: '例如：生理期'
+      - tapOn: '例如：生理期'
+      - inputText: 'Maestro周期'
+      # 不填「平均周期长度」：那是 number-pad，键盘没有收起键。
+      # 收键盘用 pressKey Enter（单行输入回车即失焦）——hideKeyboard 在这台中文输入法下会失败。
+      - pressKey: Enter
+      - scrollUntilVisible:
+          element:
+            text: '创建'
+          direction: DOWN
+      - tapOn: '创建'
+      - assertVisible: '.*Maestro周期.*'
+- scrollUntilVisible:
+    element:
+      text: '.*Maestro周期.*'
+    direction: DOWN
+- tapOn: '.*Maestro周期.*'
+- assertVisible: '定义信息'
+- takeScreenshot: 05-definition
+
+# 有进行中的周期就用现成的（点标题，不点徽标）
+- runFlow:
+    when:
+      visible: '.*~ 进行中.*'
+    commands:
+      - tapOn: '.*~ 进行中.*'
+- runFlow:
+    when:
+      notVisible: '周期区间'
+    commands:
+      - tapOn: '2026-10-19'
+      - eraseText: 12
+      - inputText: '2026-10-01'
+      - pressKey: Enter
+      - tapOn: '开始新周期'
+- assertVisible: '周期区间'
+- takeScreenshot: 05-instance
+
+# 记一条：日期默认是「夹进区间的今天」，落在区间内 → 存得进
+- scrollUntilVisible:
+    element:
+      text: '保存记录'
+    direction: DOWN
+- tapOn: '保存记录'
+# 提示条在页面顶部，刚才滚了下来 → 要滚回去才看得见（这条提示不会自动消失）
+- scrollUntilVisible:
+    element:
+      text: '.*已保存.*'
+    direction: UP
+- assertVisible: '.*已保存.*'
+- takeScreenshot: 05-entry-saved
+
+# 把结束日改到 2026-10-05：今天这条就落在区间外了
+- scrollUntilVisible:
+    element:
+      text: '结束日期（留空表示进行中）'
+    direction: UP
+- tapOn: '2026-10-05'
+- eraseText: 12
+- inputText: '2026-10-05'
+- pressKey: Enter
+- assertVisible: '.*落在区间外.*'
+- takeScreenshot: 05-boundary-preview
+
+# 保存会被仓储拒绝（不静默删记录）
+- tapOn: '保存边界'
+- assertVisible: '.*落在新边界之外.*'
+- assertVisible: '.*已取消修改.*'
+- takeScreenshot: 05-boundary-rejected

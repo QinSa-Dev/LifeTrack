@@ -1,0 +1,26 @@
+# 写入路径 2：时间轴删除一条（软删除）→ 撤销 → 记录回来。
+#
+# 覆盖：RecordRow 的「删除」→ UndoBar（已删除：… / 撤销 / 知道了）。
+# 副作用：删的是时间轴第一条（最新），随后立刻撤销，净值 0。
+appId: host.exp.Exponent
+name: 02 时间轴 · 删除 → 撤销
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+- tapOn: '.*时间轴, tab.*'
+- takeScreenshot: 02-before
+# index 0 = 列表里第一行的「删除」，也就是最新那条
+- tapOn:
+    text: '删除'
+    index: 0
+- assertVisible: '.*已删除：.*'
+- takeScreenshot: 02-undo-bar
+- tapOn: '撤销'
+- assertNotVisible: '.*已删除：.*'
+- takeScreenshot: 02-after-undo

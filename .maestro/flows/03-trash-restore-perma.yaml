@@ -1,0 +1,64 @@
+# 写入路径 3：回收站 · 恢复 / 永久删除（二次确认）。
+#
+# 覆盖：软删除 → 回收站「恢复」→ 回时间轴；再删 → 「永久删除」→ 原生二次确认 → 真删。
+#
+# 自产自销：全程只动本流程自己刚记的那条「Maestro喝水」。
+# 回收站按 deleted_at 倒序，所以第一条就是刚删的那条。
+#
+# 二次确认那一步用**相对选择器**定位弹窗里的确认按钮：
+# 弹窗正文里有「无法恢复」，确认按钮在它下面；列表里那些「永久删除」按钮不在它下面。
+# （弹窗是独立的原生 window，直接按文字点会跟列表行的同名按钮撞车。）
+appId: host.exp.Exponent
+name: 03 回收站 · 恢复 + 永久删除（自产自销）
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+- tapOn: '.*事件, tab.*'
+- runFlow: ../subflows/record-once.yaml
+- tapOn: '返回'
+- tapOn: '.*时间轴, tab.*'
+- tapOn:
+    text: '删除'
+    index: 0
+- assertVisible: '.*已删除：.*'
+
+# —— 恢复 ——
+- tapOn: '回收站'
+- assertVisible: '已删除的记录'
+- assertVisible: '.*Maestro喝水.*'
+- takeScreenshot: 03-trash
+- tapOn:
+    text: '恢复'
+    index: 0
+- assertNotVisible: '.*Maestro喝水.*'
+- tapOn: '返回'
+- tapOn: '.*时间轴, tab.*'
+- assertVisible: '.*Maestro喝水.*'
+- takeScreenshot: 03-restored
+
+# —— 永久删除（真删）——
+- tapOn:
+    text: '删除'
+    index: 0
+- assertVisible: '.*已删除：.*'
+- tapOn: '回收站'
+- assertVisible: '.*Maestro喝水.*'
+- tapOn:
+    text: '永久删除'
+    index: 0
+- assertVisible: '永久删除记录'
+- assertVisible: '.*无法恢复.*'
+- takeScreenshot: 03-permanent-alert
+- tapOn:
+    text: '永久删除'
+    below:
+      text: '.*无法恢复.*'
+- assertNotVisible: '永久删除记录'
+- assertNotVisible: '.*Maestro喝水.*'
+- takeScreenshot: 03-after-permanent-delete

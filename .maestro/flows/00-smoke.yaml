@@ -1,0 +1,45 @@
+# 冒烟：Expo Go 打开本项目，五个标签页都能渲染真实数据。
+#
+# 这条不写任何数据，纯粹用来确认「Maestro + Expo Go + Metro」这条链路是通的。
+# 标签栏的可访问文字长这样：`时间轴, tab, 1 of 5`，所以要用正则匹配。
+appId: host.exp.Exponent
+name: 00 冒烟 · 打开 App 并走一遍五个标签页
+tags:
+  - smoke
+---
+# 归一化：Expo Go 里 openLink 不会重载 JS，上一次运行可能停在二级页面。
+# 先杀掉再打开，保证每次都是从「时间轴」这个根页面开始。
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+- tapOn: '.*时间轴, tab.*'
+- assertVisible: '回收站'
+- assertVisible: '.*最近 .* 条.*'
+- takeScreenshot: 00-timeline
+
+- tapOn: '.*事件, tab.*'
+- assertVisible: '+ 新建事件'
+- takeScreenshot: 00-event
+
+- tapOn: '.*统计, tab.*'
+- assertVisible: '概览'
+- assertVisible: '较前一段' # 对比 Chip（本期/对照期在这张卡片里）
+- takeScreenshot: 00-stats
+- scrollUntilVisible:
+    element:
+      text: '按事件统计'
+    direction: DOWN
+- assertVisible: '.*个事件.*' # 顺带验证正则（部分匹配要自己写 .*）
+- takeScreenshot: 00-stats-definitions
+
+- tapOn: '.*周期, tab.*'
+- assertVisible: '+ 新建周期定义'
+- takeScreenshot: 00-cycles
+
+- tapOn: '.*设置, tab.*'
+- assertVisible: '备份与恢复'
+- assertVisible: '本地数据库'
+- takeScreenshot: 00-settings

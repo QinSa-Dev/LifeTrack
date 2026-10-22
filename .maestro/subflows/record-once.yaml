@@ -1,0 +1,40 @@
+# 子流程：被 01 / 03 用 runFlow 调起来。
+#
+# 前置：当前停在「事件」标签页。
+# 结果：库里有定义「Maestro喝水」，并且刚用它记录了一次；停在记录页，成功提示还在。
+#
+# 为什么自己建定义：不依赖使用者手工留下的数据，flow 才能单独跑、
+# 反复跑。名字带 Maestro 前缀，方便一眼认出来是测试造的数据。
+#
+# （Maestro 要求被 runFlow 引用的文件也要有配置段，所以这里仍然写 appId。）
+appId: host.exp.Exponent
+name: 子流程 · 确保 Maestro喝水 存在并记一次
+---
+- runFlow:
+    when:
+      notVisible: '.*Maestro喝水.*'
+    commands:
+      - tapOn: '+ 新建事件'
+      - assertVisible: '事件名称'
+      - tapOn: '例如：喝水'
+      - inputText: 'Maestro喝水'
+      - hideKeyboard
+      - scrollUntilVisible:
+          element:
+            text: '创建'
+          direction: DOWN
+      - tapOn: '创建'
+      - assertVisible: '.*Maestro喝水.*'
+- scrollUntilVisible:
+    element:
+      text: '.*Maestro喝水.*'
+    direction: DOWN
+- tapOn: '.*Maestro喝水.*'
+- assertVisible: '手动记录'
+- scrollUntilVisible:
+    element:
+      text: '记录'
+    direction: DOWN
+# 「手动记录」的数量默认就是 1，所以这里不用敲键盘。
+- tapOn: '记录'
+- assertVisible: '.*已记录：.*'

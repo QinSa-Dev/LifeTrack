@@ -1,0 +1,53 @@
+# 写入路径 6：统计页的环比 / 同比切换（docs/learning/12-statistics.md 第 3.9–3.11 节）。
+#
+# 只读，不改数据。要验证的是：
+#   - 两个对比 Chip 都在；
+#   - 切换后「对照窗口：A ~ B」真的跟着变；
+#   - 每行副标题会说明与哪一段比、差多少；对照期为空时**不编百分比**。
+#
+# 坑（踩过一次）：对比 Chip 在页面最底下，紧贴标签栏；不先滚动就点，
+# 点击会落到标签栏上（于是跑到时间轴去了）。所以先滚到「对照窗口」那行再点。
+#
+# 前提：库里至少有 1 条记录，否则统计页是空状态、没有「概览」卡片。
+# 可重复跑：只读。
+appId: host.exp.Exponent
+name: 06 统计 · 环比 / 同比切换
+tags:
+  - read
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+- tapOn: '.*统计, tab.*'
+- assertVisible: '概览'
+- takeScreenshot: 06-overview
+
+# 先滚到「对比」区块：让 Chip 和「对照窗口」那行都完整露出来
+- scrollUntilVisible:
+    element:
+      text: '.*对照窗口：.*'
+    direction: DOWN
+
+# 环比：紧挨着的同长前一段
+- tapOn: '较前一段'
+- assertVisible: '.*对照窗口：.*'
+- assertVisible: '.*本期.*'
+- assertVisible: '.*(较前一段|前一段没有记录|本期与前一段都没有记录).*'
+- takeScreenshot: 06-compare-previous
+
+# 同比：整体前移 52 周（星期几对齐）
+- tapOn: '较上年同期'
+- assertVisible: '.*对照窗口：.*'
+- assertVisible: '.*(较上年同期|上年同期没有记录|本期与上年同期都没有记录).*'
+- takeScreenshot: 06-compare-last-year
+
+# 滚到「按事件统计」，看每行的变化文案
+- scrollUntilVisible:
+    element:
+      text: '按事件统计'
+    direction: DOWN
+- assertVisible: '.*(本期新增|本期没有|与上年同期持平|较上年同期).*'
+- takeScreenshot: 06-per-definition-change
