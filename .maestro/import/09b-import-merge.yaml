@@ -1,0 +1,93 @@
+# 手测「选文件导入」· 第 2 段：删掉本地标记 → 选文件导入 → 合并把它加回来。
+#
+# 前置（**必须在两段之间手工做**）：
+#   1. 跑 `09a-export-marker.yaml`（造标记 + 导出）；
+#   2. 把 App 缓存目录里最新的 `lifetrack-backup-*.json` 拷进模拟器的
+#      `group.com.apple.FileProvider.LocalStorage`（即「文件」App 的「我的 iPhone」）。
+#   命令见 `.maestro/README.md` 的「选文件导入」一节。
+#
+# 为什么中间要删一条：文件里每一条 id 本地都有，导入只会「保留本地」，
+# 证明不了文件被读进去了。先把自己那条 `Maestro导入` 记录**永久删除**（真删），
+# 导入就会是「新增 1 条」——最后回到时间轴看到它，才算真的走通。
+#
+# 自产自销：只动本流程自己造的 `Maestro导入`；使用者那 15 条数据不参与断言、
+# 也不会被改动（合并只增不删）。跑完的 `Maestro导入` 定义与记录由收尾 SQL 清掉。
+appId: host.exp.Exponent
+name: 09b 导入 · 选文件导入并合并（收尾）
+tags:
+  - backup
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+- assertVisible: '.*Maestro导入.*'
+
+# 1) 把本地那条删干净（软删 → 回收站 → 永久删除的二次确认）
+- tapOn:
+    text: '删除'
+    index: 0
+- assertVisible: '.*已删除：.*'
+- tapOn: '回收站'
+- assertVisible: '已删除的记录'
+- assertVisible: '.*Maestro导入.*'
+- tapOn:
+    text: '永久删除'
+    index: 0
+- assertVisible: '彻底删除记录'
+- tapOn: '彻底删除'
+- assertNotVisible: '.*Maestro导入.*'
+- tapOn: '返回'
+# 顶部「已删除：Maestro导入 +1」提示条里也有这个名字，先关掉（点「知道了」）再断言
+- tapOn:
+    text: '知道了'
+    optional: true
+- assertNotVisible: '.*Maestro导入.*'
+- takeScreenshot: 09b-marker-gone
+
+# 2) 选文件导入：设置页 → 系统选择器 →「我的 iPhone」里的备份
+- tapOn: '.*设置, tab.*'
+- scrollUntilVisible:
+    element:
+      text: '从备份导入（合并）'
+    direction: DOWN
+- tapOn: '从备份导入（合并）'
+- extendedWaitUntil:
+    visible: '浏览'
+    timeout: 60000
+- takeScreenshot: 09b-picker
+- tapOn: '浏览'
+- runFlow:
+    when:
+      notVisible: '.*lifetrack-backup.*'
+    commands:
+      - tapOn: '我的iPhone'
+- extendedWaitUntil:
+    visible: '.*lifetrack-backup.*'
+    timeout: 30000
+- takeScreenshot: 09b-picker-file
+# 选择器里的文件格子：a11y 文字是它的**标签**，点标签不生效（实测：选择器不关、
+# 也不返回选中结果）；要点的是格子里的缩略图。图标模式下第一个格子总在左上角，
+# 所以这里用相对坐标——换设备/换图标尺寸时要重新量。
+- tapOn:
+    point: '18%,29%'
+
+# 3) 回 App：二次确认说清「会发生什么」，再合并
+- extendedWaitUntil:
+    visible: '确认导入并合并？'
+    timeout: 60000
+- takeScreenshot: 09b-confirm
+- tapOn: '导入'
+# 文件里少了的那条记录应当被「新增」，其余全部「保留本地」（同 id 同时间戳不覆盖）
+- extendedWaitUntil:
+    visible: '导入完成：新增 1 条、覆盖 0 条、保留本地 .* 条'
+    timeout: 60000
+- takeScreenshot: 09b-imported
+
+# 4) 证据：文件里的那条真的回来了
+- tapOn: '.*时间轴, tab.*'
+- assertVisible: '.*Maestro导入.*'
+- takeScreenshot: 09b-timeline-restored

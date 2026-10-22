@@ -102,10 +102,25 @@ export function isUuidV7(value: string): boolean {
   return UUID_V7_PATTERN.test(value);
 }
 
-/** 校验并返回，用于导入外部 JSON 数据时的边界检查。 */
-export function assertUuidV7(value: string, field = 'id'): string {
-  if (!isUuidV7(value)) {
-    throw new ValidationError(`${field} 不是合法的 UUID v7：${value}`);
+/**
+ * 实体 id 的形状：UUID（8-4-4-4-12 的小写十六进制），**不限定版本**。
+ *
+ * 为什么导入这条边界不要求 v7：`uuidv7` 管的是**往后怎么写**（主键本身按时间有序），
+ * 而库里已有的 id 是**既有事实**——本项目早期版本用的是 v4，那些行还在库里，
+ * 也照样出现在备份里。导入若只认 v7，「自己导出的备份被自己拒绝」就是一条真会踩到的
+ * 死路（手测「选文件导入」时正是撞在这上面：老数据里的分组 id 是 v4）。
+ */
+const ENTITY_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * 校验并返回一个实体 id，用在**导入外部 JSON**的边界上。
+ *
+ * 只挡「结构上就不是 id」的垃圾（注入、截断、类型错），不挡版本：
+ * 既有数据的准入条件是「App 曾经写进过库」，而不是「它是不是 v7」。
+ */
+export function assertEntityId(value: string, field = 'id'): string {
+  if (!ENTITY_ID_PATTERN.test(value)) {
+    throw new ValidationError(`${field} 不是合法的 id（UUID）：${value}`);
   }
   return value;
 }

@@ -36,9 +36,14 @@ const CYCLE_DEFINITION_BASE = 500;
 const CYCLE_INSTANCE_BASE = 600;
 const CYCLE_ENTRY_BASE = 700;
 
-/** 生成合法的 UUID v7（只要满足格式，导入校验就认） */
+/** 生成合法的 UUID v7（只要满足 UUID 形状，导入校验就认） */
 function id(value: number): string {
   return `018fed00-0000-7000-8000-${String(value).padStart(12, '0')}`;
+}
+
+/** 早期版本写进库的那种 v4（导入必须同样认，否则自家备份会被自己拒掉） */
+function v4Id(value: number): string {
+  return `550e8400-e29b-41d4-a716-${String(value).padStart(12, '0')}`;
 }
 
 function makeGroup(index: number, overrides: Partial<EventGroup> = {}): EventGroup {
@@ -250,6 +255,38 @@ describe('parseBackup', () => {
     const file = makeFile();
 
     expect(parseBackup(serializeBackup(file))).toEqual(file);
+  });
+
+  it('认自家备份里的 v4 主键：本项目早期版本写进库的 id 不能被自己拒掉', () => {
+    // 手测「选文件导入」时踩到的就是这条：老数据里连分组 id 都是 v4，
+    // 而导入端当时只认 v7，于是「自己导出的备份被自己拒绝」。
+    const group = v4Id(GROUP_BASE + 1);
+    const definition = v4Id(DEFINITION_BASE + 1);
+    const record = v4Id(RECORD_BASE + 1);
+    const file = makeFile({
+      data: fixtureData({
+        eventGroups: [makeGroup(1, { id: group })],
+        eventDefinitions: [makeDefinition(1, { id: definition, groupId: group })],
+        eventRecords: [
+          makeRecord(1, {
+            id: record,
+            definitionId: definition,
+            snapshot: {
+              definitionId: definition,
+              name: '事件1',
+              kind: 'counter',
+              groupId: group,
+              tagIds: [id(TAG_BASE + 1)],
+            },
+          }),
+        ],
+      }),
+    });
+
+    const parsed = parseBackup(serializeBackup(file));
+    expect(parsed).toEqual(file);
+    // 引用完整性也照旧能过（v4 只是另一个版本的 UUID，不是另一种 id）
+    expect(() => assertBackupIntegrity(parsed.data)).not.toThrow();
   });
 
   it('缺省的集合按空处理（兼容旧版本导出的文件）', () => {

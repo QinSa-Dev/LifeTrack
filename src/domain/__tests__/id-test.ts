@@ -1,5 +1,5 @@
 import { ValidationError } from '@/domain/errors';
-import { assertUuidV7, isUuidV7, newId, uuidv7 } from '@/domain/id';
+import { assertEntityId, isUuidV7, newId, uuidv7 } from '@/domain/id';
 
 describe('uuidv7', () => {
   it('格式符合 UUID v7（版本位 7、变体位为 8/9/a/b）', () => {
@@ -47,14 +47,26 @@ describe('uuidv7', () => {
   });
 });
 
-describe('assertUuidV7', () => {
-  it('通过合法 id', () => {
+describe('assertEntityId', () => {
+  it('通过生成的 v7', () => {
     const id = uuidv7();
-    expect(assertUuidV7(id)).toBe(id);
+    expect(assertEntityId(id)).toBe(id);
   });
 
-  it('拒绝非法值并带上字段名', () => {
-    expect(() => assertUuidV7('not-a-uuid', 'recordId')).toThrow(/recordId/);
-    expect(() => assertUuidV7('550e8400-e29b-41d4-a716-446655440000')).toThrow(ValidationError);
+  it('也通过早期版本写进库的 v4：导入不能把自家备份拒了', () => {
+    // 这条 id 的形状就是踩过的那个坑：老数据（分组 / 记录 / 周期）都是 v4
+    const v4 = '550e8400-e29b-41d4-a716-446655440000';
+    expect(assertEntityId(v4)).toBe(v4);
+    expect(assertEntityId(v4, 'data.eventGroups[0].id')).toBe(v4);
+  });
+
+  it('拒绝结构上就不是 id 的值，并带上字段名', () => {
+    expect(() => assertEntityId('not-a-uuid', 'recordId')).toThrow(/recordId/);
+    expect(() => assertEntityId('', 'recordId')).toThrow(ValidationError);
+    // 少一位 / 多一位都不算 UUID
+    expect(() => assertEntityId('018fed00-0000-7000-8000-00000000000')).toThrow(ValidationError);
+    expect(() => assertEntityId('018fed00-0000-7000-8000-0000000000000')).toThrow(ValidationError);
+    // 大小写不同会是**另一个** id，库里存的一律是小写，不认大写
+    expect(() => assertEntityId('550E8400-E29B-41D4-A716-446655440000')).toThrow(ValidationError);
   });
 });

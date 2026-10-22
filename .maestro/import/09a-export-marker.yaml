@@ -1,0 +1,73 @@
+# 手测「选文件导入」· 第 1 段：造标记 → 导出带标记的备份。
+#
+# ⚠️ 这一对流程**不在自动跑的那一套里**（`.maestro/flows` 是自洽的 9/9）。
+# 它必须与 `09b-import-merge.yaml` 配对，中间还要在宿主机上把导出的文件
+# 拷进模拟器的「我的 iPhone」——见 `.maestro/README.md` 的「选文件导入」一节。
+#
+# 为什么要先造一条自己人的记录：导出的是使用者自己的库，里面每一条 id 本地都有，
+# 导入就只会「保留本地」，看不出文件到底有没有被读进来。带一个 `Maestro导入` 标记，
+# 第 2 段才能先把这条删掉、再让导入把它加回来（新增 1 条），证明文件真的被应用了。
+appId: host.exp.Exponent
+name: 09a 导入 · 导出带标记的备份（前置）
+tags:
+  - backup
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 5'
+    timeout: 120000
+
+# 1) 造标记：定义「Maestro导入」+ 记一次
+- tapOn: '.*事件, tab.*'
+- runFlow:
+    when:
+      notVisible: '.*Maestro导入.*'
+    commands:
+      - tapOn: '+ 新建事件'
+      - assertVisible: '事件名称'
+      - tapOn: '例如：喝水'
+      - inputText: 'Maestro导入'
+      - hideKeyboard
+      - scrollUntilVisible:
+          element:
+            text: '创建'
+          direction: DOWN
+      - tapOn: '创建'
+- scrollUntilVisible:
+    element:
+      text: '.*Maestro导入.*'
+    direction: DOWN
+- tapOn: '.*Maestro导入.*'
+- assertVisible: '手动记录'
+- scrollUntilVisible:
+    element:
+      text: '记录'
+    direction: DOWN
+- tapOn: '记录'
+- assertVisible: '.*已记录：.*'
+- tapOn: '返回'
+- tapOn: '.*时间轴, tab.*'
+- assertVisible: '.*Maestro导入.*'
+- takeScreenshot: 09a-marker-recorded
+
+# 2) 导出：文件落在 App 缓存目录，宿主机随后把它拷进「我的 iPhone」
+- tapOn: '.*设置, tab.*'
+- scrollUntilVisible:
+    element:
+      text: '导出 JSON 备份'
+    direction: DOWN
+- tapOn: '导出 JSON 备份'
+- extendedWaitUntil:
+    visible: '保存到“文件”'
+    timeout: 60000
+- takeScreenshot: 09a-share-sheet
+# 分享面板关掉（模拟器里「保存到“文件”」不落盘，素材由宿主拷，见 README）
+- tapOn:
+    text: 'dismiss popup'
+    optional: true
+- swipe:
+    direction: DOWN
+- assertVisible: '.*已导出 lifetrack-backup-.*\.json.*'
+- takeScreenshot: 09a-exported

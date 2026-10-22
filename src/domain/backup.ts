@@ -20,7 +20,7 @@
 
 import { isEntryWithinRange } from './cycles';
 import { ImportError, ValidationError } from './errors';
-import { assertUuidV7 } from './id';
+import { assertEntityId } from './id';
 import {
   type CycleDefinition,
   type CycleEntry,
@@ -193,8 +193,9 @@ function integerValue(value: unknown, path: string, minimum: number): number {
   return parsed;
 }
 
-function uuid(value: unknown, path: string): string {
-  return check(path, () => assertUuidV7(text(value, path), path));
+/** 实体 id：任一版本的 UUID（早期数据里是 v4，见 `id.ts` 的说明）。 */
+function entityId(value: unknown, path: string): string {
+  return check(path, () => assertEntityId(text(value, path), path));
 }
 
 function dateTime(value: unknown, path: string): IsoDateTime {
@@ -223,7 +224,7 @@ function parseArray<T>(value: unknown, path: string, parse: (item: unknown, item
 function parseGroup(value: unknown, path: string): EventGroup {
   const row = asObject(value, path);
   return {
-    id: uuid(row.id, `${path}.id`),
+    id: entityId(row.id, `${path}.id`),
     name: name(row.name, `${path}.name`),
     color: textOrUndefined(row.color, `${path}.color`),
     sortOrder: check(`${path}.sortOrder`, () =>
@@ -237,7 +238,7 @@ function parseGroup(value: unknown, path: string): EventGroup {
 function parseTag(value: unknown, path: string): Tag {
   const row = asObject(value, path);
   return {
-    id: uuid(row.id, `${path}.id`),
+    id: entityId(row.id, `${path}.id`),
     name: name(row.name, `${path}.name`),
     color: textOrUndefined(row.color, `${path}.color`),
     createdAt: dateTime(row.createdAt, `${path}.createdAt`),
@@ -248,7 +249,7 @@ function parseTag(value: unknown, path: string): Tag {
 function parseQuickOption(value: unknown, path: string, kind: EventDefinition['kind']): QuickOption {
   const row = asObject(value, path);
   return {
-    id: uuid(row.id, `${path}.id`),
+    id: entityId(row.id, `${path}.id`),
     label: name(row.label, `${path}.label`),
     value: check(`${path}.value`, () =>
       requireQuickOptionValue(kind, numberValue(row.value, `${path}.value`), `${path}.value`),
@@ -264,7 +265,7 @@ function parseDefinition(value: unknown, path: string): EventDefinition {
   const row = asObject(value, path);
   const kind = check(`${path}.kind`, () => requireKind(row.kind));
   return {
-    id: uuid(row.id, `${path}.id`),
+    id: entityId(row.id, `${path}.id`),
     name: name(row.name, `${path}.name`),
     kind,
     unit: textOrUndefined(row.unit, `${path}.unit`),
@@ -287,7 +288,7 @@ function parseDefinition(value: unknown, path: string): EventDefinition {
 function parseRecord(value: unknown, path: string): EventRecord {
   const row = asObject(value, path);
   const kind = check(`${path}.kind`, () => requireKind(row.kind));
-  const definitionId = uuid(row.definitionId, `${path}.definitionId`);
+  const definitionId = entityId(row.definitionId, `${path}.definitionId`);
   const occurredAt = dateTime(row.occurredAt, `${path}.occurredAt`);
   const recordedAt = dateTime(row.recordedAt, `${path}.recordedAt`);
   // 领域规则：补录只能回到过去，发生时间不得晚于录入时间
@@ -295,7 +296,7 @@ function parseRecord(value: unknown, path: string): EventRecord {
 
   const snapshotRow = asObject(row.snapshot, `${path}.snapshot`);
   const snapshot = {
-    definitionId: uuid(snapshotRow.definitionId, `${path}.snapshot.definitionId`),
+    definitionId: entityId(snapshotRow.definitionId, `${path}.snapshot.definitionId`),
     name: name(snapshotRow.name, `${path}.snapshot.name`),
     kind: check(`${path}.snapshot.kind`, () => requireKind(snapshotRow.kind)),
     unit: textOrUndefined(snapshotRow.unit, `${path}.snapshot.unit`),
@@ -316,7 +317,7 @@ function parseRecord(value: unknown, path: string): EventRecord {
   }
 
   return {
-    id: uuid(row.id, `${path}.id`),
+    id: entityId(row.id, `${path}.id`),
     definitionId,
     kind,
     value: check(`${path}.value`, () =>
@@ -339,7 +340,7 @@ function parseRecord(value: unknown, path: string): EventRecord {
 function parseCycleDefinition(value: unknown, path: string): CycleDefinition {
   const row = asObject(value, path);
   return {
-    id: uuid(row.id, `${path}.id`),
+    id: entityId(row.id, `${path}.id`),
     name: name(row.name, `${path}.name`),
     averageCycleLengthDays: check(`${path}.averageCycleLengthDays`, () =>
       optionalPositiveInteger(
@@ -372,8 +373,8 @@ function parseCycleInstance(value: unknown, path: string): CycleInstance {
     fail(`${path}.endDate`, `不能早于 startDate（${startDate}）`);
   }
   return {
-    id: uuid(row.id, `${path}.id`),
-    definitionId: uuid(row.definitionId, `${path}.definitionId`),
+    id: entityId(row.id, `${path}.id`),
+    definitionId: entityId(row.definitionId, `${path}.definitionId`),
     startDate,
     endDate,
     note: textOrUndefined(row.note, `${path}.note`),
@@ -385,8 +386,8 @@ function parseCycleInstance(value: unknown, path: string): CycleInstance {
 function parseCycleEntry(value: unknown, path: string): CycleEntry {
   const row = asObject(value, path);
   return {
-    id: uuid(row.id, `${path}.id`),
-    instanceId: uuid(row.instanceId, `${path}.instanceId`),
+    id: entityId(row.id, `${path}.id`),
+    instanceId: entityId(row.instanceId, `${path}.instanceId`),
     date: date(row.date, `${path}.date`),
     phase: textOrUndefined(row.phase, `${path}.phase`),
     symptoms: normalizeTextList(textList(row.symptoms, `${path}.symptoms`)),
