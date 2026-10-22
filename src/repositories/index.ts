@@ -1,3 +1,4 @@
+export * from './backupRepository';
 export * from './cycleDefinitionRepository';
 export * from './cycleEntryRepository';
 export * from './cycleInstanceRepository';

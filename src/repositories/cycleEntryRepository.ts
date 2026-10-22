@@ -94,6 +94,16 @@ export class CycleEntryRepository {
     });
   }
 
+  /** 全部周期记录（导出备份用）：按日期正序。 */
+  async listAll(): Promise<CycleEntry[]> {
+    return guard('读取周期记录', async () => {
+      const rows = await this.db.getAllAsync<CycleEntryRow>(
+        `SELECT ${SELECT_COLUMNS} FROM cycle_entries ORDER BY date ASC, id ASC`,
+      );
+      return rows.map(toEntry);
+    });
+  }
+
   async getById(id: string): Promise<CycleEntry | null> {
     return guard('读取周期记录', async () => {
       const row = await this.db.getFirstAsync<CycleEntryRow>(
