@@ -7,6 +7,13 @@
 > 「逐条 / 同类合并」开关）与记录行的 props 都变了；那一次改动的走读见
 > [16 时间轴行改版与记录详情](./16-timeline-row-and-detail.md)。
 > 本文关于**快照、`occurredAt` / `recordedAt`、时间轴排序**的部分仍然有效。
+>
+> ⚠️ **v6 起「单位」变「属性」**：`EventRecord.unit` → `attributes: string[]`、
+> `snapshot.unit` → `snapshot.attributes`（一条记录可以标多个属性，记录时默认不选），
+> 展示时记录自己没标会**回退**用快照里的。定义侧 `EventDefinitionKind` 收敛为
+> `'counter' | 'cycle'`（**新建不了 `quantity` 了**，但老记录的 `RecordKind` 仍是 `quantity`）。
+> 本文里 `unit` / 数量型的说法请按此理解；走读见
+> [08 事件定义](./08-event-definitions.md) 第 9 节。
 
 ## 1. 本次完成什么
 

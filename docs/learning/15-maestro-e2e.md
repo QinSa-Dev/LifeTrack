@@ -29,17 +29,17 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `.maestro/flows/00-smoke.yaml` | 冒烟：打开五个标签页都能渲染真实数据 |
+| `.maestro/flows/00-smoke.yaml` | 冒烟：四个标签页都能渲染真实数据；「新建事件」里确认计数与周期两种类型都在 |
 | `.maestro/flows/01-record-event.yaml` | 事件页 →（必要时新建定义）→ 记录页「记录」→ 时间轴可见 |
 | `.maestro/flows/02-timeline-delete-undo.yaml` | 时间轴点行 → 记录详情页 → 「更多操作」改发生日期 / 删除 / 撤销删除（**改版后已更新**，见 [16](./16-timeline-row-and-detail.md)） |
 | `.maestro/flows/03-trash-restore-perma.yaml` | 从详情页删除 → 回收站「恢复」；再删 →「永久删除」+ 原生二次确认 |
 | `.maestro/flows/04-backup-export.yaml` | 设置页「导出 JSON 备份」→ 系统分享面板出现 → 关闭 |
-| `.maestro/flows/05-cycle-boundary-preview.yaml` | 开周期 → 记一天 → 把结束日改到那天之前 → 黄色越界预演 → 保存被拒 |
+| `.maestro/flows/05-cycle-boundary-preview.yaml` | **在「事件」页新建周期型事件** → 开周期 → 记一天 → 把结束日改到那天之前 → 黄色越界预演 → 保存被拒 |
 | `.maestro/flows/06-stats-comparison.yaml` | 统计页「较前一段 / 较上年同期」切换 |
 | `.maestro/flows/07-cycle-entry-trash.yaml` | 周期里记一天 → 删除（软删）→ 撤销 → 再删 → 回收站「已删除的周期记录」恢复 → 三删 →「彻底删除」+ 二次确认 |
 | `.maestro/flows/08-cycle-calendar.yaml` | 月视图点 `2026-10-02` → `当前选中` 跟着变 → 填症状保存 → 那格变成「有记录（2 个症状）」→ 定义页「症状统计」→ 自产自销删干净 |
 | `.maestro/flows/09-timeline-repeat-merge.yaml` | 行内【+1】（不弹确认）→ 进那条记录的详情页核对来源「快捷」→ 到设置切「合并」→ 点行就地展开 → 切回「逐条」（**时间轴改版时新增**，见 [16](./16-timeline-row-and-detail.md)） |
-| `.maestro/flows/10-cycle-prediction-and-overlap.yaml` | 建制三段周期 → 默认预测文案 → 到「设置 → 偏好设置」改预测窗口 → 文案跟着变 → 改边界触发**重叠预演**（**周期增强收尾时新增**，见 [11](./11-cycle-tracking.md) 4.11 / 4.12 节） |
+| `.maestro/flows/10-cycle-prediction-and-overlap.yaml` | 建三段周期（**在「事件」页新建周期型事件**）→ 默认预测文案 → 到「设置 → 偏好设置」改预测窗口 → 文案跟着变 → 改边界触发**重叠预演**（**周期增强收尾时新增**，见 [11](./11-cycle-tracking.md) 4.11 / 4.12 节） |
 | `.maestro/subflows/record-once.yaml` | 被 01 / 03 用 `runFlow` 调用的共用片段 |
 | `.maestro/subflows/use-expanded-view.yaml` | 被 02 / 03 / 09 调用：去「设置 → 偏好设置」把时间轴钉成「逐条」（默认是合并，点行是就地展开） |
 | `.maestro/import/09a-export-marker.yaml` + `09b-import-merge.yaml` | **手工两段式**（不在 `flows/` 里）：造标记 → 导出 →（宿主把文件拷进「我的 iPhone」）→ 永久删除本地那条 → 选文件导入 → 「新增 1 条」→ 时间轴里那条回来 |
@@ -79,7 +79,7 @@ iOS 上 Maestro 读的是元素的 **accessibility 文字**，对 React Native �
 ### 3.3 匹配是**全文匹配**，部分匹配要自己写 `.*`
 
 这是本项踩的第一个坑。`assertVisible: '时间轴'` 能过，是因为页面头部标题恰好就是「时间轴」；
-但底部标签栏的文字是 **`时间轴, tab, 1 of 5`**（Maestro 帮忙拼了「第几个 tab」），
+但底部标签栏的文字是 **`时间轴, tab, 1 of 4`**（Maestro 帮忙拼了「第几个 tab」；**v6 起只剩四个标签**），
 所以 `tapOn: '事件'` **找不到任何东西**。
 
 规矩：**默认按正则全文匹配**；要用片段就显式写 `.*事件, tab.*`。
@@ -108,7 +108,8 @@ iOS 上 Maestro 读的是元素的 **accessibility 文字**，对 React Native �
 改用 **`pressKey: Enter`**：单行 `TextInput` 回车即失焦（RN 默认 `blurOnSubmit`），键盘跟着收起。
 
 另外**数字键盘（`keyboardType="number-pad"`）没有回车键**，`pressKey: Enter` 也救不了。
-所以流程里刻意**不填**「平均周期长度」这个可选字段（`CycleDefinitionForm.tsx` 里它是 number-pad）。
+所以流程里刻意**不填**「平均周期长度」这个可选字段（它在 `EventDefinitionForm.tsx` 里，
+是选「周期」类型之后才出现的 number-pad 输入框）。
 
 ### 3.6 Expo Go 里「重新打开」不等于「重新加载」
 
@@ -122,7 +123,7 @@ iOS 上 Maestro 读的是元素的 **accessibility 文字**，对 React Native �
     stopApp: true          # 杀掉 Expo Go（不清数据）
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 5'   # 用标签栏文字当锚点，确认真的落在根页面
+    visible: '时间轴, tab, 1 of 4'   # 用标签栏文字当锚点，确认真的落在根页面
     timeout: 120000
 ```
 
@@ -384,9 +385,11 @@ maestro hierarchy                  # 排错：打印当前屏幕的视图树
 9/9 Flows Passed in 4m 39s
 ```
 
-> 上面是**搭建这套流程时**的快照（当时 9 条）。后来加了 `09`（时间轴行改版）与 `10`（周期增强收尾：
-> 预测窗口 + 重叠预演），最新一次全量跑为 **11/11 通过，6m32s**；逐条明细与实测耗时见
-> `.maestro/README.md` 的「流程清单」。
+> 上面是**搭建这套流程时**的快照（当时 9 条，标签栏还是五个）。后来加了 `09`（时间轴行改版）与
+> `10`（周期增强收尾：预测窗口 + 重叠预演），**最新一次全量跑为 11/11 通过，6m47s**
+> （v6 那批改动之后；`00` 改成四个标签页、`05` / `07` / `08` / `10` 改成在「事件」页新建周期型事件）；
+> 随后又在**一个「真跑过 v6 迁移的 v5 库」**上原样整跑一遍：**11/11 通过，7m20s**。
+> 逐条明细与实测耗时见 `.maestro/README.md` 的「流程清单」与「跑完之后怎么核对」。
 
 > 输出顺序不是文件顺序，但总时长等于各条之和，说明是**顺序执行**的（Maestro 只是不按文件名排序打印）。
 > 顺序也不是「谁先谁后都行」：`07` / `08` 都会动 `Maestro周期` 那段周期的记录，
@@ -406,7 +409,8 @@ maestro hierarchy                  # 排错：打印当前屏幕的视图树
 > 收尾时注意：`event_records` **没有指向 `event_definitions` 的外键**（历史独立于定义，见
 > [08 事件定义](./08-event-definitions.md)），所以删掉 `Maestro喝水` 定义**不会**连带删掉它的记录，
 > 要显式删 `DELETE FROM event_records WHERE snapshot_name LIKE 'Maestro%'`。
-> 周期定义是级联的（实例 + 记录都会跟着走）。
+> **周期型定义**（`kind = 'cycle'`）则是级联的：删掉它，`cycle_instances` 与 `cycle_entries`
+> 都会跟着走（v6 起外键直接指向 `event_definitions`）。
 
 ### 没覆盖什么（诚实记录）
 

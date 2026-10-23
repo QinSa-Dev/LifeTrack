@@ -1,5 +1,13 @@
 # 14 备份与恢复（导入导出）：显式格式契约、严格解析与「取并集」的合并
 
+> ⚠️ **v6 起备份格式升到 `formatVersion = 2`**：集合从 7 个变成 6 个（**没有 `cycleDefinitions`**，
+> 周期定义并进了 `eventDefinitions`，周期实例 / 每日记录的外键改指它），定义 / 记录的
+> `unit` → `attributes`（JSON 数组文本）、快捷选项 `label` / `unit` → `attribute`。
+> **v1 备份仍然能导**：legacy 根下的 `cycleDefinitions` 会被折成 `kind = 'cycle'` 的定义
+> （`cycleMode` 兜底 `manual`）、定义里的 `quantity` → `counter`、`unit` 作为 `attributes` 的兜底；
+> **v2 备份里出现 `quantity` 定义会被拒**。本文的格式表请按此理解（走读见
+> [08 事件定义](./08-event-definitions.md) 第 9 节）。
+
 > 对应功能：**第二阶段（导入导出）——JSON 备份 / CSV 表格导出、按 id 合并的导入**。
 > 本文以仓库真实代码为依据。凡是「没做过」的验证，会明确写出来。
 
@@ -10,7 +18,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 导出 JSON 备份 | 七张业务表（含**归档的定义**与**软删除的记录**）打包成一个带格式声明的 JSON 文件 |
+| 导出 JSON 备份 | 七张业务表（**v6 起为六张：无 `cycleDefinitions`**；含**归档的定义**与**软删除的记录**）打包成一个带格式声明的 JSON 文件 |
 | 导出 CSV 表格 | 只要事件记录的表格视图，方便用 Excel / Numbers 打开核对数字（**只导出、不导入**） |
 | 导入（合并） | 选一个 JSON 备份，**并进**本地数据；本地独有的数据一条都不会被删 |
 | 冲突合并 | 同 id 的一对数据按「较新的 `updatedAt` 胜出」决定谁留下 |
@@ -25,7 +33,7 @@
 | 数字 | 含义 | 谁决定 |
 | --- | --- | --- |
 | `formatVersion`（当前 1） | **备份文件结构**的版本：字段怎么摆 | 领域层 `BACKUP_FORMAT_VERSION` |
-| `schemaVersion`（备份时是当前的 schema 版本，如今 5） | 导出那一刻**数据库 schema** 的版本 | `LATEST_SCHEMA_VERSION`，由调用方传入 |
+| `schemaVersion`（备份时是当前的 schema 版本，如今 6） | 导出那一刻**数据库 schema** 的版本 | `LATEST_SCHEMA_VERSION`，由调用方传入 |
 
 两者不是一回事：领域层不依赖数据库（见 [03](./03-typescript-domain-model.md) 与
 [04](./04-sqlite-and-repository.md) 的职责边界），所以 `schemaVersion` 是**参数**，
@@ -72,12 +80,13 @@ TypeScript 的类型在运行时**不做任何校验**（见 [03](./03-typescrip
 `parseBackup` 把 `JSON.parse` 的结果当成 `unknown`，逐字段过守卫函数，不合法就抛
 `ImportError` 并带上**路径**。
 
-**为什么本项目需要**：导入会**重写七张表**。如果解析阶段宽松，脏数据会一路写进数据库，
+**为什么本项目需要**：导入会**重写全部业务表**（v6 起六张）。如果解析阶段宽松，脏数据会一路写进数据库，
 变成「以后每次读都出问题」的隐性损坏。宁可拒绝，也不要存下去。
 
 **用在哪**：`src/domain/backup.ts` 的 `parseBackup` → `parseBackupRoot` → `parseGroup` /
-`parseTag` / `parseDefinition` / `parseRecord` / `parseCycleDefinition` / `parseCycleInstance` /
-`parseCycleEntry`。
+`parseTag` / `parseDefinition` / `parseRecord` / `parseCycleInstance` / `parseCycleEntry`，
+以及属性列表专用的 `parseAttributes`（v1 的 `unit` 作为兜底；v1 还有 `parseLegacyCycleDefinition`
+把老的 `cycleDefinitions` 折成周期型定义）。
 
 **不用会怎样**：一个手改错的 `value`（比如把 `1` 写成 `"1"`）会静默入库，统计里出现 `NaN`。
 
@@ -207,7 +216,7 @@ COMMIT
 
 ### 3.7 稳定排序：让两次导出可以 diff
 
-**是什么**：`sortBackupData` 给七个集合各自定死排序键（分组按 `sortOrder`、标签按名称、
+**是什么**：`sortBackupData` 给每个集合各自定死排序键（分组按 `sortOrder`、标签按名称、
 记录按 `occurredAt` 正序…），导出与合并结果都过它。
 
 **为什么**：如果不排序，导出的 JSON 顺序取决于数据库的返回顺序，同一份数据两次导出会不一样，
@@ -394,10 +403,13 @@ export function escapeCsvField(value: string): string {
 }
 
 export const RECORDS_CSV_HEADERS = [
-  '发生时间', '录入时间', '来源', '事件', '类型', '取值', '单位',
+  '发生时间', '录入时间', '来源', '事件', '类型', '取值', '属性',
   '分组', '标签', '备注', '状态', '删除时间', '记录ID',
 ] as const;
 ```
+
+> ⚠️ v6 起第 7 列是「**属性**」（原来是「单位」），多个属性用 ` | ` 连接
+> （`LIST_SEPARATOR`，见 `src/features/backup/csv.ts`）。
 
 - **RFC 4180**：含逗号 / 引号 / 换行的字段加引号，内部引号翻倍；行尾用 `\r\n`；
   文本开头加 BOM（`\uFEFF`），否则 Excel 打开中文会乱码。
@@ -596,7 +608,8 @@ npx expo export --platform ios   # 新增了原生模块，打包要重新验一
 
 **建议亲自尝试的小练习**
 
-1. **导出 → 手改坏 → 导入**：把导出的 JSON 里某个 `value` 改成 `"1"` 或把 `cycleDefinitions` 删掉，
+1. **导出 → 手改坏 → 导入**：把导出的 JSON 里某个 `value` 改成 `"1"`、或把某个
+   `eventDefinitions[0].attributes` 改成不合法的东西再导入（v1 备份里还可以试删 `cycleDefinitions`），
    再试着导入，观察错误里的路径，确认数据库没被改动。
 2. **验证幂等**：同一份备份连导两次，看第二次的提示是不是「新增 0 条」。
 3. **验证合并**：导出 → 在应用里再记一条 → 导入刚才的备份，确认那条新记录还在。

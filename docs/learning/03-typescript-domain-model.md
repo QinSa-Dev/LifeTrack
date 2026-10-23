@@ -1,5 +1,13 @@
 # 03 · TypeScript 领域模型：把业务规则写进类型里
 
+> ⚠️ **v6 起有几个类型变了**（本文写作之后）：`EventDefinitionKind` 收敛为 `'counter' | 'cycle'`
+> （**没有 `quantity` 了**）、`EventDefinition.attributes: string[]` 取代 `unit?: string`、
+> `EventRecord.attributes: string[]`、`QuickOption = { attribute?, value, sortOrder }`（没有 `label`）、
+> **`CycleDefinition` 这个域类型被删掉了**（周期定义就是 `kind = 'cycle'` 的 `EventDefinition`）。
+> 但**记录**那侧仍保留 `RecordKind = 'counter' | 'quantity'`（老记录不能改）。
+> 本文下面凡是写 `'counter' | 'quantity'` 的地方，都请按这条注记理解：类型收敛发生在 v6，
+> 走读见 [08 事件定义](./08-event-definitions.md) 第 9 节与 [11 周期事件](./11-cycle-tracking.md) 的 4.13 节。
+
 ## 1. 本次完成了什么
 
 **用户现在可以做什么**

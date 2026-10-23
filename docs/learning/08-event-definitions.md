@@ -303,3 +303,104 @@ npx expo export --platform ios   # 打包验证（不需要模拟器）
 4. **验证二次确认**：在编辑页点「永久删除」，先点「取消」确认没有删除，再点「永久删除」确认删除后的跳转。
 
 以上练习都不涉及第一阶段已验收代码的结构修改，可以放心做。
+
+## 9. 后续变更（v6）：类型收敛为「计数 / 周期」，属性可多条
+
+> 这一节是**本文写作之后**发生的事，走读口径以本节为准。原文（1–8 节）保留当时的样子：
+> 那时类型还是 `counter` / `quantity`、事件定义还有一个 `unit`、快捷选项还有一个 `label`。
+
+### 9.1 为什么改
+
+原设计里「数量」是一种**类型**：类型是「计数 / 数量」，量纲（杯 / 毫升）放在 `unit` 里。
+用起来有两个别扭的地方：
+
+1. **类型与量纲搅在一起**：真正决定取值语义的其实是界面上的快捷选项与记录时的填写，
+   而 `unit` 只是一个展示后缀；
+2. **只能有一个量纲**：一条记录想要「温水 + 500ml」这种两个属性就表达不出来。
+
+于是 v6 把模型改成：**类型只有「计数 / 周期」**，「数量」不再是类型，
+改由**自由文本属性**表达（可以多条），而**周期定义**干脆并进事件定义
+（见 [11 周期事件](./11-cycle-tracking.md) 的 4.13 节）。
+
+### 9.2 类型与属性
+
+```ts
+// 定义侧：只有两种
+export type EventDefinitionKind = 'counter' | 'cycle';
+export type CycleMode = 'auto' | 'manual';
+
+export interface EventDefinition {
+  kind: EventDefinitionKind;
+  attributes: string[];          // 自由文本，可多条；周期型恒为 []
+  cycleMode?: CycleMode;         // 仅 kind === 'cycle'；'auto' 自动循环 / 'manual' 手动标记
+  averageCycleLengthDays?: number;
+  averagePeriodLengthDays?: number;
+  // ...
+}
+
+// 记录侧：历史仍保留 quantity（老记录不能改）
+export type RecordKind = 'counter' | 'quantity';
+```
+
+- **定义侧**：`toDefinitionKind` 只认 `counter` / `cycle`；`toRecordKind(kind)` 对非 `counter`
+  抛 `ValidationError`——所以**新建不出 `quantity` 记录**，但读历史时 `quantity` 仍然有效。
+- **记录侧**：`EventRecord.attributes: string[]` 是「这一次标了哪些」，`snapshot.attributes`
+  是「定义当时有哪些」。展示用 `recordAttributes(record)` 取（记录自己有就用自己的，否则回退快照），
+  再用 `attributeText(list)` 拼成 `温水 · 500ml`（空则 `undefined`）。
+
+### 9.3 快捷选项：合并成「属性 + 取值」
+
+原来一个快捷选项是「名称 + 取值 + 单位」（`label` / `value` / `unit`），
+现在只剩「属性 + 取值」：
+
+```ts
+export interface QuickOption {
+  id: string;
+  attribute?: string;   // 从定义那份 attributes 里挑；空 = 这一下不带属性
+  value: number;
+  sortOrder: number;
+}
+```
+
+界面上就是「属性 chips + 取值输入框」——不用再给每一次记录起名字，属性本身就是那个名字。
+
+### 9.4 数据库：v6 迁移
+
+`MIGRATION_V6_CYCLE_AS_EVENT_KIND`（迁移名 `cycle_as_event_kind_and_attributes`）做四件事：
+
+| # | 动作 | 细节 |
+| --- | --- | --- |
+| 1 | 重建 `event_definitions` | 加 `cycle_mode` / `average_cycle_length_days` / `average_period_length_days`；`attribute` → `attributes`；CHECK `kind IN ('counter','cycle')` 与 `(kind = 'cycle') = (cycle_mode IS NOT NULL)` |
+| 2 | 把老周期定义折进来 | `cycle_definitions` 按**原 id** 插成 `kind = 'cycle'`，`cycle_mode` 兜底 `'manual'` |
+| 3 | 折算老数据 | 定义 `quantity` → `counter` 且 `unit` 包成 `attributes`；`quick_options.label` / `unit` 合成 `attribute`（有单位用单位，否则用 label）；记录的 `unit` / `snapshot_unit` → `attributes` / `snapshot_attributes` |
+| 4 | 改外键并删表 | `cycle_instances` / `cycle_entries` 的外键由 `cycle_definitions` 改指 `event_definitions`；最后 `DROP TABLE cycle_definitions` |
+
+两个必须记住的细节：
+
+- **属性 JSON 一律用 SQLite 的 `json_array()` 生成**，不手拼字符串——否则属性里的引号 / 反斜杠
+  会拼出坏 JSON。`json_array(NULL)` 会返回 `[null]`，所以先 `CASE WHEN … IS NULL OR trim(…) = ''
+  THEN '[]' ELSE json_array(…) END` 兜底。
+- **记录表的 kind CHECK 保持 `('counter','quantity')` 不动**：历史记录不能改，改了就等于篡改历史。
+
+读的时候用一个宽松解析 `readTextList(json)`：解析失败退化成 `[]`（属性只是展示信息，
+坏一个不值得让整页打不开）。
+
+### 9.5 已知的行为变化（要记住）
+
+v6 把老 `quantity` 定义折成 `counter`，但**老快捷选项的取值可能不是整数**（如「饮水 0.5 升」）。
+计数型要求正整数，于是**编辑那个定义会保存失败**。历史记录不受影响（记录类型仍是 `quantity`），
+真嫌碍事就把取值改成整数、或把那条定义归档 / 删掉重建成新事件。
+
+### 9.6 验证
+
+- 单测：`eventDefinitionRepository-test.ts`（属性多条、空白规范化、周期型属性恒空、`cycleMode`
+  兜底）、`eventRecordRepository-test.ts`（记录属性与快照分离）、
+  `db/__tests__/migrations-test.ts`（v6 块：列 / CHECK / 级联 / 从 v5 折算 / 索引对齐 / 版本号）。
+- 真实库：用一次性脚本造一个 **v5 库**（`make-v5-fixture.cjs` + 现成的 `seed.py`：4 个定义 +
+  月经的 2 段周期 / 4 条每日记录 + 15 条事件记录含 1 条软删），拷进模拟器换掉 `lifetrack.db`，
+  由 App 启动时**真跑 v6**——`user_version 5 → 6`、`quantity` 折成 `counter`（属性 = 旧 `unit`）、
+  周期定义折成 `kind = 'cycle'`、周期数据一条不少、`PRAGMA foreign_key_check` 干净；
+  另有一次性的 `check-v6.cjs` 在 v5 夹具库上核对过转义、索引与无残留。
+- 端到端：`.maestro/flows/00`（新建事件里两种类型都在）与 `05` / `07` / `08` / `10`
+  （周期改从「事件」页新建）；**而且这一次是在上面那个「迁移过的库」上跑的全套**：
+  11/11 通过、7m20s。

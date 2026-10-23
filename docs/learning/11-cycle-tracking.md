@@ -3,6 +3,12 @@
 > 对应功能：**第二阶段——周期事件**（周期定义 / 周期实例 / 周期内记录）。
 > 本文以仓库真实代码为依据。凡是「没做过」的验证，会明确写出来。
 > 这一项**新增了 v4 迁移**（三张表），schema 从 v3 升到 v4。
+>
+> ⚠️ **v6 起「周期定义」不单独存在了**：周期是事件类型的一种（`kind = 'cycle'` 的
+> `EventDefinition`），`cycle_definitions` 表整表并进 `event_definitions`，底部也没有「周期」标签页
+> （事件页一张列表并列两种类型）。本文里凡说「周期定义」的地方，现在都指 `kind = 'cycle'` 的事件定义；
+> **实例与每日记录两张表、以及这里的区间 / 重叠 / 一天一条规则完全没变**。
+> 那次改动的走读见下面的 4.13 节。
 
 ## 1. 本次完成什么
 
@@ -62,6 +68,12 @@
 | `src/features/cycles/MonthCalendar.tsx` | 功能组件 | **后来新增**：月视图网格（纯展示，无状态） |
 | `src/app/(tabs)/_layout.tsx` | 页面 | 底部由三标签变**四标签**（时间轴 / 事件 / 周期 / 设置） |
 | `src/app/(tabs)/settings.tsx` | 页面 | **后来修改**：加「偏好设置」卡片——预测窗口（与时间轴显示方式并成一组）在这里改（第 4.11 节） |
+
+> ⚠️ **v6 起这张表里的三处已删除**（周期并入事件类型，见第 4.13 节）：
+> `src/repositories/cycleDefinitionRepository.ts`、`src/features/cycles/CycleDefinitionForm.tsx`、
+> `src/app/cycles/new.tsx` 都不在了，`src/app/(tabs)/cycles.tsx` 也换成
+> `src/app/(tabs)/definitions.tsx`（底部由四标签变**四标签：时间轴 / 统计 / 事件 / 设置**）。
+> 上表保留的是这一项当时的样子。
 
 ## 3. 相关技术概念
 
@@ -267,6 +279,10 @@ cycles/new.tsx                 /cycles/new         新建定义
 cycles/[id].tsx                /cycles/[id]        定义详情（该定义的周期列表）
 cycle-instances/[id].tsx       /cycle-instances/[id]   一段周期 + 每日记录
 ```
+
+> ⚠️ **v6 起（第 4.13 节）**：`(tabs)/cycles.tsx` 改成 `(tabs)/definitions.tsx`（路径 `/definitions`，
+> 一张列表并列计数与周期两种类型）；`cycles/new.tsx` 删除（新建周期型事件走 `/events/new`）；
+> `cycles/[id].tsx` 保留，只服务 `kind = 'cycle'` 的事件定义。下面这段前缀冲突的说明在当时是对的。
 
 `/cycles` 同时是「标签页」和「`/cycles/...` 目录」的前缀。expo-router 允许这样做：
 `(tabs)/cycles.tsx` 只对应精确路径 `/cycles`，而 `cycles/new.tsx` / `cycles/[id].tsx`
@@ -636,7 +652,8 @@ export function describePredictionWindow(window: number): string {
 三处都用**聚焦时重读**而不是挂载时读一次：
 
 ```ts
-// src/app/(tabs)/cycles.tsx — 每次回到这个标签页都重读一次
+// src/app/(tabs)/definitions.tsx — 每次回到这个标签页都重读一次
+// （写这段时它还是 (tabs)/cycles.tsx，v6 起周期并入「事件」页，见 4.13 节）
 useFocusEffect(
   useCallback(() => {
     let cancelled = false;
@@ -714,6 +731,72 @@ sequenceDiagram
 
 用户随后有三个选择：把边界改回包含 10-08、删掉 10-08 那条记录（二次确认）、或放弃这次修改。
 
+### 4.13 「周期定义」并入事件类型（v6）：表怎么搬、两种做法怎么落
+
+> 这是本文写作之后的改动（v6 迁移 `cycle_as_event_kind_and_attributes`）。它没有改上面任何一条
+> 区间 / 重叠 / 一天一条的规则——**改的是「周期定义」住在哪**，以及界面上从哪儿进。
+
+**为什么要搬**：周期和「喝水」本来是同一件事的两个侧面——都是「用户定义了一类可记录的东西」，
+只是一个记「一次」、一个记「一段」。分成两张定义表会带来重复：分组、标签、归档、排序、
+永久删除这些能力都各写一遍，界面上也得有两个管理入口。搬进一张表之后，
+`EventDefinition` 的 `kind` 决定它长什么样：
+
+```ts
+export type EventDefinitionKind = 'counter' | 'cycle';
+export type CycleMode = 'auto' | 'manual';   // 自动循环 / 手动标记
+
+export interface EventDefinition {
+  kind: EventDefinitionKind;
+  attributes: string[];                 // 周期型恒为 []（没有「属性」的概念）
+  cycleMode?: CycleMode;                // 仅 kind === 'cycle'
+  averageCycleLengthDays?: number;      // 平均周期长度（给预测兜底）
+  averagePeriodLengthDays?: number;     // 平均持续天数
+  // ...
+}
+```
+
+**v6 迁移做了四件事**（细节见 [08 事件定义](./08-event-definitions.md) 第 9 节）：
+
+1. 重建 `event_definitions`：加 `cycle_mode` 与两个平均长度列，
+   CHECK `(kind = 'cycle') = (cycle_mode IS NOT NULL)`——**周期型必须有做法，非周期型必须没有**；
+2. 老 `cycle_definitions` 按**原 id** 折成 `kind = 'cycle'` 的定义（`cycleMode` 兜底 `'manual'`）；
+3. `cycle_instances` / `cycle_entries` 的外键**改指 `event_definitions`**（仍是 `ON DELETE CASCADE`；
+   删一条周期型定义会一并带走它的实例与每日记录——这与「删定义不删历史（事件记录）」不同，
+   因为事件记录没有外键、而周期记录有）；
+4. `DROP TABLE cycle_definitions`。
+
+于是 `CycleDefinitionRepository` / `CycleDefinitionForm` / `/cycles/new` 全部删除，
+周期定义就是 `EventDefinitionRepository` 管的一种 `EventDefinition`。
+`features/cycles/labels.ts` 里留了一个 `CycleDefinitionView = Pick<EventDefinition, …>`
+给展示函数用，以及做法的标签 / 说明文案：
+
+```ts
+export const CYCLE_MODE_LABELS = { auto: '自动循环', manual: '手动标记' };
+export const CYCLE_MODE_HINTS = {
+  auto: '按你设置好的规律自动生成，到时间自动开始、自动结束',
+  manual: '由你自己点开始、点结束，时长不预先限定，真实发生后再记录',
+};
+```
+
+**界面上的落点**：
+
+- 底部**去掉「周期」标签页**（现为 4 个：时间轴 / 统计 / 事件 / 设置）；事件页一张列表并列两种类型，
+  每行副标题用 `describeDefinition(kind, attributes, groupName)` 写明「分组 · 计数/周期 · 属性 …」；
+- 计数型点进记录页（点一次记一次），周期型点进 `/cycles/[id]`（开一段、逐天记录）；
+  `/cycles/[id]` 里对 `kind !== 'cycle'` 的定义会兜底提示「这不是周期型事件」并给「去记录页」；
+- 新建事件时把类型点成「周期（有开始与结束）」，表单换成周期字段——**做法（自动循环 / 手动标记）
+  各带一句上表的说明**；
+- **自动循环本轮只做「配置 + 生成下一段」**：内页出现「生成这一段」，点它用 `predictNextCycle`
+  算出下一段的开始 / 结束日一起写入，之后仍可手改；**不做后台自动写库**
+  （「到时间自动开始结束」这句说明是产品意图，实现留待以后）。
+- 历史记录类型 `RecordKind` 仍保留 `counter` / `quantity`：老周期记录不受影响，
+  本节只动了「定义」。
+
+**验证**：`cycleInstanceRepository-test.ts` / `cycleEntryRepository-test.ts` 改成用
+`EventDefinitionRepository` 建周期型定义（辅助函数 `createCycle`）；`migrations-test.ts` 的 v6 块
+覆盖「周期实例外键级联到 `event_definitions`」与「从 v5 升级时周期定义 / 实例 / 记录一条不少」；
+端到端 `05` / `07` / `08` / `10` 都改成「事件页 → 新建事件 → 类型选周期」。
+
 ## 6. 如何验证
 
 ### 关键命令
@@ -742,6 +825,18 @@ npx expo export --platform ios   # 通过（js bundle 3.1MB，没有新增原生
 maestro test .maestro/flows      # 11/11 通过（新增 10 周期预测窗口与重叠预演）
 ```
 
+「周期并入事件类型 + 属性可多条」（第 4.13 节，v6）之后重跑：
+
+```bash
+npm test    # 27 个套件 / 458 个用例通过（套件少了 1 个：CycleDefinitionRepository 的用例并进 EventDefinitionRepository）
+npx expo export --platform ios   # 通过（没有新增原生依赖）
+maestro test .maestro/flows      # 11/11 通过，6m47s（周期流程改成在「事件」页新建周期型事件）
+```
+
+又在一个**「真跑过 v6 迁移的 v5 库」**（一次性夹具 + `seed.py` 灌 4 个定义 / 2 段周期 / 15 条记录）
+上原样整跑一遍：**11/11 通过，7m20s**（见 [08 事件定义](./08-event-definitions.md) 第 9.6 节、
+`.maestro/README.md` 的「跑完之后怎么核对」）。
+
 其中与周期直接相关的用例：
 
 - `src/domain/__tests__/dates-test.ts`：格式、闰年、2 月 31 日、跨月跨年、闭区间、进行中只约束下界；
@@ -759,7 +854,10 @@ maestro test .maestro/flows      # 11/11 通过（新增 10 周期预测窗口�
   `parsePredictionWindow` 认识三种取值且不认识的一律回退、`describePredictionWindow` 的措辞。
 - `src/db/__tests__/migrations-test.ts`：v4 三表存在、两项 `CHECK`、`UNIQUE(instance_id, date)`、
   外键生效、级联删除、「记录与实例独立」；v1 升级只跑 v2 之后的迁移且旧数据不丢；
-  v5 加上 `deleted_at` 列（可空、旧行为 NULL）、从 v4 旧库升级后老记录都在且都视为未删除。
+  v5 加上 `deleted_at` 列（可空、旧行为 NULL）、从 v4 旧库升级后老记录都在且都视为未删除；
+  **v6**（第 4.13 节）：`attributes` / 快捷选项列 / `cycle_mode` 的 `CHECK`、周期实例外键级联到
+  `event_definitions`、从 v5 旧库升上来时周期定义（含引号与反斜杠的 `unit`）/ 实例 / 每日记录一条不少、
+  8 个索引对齐、迁移对象版本号。
 - `src/repositories/__tests__/cycleInstanceRepository-test.ts`：定义必须存在且未归档、区间非法、
   重叠拒绝、**缩小边界被拒后「边界没变、记录一条没少」**、`details.outsideDates`、`endInstance`、级联删除；
   以及**回收站里的记录不挡边界**（软删除之后可以缩到它外面，未删的那条被完整保留）。

@@ -28,7 +28,8 @@
 | 第二阶段（时间轴与记录详情改版） | 行内「取值 + 【+1】」（即时落库、不弹确认）、点行进记录详情页（改 / 删 / 撤销）、「逐条 / 合并」显示方式 | **已完成**（本文档 `16`） |
 | 第二阶段（周期增强收尾） | 预测窗口（默认 3 段）可在「设置」里调 1 / 3 / 5；改边界时把「会和哪一段周期重叠」也提前预告 | **已完成**（本文档 `11` 的 4.11 / 4.12 节） |
 | 第二阶段（设置项归拢） | 纯展示偏好（时间轴显示方式、周期预测窗口）统一收进「设置 → 偏好设置」并按分组展示；时间轴默认改为「合并」 | **已完成**（本文档 `16` 的 4.9 节） |
-| 第二阶段剩余项 | 自定义字段（标签字段化）、周期并入事件 | 未开始（见 `HANDOFF.md` 9.5） |
+| 第二阶段（周期并入事件类型 + 属性可多条，v6） | `cycle_definitions` 并入事件定义（周期是一种事件类型，去掉「周期」标签页）；「单位」→ 可多条的「属性」；快捷选项合并成「属性 + 取值」 | **已完成**（本文档 `11` 的 4.13 节、`08` 的第 9 节） |
+| 第二阶段剩余项 | 自定义字段（标签字段化）、周期自动循环的「后台懒补齐」 | 未开始（见 `HANDOFF.md` 9.5） |
 
 第一阶段「已完成」的含义是：下面的命令都真实跑过并且通过了。
 
@@ -52,7 +53,7 @@ npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
 端到端（真手点）：
 
 ```bash
-maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / iOS 26.3 / Expo Go 58.0.5）
+maestro test .maestro/flows              # 11/11 通过，6m47s（iPhone 16e / iOS 26.3 / Expo Go）
 ```
 
 运行验证（都是模拟器，不是真机）：
@@ -60,7 +61,8 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
 - **第一阶段**：iOS Simulator（iPhone 17 Pro / iOS 26.3 / Expo Go 58.0.4）与 Android 模拟器
   （Pixel 9 / API 36 / Expo Go 58.0.4）都能打开应用、渲染标签页，并且 SQLite 数据能跨重启保留。
 - **第二阶段**：已在本机 iOS Simulator（iPhone 16e / iOS 26.3 / Expo Go 58.0.5）实机打开，
-  用 deep link 逐页走了一遍，**时间轴、统计、事件、周期、设置五个标签页**加上
+  用 deep link 逐页走了一遍，**时间轴、统计、事件、周期、设置五个标签页**（**v6 起「周期」标签已并进
+  「事件」，只剩四个**）加上
   **回收站、记录页、周期实例页**都能正常渲染真实 SQLite 数据，Metro 无 JS 报错。
   为了让页面有内容，示例数据是**直接写进模拟器数据库**的。
 - **第二阶段（写入路径）**：已用 Maestro 在同一个模拟器上**真的点过**（见本文档 `15`，时间轴那部分见 `16`）：
@@ -77,6 +79,13 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
   选文件 → 二次确认 → 「新增 1 条」→ 记录回时间轴，**id 与文件里逐字相同**。
 - **第二阶段（v4 → v5 真实升级）**：在模拟器上把使用者的 v4 库升到 v5
   （`user_version 4 → 5`），15 条事件记录 / 4 条周期记录 / 1 条软删一条没少，`PRAGMA foreign_key_check` 干净。
+- **第二阶段（v5 → v6 真实升级）**：造一个 **v5 库**（`make-v5-fixture.cjs` + 现成的 `seed.py`：
+  4 个定义 + 月经的 2 段周期 / 4 条每日记录 + 15 条事件记录含 1 条软删），拷进模拟器换掉 `lifetrack.db`，
+  由 App 启动时真跑 v6（`user_version 5 → 6`）：`quantity` 折成 `counter`（属性 = 旧 `unit`）、
+  周期定义按原 id 并进 `event_definitions`（`cycleMode` 兜底 `manual`）且实例 / 每日记录一条不少，
+  `cycle_definitions` 表已不存在，`PRAGMA foreign_key_check` 干净；**并在该库上把 Maestro 全套又跑一遍
+  （11/11 通过，7m20s）**，证明应用在升级后的库上照常工作。
+  迁移本身另有一次性的 `check-v6.cjs` 在 v5 夹具库上核对过转义、索引与无 `_old`/`_new` 残留。
 - **仍未验证（如实记录）**：**Android 与真机没跑过**；**「选文件导入」的素材由宿主拷入**
   （模拟器里「保存到『文件』」不落盘，没登 iCloud 账号），**跨 App 那段没有端到端闭环**；
   周期流程假定运行日期晚于 `2026-10-05`（`08` 另假定 `2026-10-02` 那天还没记录）；
@@ -91,15 +100,15 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
 | 领域模型（事件定义 / 记录 / 快照 / 周期）、统一错误、UUID v7 主键 | [03-typescript-domain-model.md](./03-typescript-domain-model.md) |
 | SQLite 初始化、版本化迁移、Repository 写入读取 | [04-sqlite-and-repository.md](./04-sqlite-and-repository.md) |
 | 「启动次数 +1」这个最小持久化闭环：从界面动作到落盘再到回读 | [05-business-logic-and-data-flow.md](./05-business-logic-and-data-flow.md) |
-| 底部标签页（现为时间轴 / 事件 / 周期 / 设置）、页面之间怎么跳、状态怎么在组件间传递 | [06-navigation-and-state.md](./06-navigation-and-state.md) |
+| 底部标签页（v6 起为时间轴 / 统计 / 事件 / 设置）、页面之间怎么跳、状态怎么在组件间传递 | [06-navigation-and-state.md](./06-navigation-and-state.md) |
 | 怎么跑检查与测试、测试覆盖了什么、遇到问题怎么查 | [07-testing-and-debugging.md](./07-testing-and-debugging.md) |
 | 事件定义 / 分组 / 标签 / 快捷选项 / 归档：v2 迁移、表单、二级路由、多表聚合 | [08-event-definitions.md](./08-event-definitions.md) |
-| 记录一次事件（counter / quantity）、快照、时间轴：v3 迁移、发生时间 vs 录入时间 | [09-event-recording.md](./09-event-recording.md) |
+| 记录一次事件（counter / quantity）、快照、时间轴：v3 迁移、发生时间 vs 录入时间（**v6 起「单位」变「属性」、类型收敛为计数 / 周期，见第 1 节的注记**） | [09-event-recording.md](./09-event-recording.md) |
 | 补录与撤销：本地时间 ↔ UTC、日期解析与溢出、软删除的幂等与撤销 | [10-backfill-and-undo.md](./10-backfill-and-undo.md) |
 | 周期事件：日历日期运算、区间重叠、边界修改「不静默删除」、一天一条的 UPSERT | [11-cycle-tracking.md](./11-cycle-tracking.md) |
 | 周期增强：预测优先用实际观察到的间隔（返回值带依据）、保存边界前的越界预演 | [11-cycle-tracking.md](./11-cycle-tracking.md) 的 4.2 / 4.8 节 |
 | 周期月视图：把「哪一天有记录」摊开在一个月里，点一天 = 把那一天填进同一个表单 | [11-cycle-tracking.md](./11-cycle-tracking.md) 的 4.10 节 |
-| 统计：从事实数据聚合（不落汇总表）、本地时区分天/周、单位不一致不合并、时间轴 FlatList 虚拟化 | [12-statistics.md](./12-statistics.md) |
+| 统计：从事实数据聚合（不落汇总表）、本地时区分天/周、属性不一致不合并、时间轴 FlatList 虚拟化 | [12-statistics.md](./12-statistics.md) |
 | 统计增强：环比 / 同比的窗口对齐（52 周对齐）、差值与变化率、对照期为 0 时不给百分比 | [12-statistics.md](./12-statistics.md) 的 3.9–3.11、4.6 节 |
 | 统计下推：趋势/对比只读窗口（`statsReadRange` + `list({ from, until })`），聚合规则仍留在纯函数里 | [12-statistics.md](./12-statistics.md) 的 3.13、4.4 节 |
 | 按症状统计：第二套事实（周期记录）与同一套纪律（只算可见、算不出来就不给数字、不做同义归一） | [12-statistics.md](./12-statistics.md) 的 3.12 / 4.8 节 |
@@ -107,6 +116,7 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
 | 备份与恢复：显式格式契约、外部 JSON 的严格解析、取并集合并、事务内体检、CSV 导出 | [14-backup-and-restore.md](./14-backup-and-restore.md) |
 | 端到端回归：用 Maestro 在模拟器上真手点写入路径、可访问性文字当接口、断言之外读库核对 | [15-maestro-e2e.md](./15-maestro-e2e.md) 的 3.4 / 3.7 / 3.10 / 4.8 节 |
 | 时间轴行改版与记录详情：行内「取值 + 【+1】」（即时落库不弹确认）、点行进详情、快照不可改而事实可更正、纯展示偏好存 `app_meta`；4.9 节讲「开关挪进设置、默认改合并、聚焦时重读」 | [16-timeline-row-and-detail.md](./16-timeline-row-and-detail.md) |
+| 周期并入事件类型 + 属性可多条（v6）：`cycle_definitions` 并进事件定义、去掉「周期」标签页、自动循环 / 手动标记、「单位」变可多条的属性、快捷选项「属性 + 取值」 | [11-cycle-tracking.md](./11-cycle-tracking.md) 的 4.13 节、[08-event-definitions.md](./08-event-definitions.md) 的第 9 节 |
 
 ### 为什么还缺几篇编号
 
@@ -127,15 +137,18 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
 5. **[05 业务逻辑与数据流](./05-business-logic-and-data-flow.md)** —— 把上面四篇串起来，走一遍「启动次数」这个真实的最小闭环。
 6. **[06 导航与状态](./06-navigation-and-state.md)** —— 页面之间怎么连、状态怎么流。
 7. **[07 测试与调试](./07-testing-and-debugging.md)** —— 怎么证明代码是对的，出问题怎么排查。
-8. **[08 事件定义](./08-event-definitions.md)** —— 第二阶段第 1 项：从 v2 迁移到表单、二级路由与多表聚合的前后端闭环。
+8. **[08 事件定义](./08-event-definitions.md)** —— 第二阶段第 1 项：从 v2 迁移到表单、二级路由与多表聚合的前后端闭环；
+   第 9 节是 v6：类型收敛为「计数 / 周期」、「单位」变可多条的「属性」、快捷选项「属性 + 取值」。
 9. **[09 事件记录](./09-event-recording.md)** —— 第二阶段第 2 项：v3 迁移、快照写入、occurredAt/recordedAt 与时间轴。
 10. **[10 补录与撤销](./10-backfill-and-undo.md)** —— 补录（本地时间 ↔ UTC、日期解析）与软删除/撤销（幂等）。
 11. **[11 周期事件](./11-cycle-tracking.md)** —— 周期定义 / 实例 / 每日记录：日历日期运算、区间规则，以及「改边界不悄悄删记录」；
     4.2 / 4.8 节是后来的增强：预测优先看实际间隔（带依据）、保存前就把「会甩出哪几天」提示出来；
     4.10 节是月视图：日期算术 → 网格纯计算 → 只会摆的组件三层分工，「点一天」复用同一个表单；
     4.11 / 4.12 节是收尾：预测窗口做成「设置」里的纯偏好（为什么是 1/3/5），
-    以及把「会和哪一段周期重叠」也提前到保存之前。
-12. **[12 统计](./12-statistics.md)** —— 从事实数据聚合（不落汇总表）、本地时区分天/周、单位不一致不合并，以及时间轴 `FlatList` 虚拟化；
+    以及把「会和哪一段周期重叠」也提前到保存之前；
+    4.13 节是 v6：周期定义并进事件定义（周期是事件类型的一种）、去掉「周期」标签页、
+    自动循环 / 手动标记两种做法（本轮只做「配置 + 生成下一段」）。
+12. **[12 统计](./12-statistics.md)** —— 从事实数据聚合（不落汇总表）、本地时区分天/周、属性不一致不合并，以及时间轴 `FlatList` 虚拟化；
     3.9–3.11 / 4.6 节是后来的增强：环比与同比的窗口对齐、差值与变化率，以及「对照期为 0 就不给百分比」；
     3.12 / 4.8 节是按症状统计：换一套事实（周期记录）时，把同一套纪律照抄一遍（分母、算不出来、不做归一）；
     3.13 节是把时间范围下推给 SQL：**先压测再决定优化哪儿**，以及「下推范围 ≠ 下推规则」。
@@ -203,7 +216,7 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
 | 反向断言测试：不只验证「被拒绝」，还验证「被拒绝后数据一条没少」 | 测试 | 11 |
 | 「统计从事实算」而不是维护汇总表：以事实数据为唯一真相 | 架构 / 领域设计 | 12 |
 | 纯函数聚合（分桶函数 `keyOf` 参数化）、本地时区分天/周的边界 | 领域设计 / JavaScript | 12 |
-| 统计敢于「不给数字」：单位不一致不合并计量 | 领域设计 / 交互 | 12 |
+| 统计敢于「不给数字」：属性不一致不合并计量 | 领域设计 / 交互 | 12 |
 | `FlatList` 虚拟化、`ListHeaderComponent` / `ListEmptyComponent`、容器与行的职责分离 | React Native | 12 |
 | 「删除」其实是两级：可撤销的软删除 + 不可逆的真删 | 领域设计 | 13 |
 | 给**已有表**补软删除：追加 `ALTER TABLE ADD COLUMN` 迁移（旧行天然为「未删除」）、UPSERT 的「复活」语义 | SQLite / 架构 | 13 的第 6 节 |
@@ -222,8 +235,14 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
 | 预测要「有依据可查」：返回值带 `basis` / `observedGaps`，界面分开讲「算出来的 / 按配置推的」 | 领域设计 | 11（4.2） |
 | 同一条纯函数规则同时喂给「保存前提示」和「保存时拒绝」，两者不可能不一致 | 架构 | 11（4.8） |
 | 数据已经在手上就别再查一次库：删掉重复的只读查询、顺带消掉异步竞态 | 架构 | 11（4.8） |
+| 「一类东西」要不要单独建表：周期从独立表并进「事件定义」，用 `kind` 区分（少一套管理入口与重复能力） | 领域设计 / 架构 | 11（4.13） |
+| 用 `CHECK` 表达「互斥的存在性」：`(kind = 'cycle') = (cycle_mode IS NOT NULL)`——周期必有做法、非周期必无 | SQLite | 11（4.13） |
+| 属性存成 JSON 数组文本要走 `json_array()` 而不是手拼字符串（引号 / 反斜杠会拼出坏 JSON）；读时宽松解析、失败退化 `[]` | SQLite / 架构 | 08（9.4） |
+| 「记录时的事实」与「定义当时的快照」在展示上要**回退**（记录没标就用快照），别让历史看起来缺了一块 | 领域设计 | 08（9.2） |
+| 类型收敛的代价要提前说清：`quantity` 定义折成 `counter` 后，老的分数快捷选项会在保存时被拒 | 领域设计 / 迁移 | 08（9.5） |
+| 已提交的迁移不能再改：改了内容但设备上 `user_version` 已经是那个号 → 新内容永远不执行 | SQLite / 工程 | 08（9.4） |
 | 环比 / 同比的难点是**窗口对齐**（52 周对齐让星期几一致），不是减法 | 领域设计 | 12（3.9） |
-| 除数为 0 时不编造百分比：宁可说「无法算变化率」（与「单位不一致不合并」同一条纪律） | 领域设计 | 12（3.10） |
+| 除数为 0 时不编造百分比：宁可说「无法算变化率」（与「属性不一致不合并」同一条纪律） | 领域设计 | 12（3.10） |
 | 界面上的两个数字可能是不同口径（累计 vs 窗口内），要在文案里写明 | 交互 | 12（4.7） |
 | 端到端测试：可访问性文字（accessibilityText）就是测试接口，坐标点击最脆 | 测试 / 可访问性 | 15 |
 | Maestro 的选择器语义：默认**全文匹配**（部分匹配要自己写 `.*`）、`index` 消歧、`below` 等相对选择器 | 测试 | 15 |
@@ -260,14 +279,15 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
                       ┌─────────────────────────────────────────────┐
    src/app/           │ expo-router 文件路由（每个文件=一屏）          │
                       │ _layout.tsx  →  Stack                        │
-                      │  (tabs)/_layout.tsx → Tabs（五标签）          │
+                      │ (tabs)/_layout.tsx → Tabs（四标签，v6 起）    │
                       │  (tabs)/index.tsx（时间轴，FlatList）          │
                       │  (tabs)/stats.tsx（统计：概览 / 趋势 / 按事件） │
-                      │  (tabs)/settings.tsx（诊断 + 备份与恢复）      │
+                      │  (tabs)/definitions.tsx（事件：计数 + 周期同一张）│
+                      │  (tabs)/settings.tsx（诊断 + 偏好设置 + 备份恢复）│
                       │  events/new.tsx / events/[id].tsx             │
                       │  record/[id].tsx（记录 / 补录 / 删除）          │
-                      │  records/deleted.tsx（回收站：恢复 / 永久删除） │
-                      │  cycles/new.tsx / cycles/[id].tsx（周期定义）  │
+                      │  records/[id].tsx（记录详情）/ deleted.tsx（回收站）│
+                      │  cycles/[id].tsx（周期型事件：开一段 / 生成下一段）│
                       │  cycle-instances/[id].tsx（一段周期 + 每日记录）│
                       │  groups.tsx / tags.tsx / +not-found           │
                       └───────────────┬─────────────────────────────┘
@@ -278,9 +298,10 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
                       │ 表单与导航：TextField / Chip / Header          │
                       │ ListRow / DatabaseGate（数据库门禁）           │
                       ├─────────────────────────────────────────────┤
-   src/features/      │ definitions/：EventDefinitionForm             │
+   src/features/      │ definitions/：EventDefinitionForm（类型 / 属性多行 / 周期字段）│
                       │ records/：format / RecordRow / UndoBar        │
-                      │ cycles/：labels（含预测依据）/ CycleDefinitionForm │
+                      │ cycles/：labels（含做法说明与预测依据）/ calendar / │
+                      │         MonthCalendar / SymptomStatsCard       │
                       │ stats/：aggregate（从事实数据聚合，纯函数）    │
                       │        labels（对比的说法：不给百分比时怎么说） │
                       │ backup/：csv（记录表格，纯函数）/ transfer      │
@@ -292,7 +313,7 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
    src/db/            │ DatabaseProvider（Context：状态机）            │
                       │ client.ts（唯一连接入口 + PRAGMA）             │
                       │ migrations.ts（user_version + 事务）           │
-                      │ schema.ts（迁移清单 v1 / v2 / v3 / v4 / v5）   │
+                      │ schema.ts（迁移清单 v1 / v2 / v3 / v4 / v5 / v6）│
                       │ types.ts（SqlExecutor 抽象）                   │
                       └───────────────┬─────────────────────────────┘
                                       │ 仓储是唯一写 SQL 的地方
@@ -300,9 +321,8 @@ maestro test .maestro/flows              # 11/11 通过，6m32s（iPhone 16e / i
    src/repositories/  │ MetaRepository（app_meta 读写）                │
                       │ EventGroupRepository（分组）                    │
                       │ TagRepository（标签）                           │
-                      │ EventDefinitionRepository（定义聚合）           │
+                      │ EventDefinitionRepository（计数 / 周期共用的定义聚合）│
                       │ EventRecordRepository（历史 + 快照 + 更正）     │
-                      │ CycleDefinitionRepository（周期定义）           │
                       │ CycleInstanceRepository（周期实例 + 边界规则）   │
                       │ CycleEntryRepository（每天一条，UPSERT）        │
                       │ BackupRepository（导出全表 / 合并导入 + 体检）  │
