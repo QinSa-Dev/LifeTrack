@@ -16,8 +16,16 @@ tags:
     visible: '时间轴, tab, 1 of 5'
     timeout: 120000
 - tapOn: '.*设置, tab.*'
-- assertVisible: '备份与恢复'
+- assertVisible: '偏好设置'
 - takeScreenshot: 04-settings
+# 「偏好设置」这张卡在「备份与恢复」上面，导出按钮可能已经在屏幕外了 —— 先滚到它。
+# 用 centerElement 把它停到屏幕中间：停在屏幕底部的话会压在标签栏下面，点下去会被标签栏截走
+# （踩过一次：按钮看着可见，实则被「统计」标签接走了点击）。
+- scrollUntilVisible:
+    element:
+      text: '导出 JSON 备份'
+    direction: DOWN
+    centerElement: true
 - tapOn: '导出 JSON 备份'
 # iOS 26 的分享面板里那颗按钮叫「保存到“文件”」（带弯引号），不是「存储到文件」
 - extendedWaitUntil:
@@ -30,5 +38,5 @@ tags:
     optional: true
 - swipe:
     direction: DOWN
-- assertVisible: '备份与恢复'
+- assertVisible: '导出 JSON 备份'
 - takeScreenshot: 04-back-to-settings

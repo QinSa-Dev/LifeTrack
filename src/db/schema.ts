@@ -19,6 +19,11 @@ export const META_KEYS = {
    * 纯展示偏好，存这里就不用为它加表或加列。
    */
   timelineView: 'app.timeline_view',
+  /**
+   * 周期预测窗口：预测时回看最近几段「实际间隔」取平均（默认 3）。
+   * 只影响预测怎么算，不改库里的事实，同样存在这里（零迁移）。
+   */
+  predictionWindow: 'app.prediction_window',
 } as const;
 
 /**

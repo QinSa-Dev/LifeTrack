@@ -1,15 +1,19 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AppText, Button, Card, Chip, EmptyState } from '@/components';
+import { AppText, Button, Card, EmptyState } from '@/components';
 import { META_KEYS, useReadyDatabase } from '@/db';
 import type { EventDefinition, EventRecord } from '@/domain/models';
 import { groupRecordsByDefinition, type RecordGroup } from '@/features/records/groupRecords';
 import { RecordGroupRow } from '@/features/records/RecordGroupRow';
 import { RecordRow } from '@/features/records/RecordRow';
-import { parseTimelineViewMode, type TimelineViewMode } from '@/features/records/timelineView';
+import {
+  DEFAULT_TIMELINE_VIEW_MODE,
+  parseTimelineViewMode,
+  type TimelineViewMode,
+} from '@/features/records/timelineView';
 import { EventDefinitionRepository, EventRecordRepository, MetaRepository } from '@/repositories';
 import { palette, radius, spacing } from '@/theme';
 
@@ -32,7 +36,7 @@ export default function TimelineScreen() {
   const [records, setRecords] = useState<EventRecord[]>([]);
   const [definitions, setDefinitions] = useState<ReadonlyMap<string, EventDefinition>>(new Map());
   const [definitionsLoaded, setDefinitionsLoaded] = useState(false);
-  const [viewMode, setViewMode] = useState<TimelineViewMode>('expanded');
+  const [viewMode, setViewMode] = useState<TimelineViewMode>(DEFAULT_TIMELINE_VIEW_MODE);
   const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -80,31 +84,25 @@ export default function TimelineScreen() {
     }, [load]),
   );
 
-  // 显示方式只读一次：它是纯偏好，读到之前先用默认的逐条展开；
-  // 读失败的后果只是「偏好没记住」，不值得弹错误卡片打扰人。
-  useEffect(() => {
-    let cancelled = false;
-    new MetaRepository(db)
-      .get(META_KEYS.timelineView)
-      .then((stored) => {
-        if (!cancelled) {
-          setViewMode(parseTimelineViewMode(stored));
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [db]);
-
-  const changeViewMode = (next: TimelineViewMode) => {
-    setViewMode(next);
-    setError(null);
-    // 先切再存：切换是纯展示，不该等一次写库；写失败才回报
-    new MetaRepository(db).set(META_KEYS.timelineView, next).catch((cause: unknown) => {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    });
-  };
+  // 显示方式每次回到这个标签页都重读一次：开关现在收在「设置 → 偏好设置」里，
+  // 改完切回来必须立刻生效（挂载时只读一次的话，得重启才更新）。
+  // 读到之前先用默认的合并视图；读失败只是「偏好没记住」，不值得弹错误卡片打扰人。
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      new MetaRepository(db)
+        .get(META_KEYS.timelineView)
+        .then((stored) => {
+          if (!cancelled) {
+            setViewMode(parseTimelineViewMode(stored));
+          }
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
+    }, [db]),
+  );
 
   /**
    * 【+1】：以这条记录的取值「现在」再记一条（来源记为快捷）。
@@ -230,21 +228,11 @@ export default function TimelineScreen() {
               />
             </View>
 
-            <View style={styles.viewRow}>
-              <Chip
-                label="逐条"
-                selected={viewMode === 'expanded'}
-                onPress={() => changeViewMode('expanded')}
-              />
-              <Chip
-                label="同类合并"
-                selected={viewMode === 'merged'}
-                onPress={() => changeViewMode('merged')}
-              />
-              <AppText variant="caption" color={palette.textMuted} style={styles.viewHint}>
-                点行看详情，点【+1】按同样的取值再记一条
-              </AppText>
-            </View>
+            <AppText variant="caption" color={palette.textMuted} style={styles.tapHint}>
+              {viewMode === 'merged'
+                ? '点行就地展开逐条，点【+1】按同样的取值再记一条（显示方式可在「设置」里改）'
+                : '点行看详情，点【+1】按同样的取值再记一条（显示方式可在「设置」里改）'}
+            </AppText>
           </View>
         }
         ListEmptyComponent={
@@ -295,15 +283,8 @@ const styles = StyleSheet.create({
   headerHint: {
     flexShrink: 1,
   },
-  viewRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
+  tapHint: {
     marginBottom: spacing.sm,
-  },
-  viewHint: {
-    flexShrink: 1,
   },
   itemCard: {
     backgroundColor: palette.surface,

@@ -5,7 +5,13 @@
  * 也方便将来单元测试不需要渲染 React 组件。
  */
 
-import { instanceLengthDays, latestInstance, predictNextCycle, type CyclePrediction } from '@/domain/cycles';
+import {
+  DEFAULT_PREDICTION_WINDOW,
+  instanceLengthDays,
+  latestInstance,
+  predictNextCycle,
+  type CyclePrediction,
+} from '@/domain/cycles';
 import type { CycleDefinition, CycleInstance, CyclePhase, IsoDate } from '@/domain/models';
 
 /** 常用阶段名，界面上给成快捷胶囊；`CyclePhase` 本身是自由文本，仍可自己填。 */
@@ -28,13 +34,14 @@ export function describeCycleDefinition(definition: CycleDefinition): string {
 export function describeLatestCycle(
   definition: CycleDefinition,
   instances: readonly CycleInstance[],
+  window: number = DEFAULT_PREDICTION_WINDOW,
 ): string {
   const latest = latestInstance(instances);
   if (!latest) {
     return '还没有周期记录';
   }
   const parts = [`最近 ${latest.startDate} ~ ${latest.endDate ?? '进行中'}`];
-  const prediction = predictNextCycle(instances, definition);
+  const prediction = predictNextCycle(instances, definition, window);
   if (prediction !== undefined) {
     parts.push(`预测下次 ${prediction.nextStart}`);
   }
@@ -53,6 +60,16 @@ export function describePrediction(prediction: CyclePrediction | undefined): str
     return `预测下次开始日：${prediction.nextStart}（按最近 ${prediction.observedGaps} 段间隔的平均 ${prediction.lengthDays} 天）`;
   }
   return `预测下次开始日：${prediction.nextStart}（按定义里配置的平均周期长度 ${prediction.lengthDays} 天）`;
+}
+
+/**
+ * 边界预演里的另一半：新区间**和另一段周期重叠**。
+ *
+ * 与越界一样，这里只是「提前说」，真正的拒绝在保存时由仓储执行
+ * （`findOverlappingInstance` 是同一份规则），所以两处不可能对不上。
+ */
+export function describeOverlap(instance: CycleInstance): string {
+  return `这个区间会和已有的一段周期重叠（${instance.startDate} ~ ${instance.endDate ?? '进行中'}），保存会被拒绝。`;
 }
 
 /** 「2026-10-01 ~ 2026-10-05 · 共 5 天」；进行中的实例需要传入 `through`（通常是今天）。 */

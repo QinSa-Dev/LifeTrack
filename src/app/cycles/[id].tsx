@@ -3,15 +3,21 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
 import { AppText, Badge, Button, Card, EmptyState, Header, ListRow, Screen, TextField } from '@/components';
-import { useReadyDatabase } from '@/db';
+import { META_KEYS, useReadyDatabase } from '@/db';
 import { addDays } from '@/domain/dates';
 import { instanceLengthDays, latestInstance, predictNextCycle } from '@/domain/cycles';
 import type { CycleDefinition, CycleEntry, CycleInstance } from '@/domain/models';
 import { CycleDefinitionForm } from '@/features/cycles/CycleDefinitionForm';
 import { describeCycleDefinition, describePrediction } from '@/features/cycles/labels';
+import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/features/cycles/predictionWindow';
 import { SymptomStatsCard } from '@/features/cycles/SymptomStatsCard';
 import { localDateText } from '@/features/common/datetime';
-import { CycleDefinitionRepository, CycleEntryRepository, CycleInstanceRepository } from '@/repositories';
+import {
+  CycleDefinitionRepository,
+  CycleEntryRepository,
+  CycleInstanceRepository,
+  MetaRepository,
+} from '@/repositories';
 import { palette, spacing } from '@/theme';
 
 function maxIsoDate(a: string, b: string): string {
@@ -36,6 +42,8 @@ export default function CycleDefinitionScreen() {
   const [entries, setEntries] = useState<CycleEntry[]>([]);
   const [editing, setEditing] = useState(false);
   const [newStart, setNewStart] = useState('');
+  // 预测窗口（最近几段实际间隔取平均）：全局偏好，存 app_meta
+  const [predictionWindow, setPredictionWindow] = useState(DEFAULT_PREDICTION_WINDOW_SETTING);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,14 +53,16 @@ export default function CycleDefinitionScreen() {
       new CycleDefinitionRepository(db).getById(id),
       new CycleInstanceRepository(db).list({ definitionId: id }),
       new CycleEntryRepository(db).listVisible(id),
+      new MetaRepository(db).get(META_KEYS.predictionWindow),
     ])
-      .then(([loadedDefinition, loadedInstances, loadedEntries]) => {
+      .then(([loadedDefinition, loadedInstances, loadedEntries, loadedWindow]) => {
         if (cancelled) {
           return;
         }
         setDefinition(loadedDefinition);
         setInstances(loadedInstances);
         setEntries(loadedEntries);
+        setPredictionWindow(parsePredictionWindow(loadedWindow));
         const latest = latestInstance(loadedInstances);
         const today = localDateText(new Date());
         setNewStart(latest?.endDate ? maxIsoDate(today, addDays(latest.endDate, 1)) : today);
@@ -93,7 +103,7 @@ export default function CycleDefinitionScreen() {
 
   const today = localDateText(new Date());
   const ongoing = instances.find((instance) => instance.endDate === undefined);
-  const prediction = predictNextCycle(instances, definition);
+  const prediction = predictNextCycle(instances, definition, predictionWindow);
 
   const toggleArchive = () => {
     if (busy) {
@@ -209,6 +219,9 @@ export default function CycleDefinitionScreen() {
           <AppText variant="body">{describeCycleDefinition(definition)}</AppText>
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
             {describePrediction(prediction)}
+          </AppText>
+          <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
+            预测窗口在「设置 → 偏好设置」里统一改。
           </AppText>
         </Card>
       )}

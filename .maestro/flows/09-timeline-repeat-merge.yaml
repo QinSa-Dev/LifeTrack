@@ -1,16 +1,17 @@
-# 写入路径 9：行内【+1】即时落库（不弹确认）· 「逐条 / 同类合并」开关。
+# 写入路径 9：行内【+1】即时落库（不弹确认）· 「逐条 / 合并」显示方式。
 #
 # 覆盖：
 #   1. 行右侧的【+1】= 按那条记录的取值「现在」再记一条（来源「快捷」）。
 #      **点下去就记，没有确认条**：核实办法是进那条记录的详情页，看到来源确实是「快捷」；
-#   2. 列表头的显示方式开关：切到「同类合并」后一个事件只剩一行（共 N 次 · 最近 … · 展开逐条），
-#      点行就地展开成逐条、再点收起，切回「逐条」恢复原样。偏好写进 app_meta，跨重启记得住。
+#   2. 显示方式（默认「合并」）：切到「合并」后一个事件只剩一行（共 N 次 · 最近 … · 展开逐条），
+#      点行就地展开成逐条、再点收起，切回「逐条」恢复原样。偏好写进 app_meta，跨重启记得住；
+#      开关在「设置 → 偏好设置」里（不再放在时间轴页头）。
 #
 # 自产自销：只动 Maestro 自己的「Maestro喝水」（刚记的那条在列表第一行）。
 # 合并行上的「共 N 次」是按事件累计的（同名定义会被重复跑累加），所以断言只看形状、
 # 不写死次数——次数的正确性由单元测试 groupRecords-test 保证。
 appId: host.exp.Exponent
-name: 09 时间轴 · 【+1】即时记录 + 同类合并
+name: 09 时间轴 · 【+1】即时记录 + 合并显示
 tags:
   - write
 ---
@@ -25,9 +26,9 @@ tags:
 - runFlow: ../subflows/record-once.yaml
 - tapOn: '返回'
 - tapOn: '.*时间轴, tab.*'
-# 先明确切回「逐条」：① 显示方式是 app_meta 里的偏好，上一次跑可能留下「同类合并」；
-# ② 本流程最后一段本来也要验证切回「逐条」这件事。
-- tapOn: '逐条'
+# 先钉成「逐条」：① 显示方式默认是「合并」，上一次跑也可能留下别的；② 这一段要「点行进详情」，
+# 而合并视图里点行是就地展开。开关在「设置 → 偏好设置」里。
+- runFlow: ../subflows/use-expanded-view.yaml
 - takeScreenshot: 09-before
 
 # —— 【+1】：点第一行（刚记的那条）右侧的按钮 ——
@@ -50,8 +51,14 @@ tags:
     direction: UP
 - tapOn: '返回'
 
-# —— 同类合并：一个事件一行 ——
-- tapOn: '同类合并'
+# —— 合并：一个事件一行（去「设置 → 偏好设置」切）——
+- tapOn: '.*设置, tab.*'
+- scrollUntilVisible:
+    element:
+      text: '偏好设置'
+    direction: DOWN
+- tapOn: '合并'
+- tapOn: '.*时间轴, tab.*'
 - assertVisible: '.*共 [0-9]+ 次.*'
 - assertVisible: '.*展开逐条.*'
 - takeScreenshot: 09-merged
@@ -63,6 +70,6 @@ tags:
 - takeScreenshot: 09-merged-expanded
 
 # —— 切回逐条：还是原来那样 ——
-- tapOn: '逐条'
+- runFlow: ../subflows/use-expanded-view.yaml
 - assertNotVisible: '.*展开逐条.*'
 - takeScreenshot: 09-expanded

@@ -3,10 +3,11 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AppText, Badge, Button, Card, EmptyState, ListRow, Screen } from '@/components';
-import { useReadyDatabase } from '@/db';
+import { META_KEYS, useReadyDatabase } from '@/db';
 import type { CycleDefinition, CycleInstance } from '@/domain/models';
 import { describeCycleDefinition, describeLatestCycle } from '@/features/cycles/labels';
-import { CycleDefinitionRepository, CycleInstanceRepository } from '@/repositories';
+import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/features/cycles/predictionWindow';
+import { CycleDefinitionRepository, CycleInstanceRepository, MetaRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
 /**
@@ -21,6 +22,8 @@ export default function CyclesScreen() {
 
   const [definitions, setDefinitions] = useState<CycleDefinition[]>([]);
   const [instances, setInstances] = useState<CycleInstance[]>([]);
+  // 预测窗口：全局偏好，存 app_meta；列表副标题里的预测要用同一个窗口
+  const [predictionWindow, setPredictionWindow] = useState(DEFAULT_PREDICTION_WINDOW_SETTING);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,13 +34,15 @@ export default function CyclesScreen() {
       Promise.all([
         new CycleDefinitionRepository(db).list({ includeArchived: true }),
         new CycleInstanceRepository(db).list(),
+        new MetaRepository(db).get(META_KEYS.predictionWindow),
       ])
-        .then(([loadedDefinitions, loadedInstances]) => {
+        .then(([loadedDefinitions, loadedInstances, loadedWindow]) => {
           if (cancelled) {
             return;
           }
           setDefinitions(loadedDefinitions);
           setInstances(loadedInstances);
+          setPredictionWindow(parsePredictionWindow(loadedWindow));
           setError(null);
         })
         .catch((cause: unknown) => {
@@ -65,7 +70,7 @@ export default function CyclesScreen() {
       <ListRow
         key={definition.id}
         title={definition.name}
-        subtitle={`${describeCycleDefinition(definition)}　${describeLatestCycle(definition, own)}`}
+        subtitle={`${describeCycleDefinition(definition)}　${describeLatestCycle(definition, own, predictionWindow)}`}
         onPress={() => router.push({ pathname: '/cycles/[id]', params: { id: definition.id } })}
         right={<Badge label={muted ? '已归档' : `${own.length} 段`} tone={muted ? 'warning' : 'primary'} />}
       />

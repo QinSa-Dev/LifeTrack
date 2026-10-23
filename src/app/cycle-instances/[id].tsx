@@ -14,9 +14,14 @@ import {
   Screen,
   TextField,
 } from '@/components';
-import { useReadyDatabase } from '@/db';
+import { META_KEYS, useReadyDatabase } from '@/db';
 import { isValidIsoDate } from '@/domain/dates';
-import { findDatesOutside, isOngoingInstance, predictNextCycle } from '@/domain/cycles';
+import {
+  findDatesOutside,
+  findOverlappingInstance,
+  isOngoingInstance,
+  predictNextCycle,
+} from '@/domain/cycles';
 import type { CycleDefinition, CycleEntry, CycleInstance } from '@/domain/models';
 import { localDateText } from '@/features/common/datetime';
 import {
@@ -30,13 +35,20 @@ import {
 import {
   COMMON_PHASES,
   describeInstanceRange,
+  describeOverlap,
   describePrediction,
   joinSymptoms,
   splitSymptoms,
 } from '@/features/cycles/labels';
+import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/features/cycles/predictionWindow';
 import { MonthCalendar } from '@/features/cycles/MonthCalendar';
 import { UndoBar } from '@/features/records/UndoBar';
-import { CycleDefinitionRepository, CycleEntryRepository, CycleInstanceRepository } from '@/repositories';
+import {
+  CycleDefinitionRepository,
+  CycleEntryRepository,
+  CycleInstanceRepository,
+  MetaRepository,
+} from '@/repositories';
 import { palette, spacing } from '@/theme';
 
 interface EntryForm {
@@ -80,6 +92,8 @@ export default function CycleInstanceScreen() {
   const [entries, setEntries] = useState<CycleEntry[]>([]);
   // 同一定义的全部实例：预测要用「实际观察到的间隔」，只看当前这一段不够
   const [definitionInstances, setDefinitionInstances] = useState<CycleInstance[]>([]);
+  // 预测窗口（最近几段实际间隔取平均）：全局偏好，存 app_meta
+  const [predictionWindow, setPredictionWindow] = useState(DEFAULT_PREDICTION_WINDOW_SETTING);
   const [boundaryStart, setBoundaryStart] = useState('');
   const [boundaryEnd, setBoundaryEnd] = useState('');
   const [form, setForm] = useState<EntryForm>(EMPTY_FORM);
@@ -111,10 +125,11 @@ export default function CycleInstanceScreen() {
         setBoundaryStart(loaded.startDate);
         setBoundaryEnd(loaded.endDate ?? '');
 
-        const [loadedDefinition, loadedEntries, loadedInstances] = await Promise.all([
+        const [loadedDefinition, loadedEntries, loadedInstances, loadedWindow] = await Promise.all([
           new CycleDefinitionRepository(db).getById(loaded.definitionId),
           new CycleEntryRepository(db).listByInstance(loaded.id),
           new CycleInstanceRepository(db).list({ definitionId: loaded.definitionId }),
+          new MetaRepository(db).get(META_KEYS.predictionWindow),
         ]);
         if (cancelled) {
           return;
@@ -122,6 +137,7 @@ export default function CycleInstanceScreen() {
         setDefinition(loadedDefinition);
         setEntries(loadedEntries);
         setDefinitionInstances(loadedInstances);
+        setPredictionWindow(parsePredictionWindow(loadedWindow));
         const todayText = localDateText(new Date());
         // 表单的日期只在第一次填入时给默认值，之后不覆盖用户正在编辑的内容
         const defaultDate = clampDate(todayText, loaded.startDate, loaded.endDate);
@@ -348,6 +364,26 @@ export default function CycleInstanceScreen() {
     );
   }, [entries, boundaryStart, boundaryEnd]);
 
+  /**
+   * 边界预演的另一半：这个新区间会不会压到同一定义的**另一段**周期。
+   *
+   * 与越界一样，这里只是提前提示；真正的拒绝在保存时由仓储执行，
+   * 两处用的是同一个 `findOverlappingInstance`，不会对不上。
+   * `excludeId` 传当前这一段的 id——不然「不动边界」也会被判成和自己重叠。
+   */
+  const overlappingInstance = useMemo(() => {
+    const start = boundaryStart.trim();
+    const end = boundaryEnd.trim();
+    if (!isValidIsoDate(start) || (end !== '' && (!isValidIsoDate(end) || end < start))) {
+      return undefined;
+    }
+    return findOverlappingInstance(
+      definitionInstances,
+      { startDate: start, endDate: end === '' ? undefined : end },
+      instance?.id,
+    );
+  }, [definitionInstances, boundaryStart, boundaryEnd, instance?.id]);
+
   // 月视图：哪几天有记录（标记）与这个月的格子。都是纯计算，随数据/月份变化重算。
   const marks = useMemo(() => indexEntriesByDate(entries), [entries]);
   const cells = useMemo(() => (month === '' ? [] : buildMonthGrid(month)), [month]);
@@ -371,7 +407,9 @@ export default function CycleInstanceScreen() {
 
   const today = localDateText(new Date());
   const ongoing = isOngoingInstance(instance);
-  const prediction = definition ? predictNextCycle(definitionInstances, definition) : undefined;
+  const prediction = definition
+    ? predictNextCycle(definitionInstances, definition, predictionWindow)
+    : undefined;
 
   // 月视图只在「这个月里还有落在区间内的日子」时才允许翻过去，
   // 否则会翻到一整屏都不能点的月份。
@@ -444,6 +482,11 @@ export default function CycleInstanceScreen() {
           <AppText variant="body" color={palette.warning} style={styles.spacedTop}>
             按这个边界，会有 {outsideDates.length} 条记录落在区间外（{outsideDates.join('、')}）：
             保存会被拒绝，这些记录不会被删除。
+          </AppText>
+        ) : null}
+        {overlappingInstance ? (
+          <AppText variant="body" color={palette.warning} style={styles.spacedTop}>
+            {describeOverlap(overlappingInstance)}
           </AppText>
         ) : null}
         {prediction !== undefined ? (

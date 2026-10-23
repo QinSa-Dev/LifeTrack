@@ -1,4 +1,4 @@
-import { describeLatestCycle, describePrediction } from '@/features/cycles/labels';
+import { describeLatestCycle, describeOverlap, describePrediction } from '@/features/cycles/labels';
 import type { CycleDefinition, CycleInstance } from '@/domain/models';
 
 function makeDefinition(overrides: Partial<CycleDefinition> = {}): CycleDefinition {
@@ -68,5 +68,36 @@ describe('describeLatestCycle', () => {
 
   it('只有一段且没配平均长度时，不硬塞一个预测', () => {
     expect(describeLatestCycle(makeDefinition(), [makeInstance()])).toBe('最近 2026-10-01 ~ 2026-10-05');
+  });
+
+  it('可以指定预测窗口：窗口越小，越只看最近一段间隔', () => {
+    // 相邻开始日之差：30 / 26 / 24 天
+    const instances = [
+      makeInstance({ id: 'a', startDate: '2026-08-01' }),
+      makeInstance({ id: 'b', startDate: '2026-08-31' }),
+      makeInstance({ id: 'c', startDate: '2026-09-26' }),
+      makeInstance({ id: 'd', startDate: '2026-10-20', endDate: undefined }),
+    ];
+    // 默认窗口 3：三段平均 26.67 → 27 天
+    expect(describeLatestCycle(makeDefinition(), instances)).toBe(
+      '最近 2026-10-20 ~ 进行中 · 预测下次 2026-11-16',
+    );
+    // 窗口 1：只取最后一个间隔 24 天
+    expect(describeLatestCycle(makeDefinition(), instances, 1)).toBe(
+      '最近 2026-10-20 ~ 进行中 · 预测下次 2026-11-13',
+    );
+  });
+});
+
+describe('describeOverlap', () => {
+  it('说清和哪一段重叠，并明说保存会被拒绝', () => {
+    const text = describeOverlap(makeInstance({ startDate: '2026-09-01', endDate: '2026-09-05' }));
+    expect(text).toBe('这个区间会和已有的一段周期重叠（2026-09-01 ~ 2026-09-05），保存会被拒绝。');
+  });
+
+  it('进行中的那一段说成「进行中」', () => {
+    expect(describeOverlap(makeInstance({ startDate: '2026-09-01', endDate: undefined }))).toContain(
+      '2026-09-01 ~ 进行中',
+    );
   });
 });

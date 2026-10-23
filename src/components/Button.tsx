@@ -20,7 +20,8 @@ export interface ButtonProps {
 
 const TONES: Record<ButtonTone, { background: string; text: string; border: string }> = {
   primary: { background: palette.primary, text: '#FFFFFF', border: palette.primary },
-  secondary: { background: palette.surface, text: palette.text, border: palette.border },
+  // 浅灰底色：白色卡片上的「次要按钮」若和卡片同色（surface #FFFFFF），看起来就像没有底色
+  secondary: { background: palette.surfaceMuted, text: palette.text, border: palette.border },
   danger: { background: palette.dangerSoft, text: palette.danger, border: palette.danger },
 };
 

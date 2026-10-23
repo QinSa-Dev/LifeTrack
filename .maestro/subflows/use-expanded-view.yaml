@@ -1,0 +1,20 @@
+# 子流程：把时间轴的显示方式钉成「逐条」。
+#
+# 前置：任意标签页。
+# 结果：app_meta.app.timeline_view = expanded，并回到「时间轴」标签页。
+#
+# 为什么需要它：显示方式是 app_meta 里的纯偏好，**默认是「合并」**；合并视图里点一下行是
+# **就地展开**、不是进记录详情，所以「点行进详情」这类流程必须先钉成「逐条」。
+# 开关统一收在「设置 → 偏好设置」里（不放在时间轴页头）。
+#
+# （Maestro 要求被 runFlow 引用的文件也要有配置段，所以这里仍然写 appId。）
+appId: host.exp.Exponent
+name: 子流程 · 把时间轴显示钉成「逐条」
+---
+- tapOn: '.*设置, tab.*'
+- scrollUntilVisible:
+    element:
+      text: '偏好设置'
+    direction: DOWN
+- tapOn: '逐条'
+- tapOn: '.*时间轴, tab.*'

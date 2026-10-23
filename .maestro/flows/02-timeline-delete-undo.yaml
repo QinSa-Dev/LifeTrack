@@ -24,9 +24,9 @@ tags:
 - runFlow: ../subflows/record-once.yaml
 - tapOn: '返回'
 - tapOn: '.*时间轴, tab.*'
-# 显示方式是**记在 app_meta 里的偏好**，上一次跑留下的可能是「同类合并」；
-# 合并行点一下是就地展开、不是进详情，所以这里先明确切回「逐条」（选中的再点一下也无害）。
-- tapOn: '逐条'
+# 显示方式是**记在 app_meta 里的偏好**，**默认是「合并」**；合并行点一下是就地展开、
+# 不是进详情，所以先把它钉成「逐条」（开关在「设置 → 偏好设置」里，见子流程）。
+- runFlow: ../subflows/use-expanded-view.yaml
 - takeScreenshot: 02-before
 
 # —— 点行 = 进记录详情页（行内已经没有【删除】了）——

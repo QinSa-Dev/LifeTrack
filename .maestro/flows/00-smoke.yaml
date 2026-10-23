@@ -40,6 +40,16 @@ tags:
 - takeScreenshot: 00-cycles
 
 - tapOn: '.*设置, tab.*'
-- assertVisible: '备份与恢复'
-- assertVisible: '本地数据库'
+- assertVisible: '偏好设置'
+- assertVisible: '时间轴显示'
 - takeScreenshot: 00-settings
+- scrollUntilVisible:
+    element:
+      text: '备份与恢复'
+    direction: DOWN
+- assertVisible: '备份与恢复'
+- scrollUntilVisible:
+    element:
+      text: '本地数据库'
+    direction: DOWN
+- assertVisible: '本地数据库'

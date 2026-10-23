@@ -3,8 +3,8 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
-import { AppText, Badge, Button, Card, Screen } from '@/components';
-import { readSchemaVersion, useReadyDatabase, type MigrationResult } from '@/db';
+import { AppText, Badge, Button, Card, Chip, Screen } from '@/components';
+import { META_KEYS, readSchemaVersion, useReadyDatabase, type MigrationResult } from '@/db';
 import { toAppError } from '@/domain/errors';
 import {
   exportBackupFile,
@@ -13,6 +13,18 @@ import {
   pickBackupFile,
 } from '@/features/backup/transfer';
 import { recordsToCsv } from '@/features/backup/csv';
+import {
+  DEFAULT_PREDICTION_WINDOW_SETTING,
+  PREDICTION_WINDOW_OPTIONS,
+  describePredictionWindow,
+  parsePredictionWindow,
+} from '@/features/cycles/predictionWindow';
+import {
+  DEFAULT_TIMELINE_VIEW_MODE,
+  TIMELINE_VIEW_LABELS,
+  parseTimelineViewMode,
+  type TimelineViewMode,
+} from '@/features/records/timelineView';
 import type { BackupFile, ImportSummary } from '@/domain/backup';
 import type { MetaEntry } from '@/repositories';
 import {
@@ -64,14 +76,23 @@ export default function SettingsScreen() {
   });
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  // 纯展示偏好：都存在 app_meta，改了只影响怎么看
+  const [timelineView, setTimelineView] = useState<TimelineViewMode>(DEFAULT_TIMELINE_VIEW_MODE);
+  const [predictionWindow, setPredictionWindow] = useState(DEFAULT_PREDICTION_WINDOW_SETTING);
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       const repository = new MetaRepository(db);
 
-      Promise.all([readSchemaVersion(db), repository.getAll()])
-        .then(([version, entries]) => {
+      Promise.all([
+        readSchemaVersion(db),
+        repository.getAll(),
+        repository.get(META_KEYS.timelineView),
+        repository.get(META_KEYS.predictionWindow),
+      ])
+        .then(([version, entries, storedView, storedWindow]) => {
           if (cancelled) {
             return;
           }
@@ -83,6 +104,8 @@ export default function SettingsScreen() {
             databasePath,
             entries,
           });
+          setTimelineView(parseTimelineViewMode(storedView));
+          setPredictionWindow(parsePredictionWindow(storedWindow));
         })
         .catch((cause: unknown) => {
           if (cancelled) {
@@ -99,6 +122,32 @@ export default function SettingsScreen() {
         cancelled = true;
       };
     }, [db, databasePath, migration]),
+  );
+
+  /**
+   * 改纯展示偏好：先改本地（界面立刻跟上），再落 app_meta；写失败只提示，不回滚显示
+   * ——偏好没记住不影响任何数据。
+   */
+  const changeTimelineView = useCallback(
+    (next: TimelineViewMode) => {
+      setTimelineView(next);
+      setPreferenceError(null);
+      new MetaRepository(db).set(META_KEYS.timelineView, next).catch((cause: unknown) => {
+        setPreferenceError(cause instanceof Error ? cause.message : String(cause));
+      });
+    },
+    [db],
+  );
+
+  const changePredictionWindow = useCallback(
+    (next: number) => {
+      setPredictionWindow(next);
+      setPreferenceError(null);
+      new MetaRepository(db).set(META_KEYS.predictionWindow, String(next)).catch((cause: unknown) => {
+        setPreferenceError(cause instanceof Error ? cause.message : String(cause));
+      });
+    },
+    [db],
   );
 
   /** 导出 / 导入的共同外壳：忙碌标记 + 统一错误文案 */
@@ -190,6 +239,48 @@ export default function SettingsScreen() {
         <Row label="应用版本" value={version} />
         <Row label="Expo SDK" value={sdkVersion} />
         <Row label="运行环境" value={runtime} />
+      </Card>
+
+      <Card title="偏好设置" subtitle="只影响怎么看，不影响存了什么" style={styles.spaced}>
+        <AppText variant="label" color={palette.textMuted}>
+          时间轴显示
+        </AppText>
+        <View style={styles.chipRow}>
+          {(['expanded', 'merged'] as const).map((mode) => (
+            <Chip
+              key={mode}
+              label={TIMELINE_VIEW_LABELS[mode]}
+              selected={timelineView === mode}
+              onPress={() => changeTimelineView(mode)}
+            />
+          ))}
+        </View>
+        <AppText variant="caption" color={palette.textMuted} style={styles.chipHint}>
+          逐条：一条记录一行；合并：同一事件并成一行，点行再就地展开逐条。
+        </AppText>
+
+        <AppText variant="label" color={palette.textMuted} style={styles.chipLabel}>
+          周期预测窗口
+        </AppText>
+        <View style={styles.chipRow}>
+          {PREDICTION_WINDOW_OPTIONS.map((option) => (
+            <Chip
+              key={option}
+              label={describePredictionWindow(option)}
+              selected={predictionWindow === option}
+              onPress={() => changePredictionWindow(option)}
+            />
+          ))}
+        </View>
+        <AppText variant="caption" color={palette.textMuted} style={styles.chipHint}>
+          预测时只用最近这几段「实际间隔」取平均。窗口越小越贴合最近状态，也越容易被一次异常周期带偏。
+        </AppText>
+
+        {preferenceError ? (
+          <AppText variant="caption" color={palette.danger} style={styles.chipHint}>
+            偏好没能记住：{preferenceError}
+          </AppText>
+        ) : null}
       </Card>
 
       <Card
@@ -291,6 +382,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     marginBottom: spacing.md,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  chipLabel: {
+    marginTop: spacing.md,
+  },
+  chipHint: {
+    marginTop: spacing.sm,
   },
   buttonRow: {
     flexDirection: 'row',
