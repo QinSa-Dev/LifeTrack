@@ -2,16 +2,16 @@ import { runMigrations } from '@/db/migrations';
 import { MIGRATIONS } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { ConflictError, NotFoundError, ValidationError } from '@/domain/errors';
-import { CycleDefinitionRepository } from '@/repositories/cycleDefinitionRepository';
 import { CycleEntryRepository } from '@/repositories/cycleEntryRepository';
 import { CycleInstanceRepository } from '@/repositories/cycleInstanceRepository';
+import { EventDefinitionRepository } from '@/repositories/eventDefinitionRepository';
 
 const T1 = '2026-10-19T08:00:00.000Z';
 const T2 = '2026-10-19T09:00:00.000Z';
 
 describe('CycleInstanceRepository', () => {
   let db: TestDatabase;
-  let definitions: CycleDefinitionRepository;
+  let definitions: EventDefinitionRepository;
   let instances: CycleInstanceRepository;
   let entries: CycleEntryRepository;
   let definitionId: string;
@@ -19,10 +19,16 @@ describe('CycleInstanceRepository', () => {
   beforeEach(async () => {
     db = createTestDatabase();
     await runMigrations(db, MIGRATIONS);
-    definitions = new CycleDefinitionRepository(db);
+    definitions = new EventDefinitionRepository(db);
     instances = new CycleInstanceRepository(db);
     entries = new CycleEntryRepository(db);
-    definitionId = (await definitions.create({ name: '生理期' }, T1)).id;
+    // v6 起周期是事件的一种类型：定义走 EventDefinitionRepository，写法标 cycle
+    definitionId = (
+      await definitions.create(
+        { name: '生理期', kind: 'cycle', cycleMode: 'manual', tagIds: [], quickOptions: [] },
+        T1,
+      )
+    ).id;
   });
 
   afterEach(() => {

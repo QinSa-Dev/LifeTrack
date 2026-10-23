@@ -42,6 +42,7 @@ interface CycleInstanceRow {
 interface DefinitionRow {
   id: string;
   name: string;
+  kind: string;
   is_archived: number;
 }
 
@@ -118,11 +119,14 @@ export class CycleInstanceRepository {
     return guard('创建周期实例', async () => {
       await this.db.withExclusiveTransactionAsync(async (txn) => {
         const definition = await txn.getFirstAsync<DefinitionRow>(
-          'SELECT id, name, is_archived FROM cycle_definitions WHERE id = ?',
+          'SELECT id, name, kind, is_archived FROM event_definitions WHERE id = ?',
           definitionId,
         );
         if (!definition) {
-          throw new NotFoundError(`周期定义不存在：${definitionId}`);
+          throw new NotFoundError(`周期事件不存在：${definitionId}`);
+        }
+        if (definition.kind !== 'cycle') {
+          throw new ConflictError(`「${definition.name}」不是周期型事件，不能开周期`);
         }
         if (definition.is_archived === 1) {
           throw new ConflictError(`周期「${definition.name}」已归档，不能新开周期`);

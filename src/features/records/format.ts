@@ -1,4 +1,4 @@
-import type { EventRecord, RecordSource } from '@/domain/models';
+import { attributeText, recordAttributes, type EventRecord, type RecordSource } from '@/domain/models';
 
 import { localDateText, localTimeText } from '@/features/common/datetime';
 
@@ -12,10 +12,11 @@ export function sourceLabel(source: RecordSource): string {
   return SOURCE_LABELS[source];
 }
 
-/** 计数型展示成「+1」，数量型展示成「0.5」，再带上单位。 */
+/** 计数型展示成「+1」，历史数量型展示成「0.5」，再带上属性（多个用 · 连起来）。 */
 export function formatRecordValue(record: EventRecord): string {
   const value = record.kind === 'counter' ? `+${record.value}` : String(record.value);
-  return record.unit ? `${value} ${record.unit}` : value;
+  const text = attributeText(recordAttributes(record));
+  return text === undefined ? value : `${value} ${text}`;
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   MIGRATION_V3_EVENT_RECORDS,
   MIGRATION_V4_CYCLE,
   MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE,
+  MIGRATION_V6_CYCLE_AS_EVENT_KIND,
 } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { MigrationError } from '@/domain/errors';
@@ -24,6 +25,11 @@ function tableExists(db: TestDatabase, name: string): boolean {
   return row !== null;
 }
 
+/** 只跑到某个版本为止：各版本的结构用例不该被后来的迁移改写的表影响。 */
+function upTo(version: number): Migration[] {
+  return MIGRATIONS.filter((migration) => migration.version <= version);
+}
+
 describe('迁移清单校验', () => {
   it('版本号必须从 1 连续递增', () => {
     const broken: Migration[] = [
@@ -39,7 +45,7 @@ describe('迁移清单校验', () => {
 
   it('当前仓库的迁移清单是合法的', () => {
     expect(() => validateMigrations(MIGRATIONS)).not.toThrow();
-    expect(LATEST_SCHEMA_VERSION).toBe(5);
+    expect(LATEST_SCHEMA_VERSION).toBe(6);
   });
 });
 
@@ -57,14 +63,15 @@ describe('runMigrations', () => {
   it('全新数据库：建表并提升 user_version', async () => {
     const result = await runMigrations(db, MIGRATIONS);
 
-    expect(result).toEqual({ from: 0, to: 5, applied: [1, 2, 3, 4, 5] });
-    expect(await readSchemaVersion(db)).toBe(5);
+    expect(result).toEqual({ from: 0, to: 6, applied: [1, 2, 3, 4, 5, 6] });
+    expect(await readSchemaVersion(db)).toBe(6);
     expect(tableExists(db, 'app_meta')).toBe(true);
     expect(tableExists(db, 'event_definitions')).toBe(true);
     expect(tableExists(db, 'event_records')).toBe(true);
-    expect(tableExists(db, 'cycle_definitions')).toBe(true);
     expect(tableExists(db, 'cycle_instances')).toBe(true);
     expect(tableExists(db, 'cycle_entries')).toBe(true);
+    // v6 起周期不再是独立的定义表
+    expect(tableExists(db, 'cycle_definitions')).toBe(false);
   });
 
   it('app_meta 结构符合预期（主键约束生效）', () => {
@@ -84,7 +91,7 @@ describe('runMigrations', () => {
     await runMigrations(db, MIGRATIONS);
     const second = await runMigrations(db, MIGRATIONS);
 
-    expect(second).toEqual({ from: 5, to: 5, applied: [] });
+    expect(second).toEqual({ from: 6, to: 6, applied: [] });
   });
 
   it('数据库版本高于应用支持版本时拒绝启动，且不破坏数据', async () => {
@@ -187,11 +194,17 @@ describe('v2 事件定义结构', () => {
     }
   });
 
-  it('kind 只接受 counter / quantity', () => {
+  it('kind 只接受 counter / cycle（「数量」不再是类型，只留在历史记录里）', () => {
     expect(() =>
       db.rawExec(
         `INSERT INTO event_definitions (id, name, kind, created_at, updated_at)
          VALUES ('x', 'n', 'count', 'now', 'now')`,
+      ),
+    ).toThrow();
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, created_at, updated_at)
+         VALUES ('x', 'n', 'quantity', 'now', 'now')`,
       ),
     ).toThrow();
   });
@@ -227,7 +240,7 @@ describe('v2 事件定义结构', () => {
     db.rawExec(`INSERT INTO tags (id, name, created_at, updated_at) VALUES ('t1', '早晨', 'now', 'now')`);
     insertDefinition('d1', { groupId: 'g1' });
     db.rawExec(
-      `INSERT INTO quick_options (id, definition_id, label, value, sort_order)
+      `INSERT INTO quick_options (id, definition_id, attribute, value, sort_order)
        VALUES ('q1', 'd1', '一杯', 1, 0)`,
     );
     db.rawExec(`INSERT INTO event_definition_tags (definition_id, tag_id) VALUES ('d1', 't1')`);
@@ -246,7 +259,7 @@ describe('v2 事件定义结构', () => {
   it('外键生效：快捷选项不能指向不存在的定义', () => {
     expect(() =>
       db.rawExec(
-        `INSERT INTO quick_options (id, definition_id, label, value, sort_order)
+        `INSERT INTO quick_options (id, definition_id, attribute, value, sort_order)
          VALUES ('q1', 'missing', '一杯', 1, 0)`,
       ),
     ).toThrow();
@@ -270,8 +283,8 @@ describe('v2 事件定义结构', () => {
 
       const result = await runMigrations(legacy, MIGRATIONS);
 
-      expect(result).toEqual({ from: 1, to: 5, applied: [2, 3, 4, 5] });
-      expect(await readSchemaVersion(legacy)).toBe(5);
+      expect(result).toEqual({ from: 1, to: 6, applied: [2, 3, 4, 5, 6] });
+      expect(await readSchemaVersion(legacy)).toBe(6);
       expect(legacy.rawGet("SELECT value FROM app_meta WHERE key = 'keep'")).toEqual({ value: 'me' });
       expect(tableExists(legacy, 'event_definitions')).toBe(true);
       expect(tableExists(legacy, 'event_records')).toBe(true);
@@ -375,7 +388,9 @@ describe('v4 周期结构', () => {
 
   beforeEach(async () => {
     db = createTestDatabase();
-    await runMigrations(db, MIGRATIONS);
+    // 只跑到 v4：v6 会把 cycle_definitions 并进 event_definitions，
+    // 那之后再验证「周期有三张表」已经不是这套结构了
+    await runMigrations(db, upTo(4));
   });
 
   afterEach(() => {
@@ -487,7 +502,8 @@ describe('v5 周期记录软删除', () => {
 
   beforeEach(async () => {
     db = createTestDatabase();
-    await runMigrations(db, MIGRATIONS);
+    // 只跑到 v5：v6 之后 cycle_definitions 已经不存在了
+    await runMigrations(db, upTo(5));
     db.rawExec(
       `INSERT INTO cycle_definitions (id, name, created_at, updated_at)
        VALUES ('cd1', '生理期', 'now', 'now')`,
@@ -542,7 +558,7 @@ describe('v5 周期记录软删除', () => {
          VALUES ('ce1', 'ci1', '2026-10-02', 'now', 'now')`,
       );
 
-      const result = await runMigrations(legacy, MIGRATIONS);
+      const result = await runMigrations(legacy, upTo(5));
 
       expect(result).toEqual({ from: 4, to: 5, applied: [5] });
       expect(legacy.rawGet("SELECT deleted_at FROM cycle_entries WHERE id = 'ce1'")).toEqual({
@@ -586,5 +602,220 @@ describe('v5 周期记录软删除', () => {
     } finally {
       fresh.close();
     }
+  });
+});
+
+describe('v6 周期并入事件定义、单位改为属性', () => {
+  let db: TestDatabase;
+
+  beforeEach(async () => {
+    db = createTestDatabase();
+    await runMigrations(db, MIGRATIONS);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('事件定义换成 attributes JSON 列表，周期字段也挂在同一张表上', () => {
+    const columns = db.rawAll<{ name: string; notnull: number; dflt_value: string | null }>(
+      'PRAGMA table_info(event_definitions)',
+    );
+    const names = columns.map((column) => column.name);
+
+    expect(names).not.toContain('attribute');
+    expect(names).not.toContain('unit');
+    expect(names).toEqual(
+      expect.arrayContaining([
+        'attributes',
+        'cycle_mode',
+        'average_cycle_length_days',
+        'average_period_length_days',
+      ]),
+    );
+
+    const attributes = columns.find((column) => column.name === 'attributes');
+    expect(attributes?.notnull).toBe(1);
+    expect(attributes?.dflt_value).toBe("'[]'");
+  });
+
+  it('快捷选项合并成「属性 + 取值」，没有独立的名称列了', () => {
+    expect(db.rawAll<{ name: string }>('PRAGMA table_info(quick_options)').map((row) => row.name)).toEqual([
+      'id',
+      'definition_id',
+      'attribute',
+      'value',
+      'sort_order',
+    ]);
+  });
+
+  it('周期型必须有做法、计数型不能带做法（CHECK 兜底）', () => {
+    // 周期型没写做法 → 拒
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, created_at, updated_at)
+         VALUES ('c1', '生理期', 'cycle', 'now', 'now')`,
+      ),
+    ).toThrow();
+    // 计数型却带了做法 → 拒
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, cycle_mode, created_at, updated_at)
+         VALUES ('d1', '喝水', 'counter', 'manual', 'now', 'now')`,
+      ),
+    ).toThrow();
+
+    // 合法的两种都放行
+    db.rawExec(
+      `INSERT INTO event_definitions (id, name, kind, cycle_mode, created_at, updated_at)
+       VALUES ('c2', '生理期', 'cycle', 'auto', 'now', 'now')`,
+    );
+    db.rawExec(
+      `INSERT INTO event_definitions (id, name, kind, created_at, updated_at)
+       VALUES ('d2', '喝水', 'counter', 'now', 'now')`,
+    );
+  });
+
+  it('周期实例直接外键指向事件定义：悬空被拒，删定义级联删实例与记录', () => {
+    db.rawExec(
+      `INSERT INTO event_definitions (id, name, kind, cycle_mode, created_at, updated_at)
+       VALUES ('c1', '生理期', 'cycle', 'manual', 'now', 'now')`,
+    );
+    db.rawExec(
+      `INSERT INTO cycle_instances (id, definition_id, start_date, created_at, updated_at)
+       VALUES ('ci1', 'c1', '2026-10-01', 'now', 'now')`,
+    );
+    db.rawExec(
+      `INSERT INTO cycle_entries (id, instance_id, date, created_at, updated_at)
+       VALUES ('ce1', 'ci1', '2026-10-02', 'now', 'now')`,
+    );
+
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO cycle_instances (id, definition_id, start_date, created_at, updated_at)
+         VALUES ('ci2', 'ghost', '2026-11-01', 'now', 'now')`,
+      ),
+    ).toThrow();
+
+    db.rawExec("DELETE FROM event_definitions WHERE id = 'c1'");
+    expect(db.rawAll('SELECT id FROM cycle_instances')).toEqual([]);
+    expect(db.rawAll('SELECT id FROM cycle_entries')).toEqual([]);
+  });
+
+  it('从 v5 库升级：quantity → counter、unit → 属性列表、周期定义沿用原 id', async () => {
+    const legacy = createTestDatabase();
+    try {
+      await runMigrations(legacy, upTo(5));
+      legacy.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, unit, created_at, updated_at)
+         VALUES ('d1', '喝水', 'counter', '杯', 'now', 'now')`,
+      );
+      // 「数量」型折成计数型，单位变成属性
+      legacy.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, unit, created_at, updated_at)
+         VALUES ('d2', '里程', 'quantity', '公里', 'now', 'now')`,
+      );
+      // 属性里带引号与反斜杠：迁移靠 json_array 转义，不能手拼字符串
+      legacy.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, unit, created_at, updated_at)
+         VALUES ('d3', '怪属性', 'counter', 'a"b\\c', 'now', 'now')`,
+      );
+      legacy.rawExec(
+        `INSERT INTO quick_options (id, definition_id, label, value, unit, sort_order)
+         VALUES ('q1', 'd1', '一杯', 250, 'ml', 0)`,
+      );
+      legacy.rawExec(
+        `INSERT INTO event_records
+           (id, definition_id, kind, value, unit, occurred_at, recorded_at, source,
+            snapshot_name, snapshot_unit, snapshot_tag_ids)
+         VALUES ('r1', 'd1', 'counter', 1, '杯', 'now', 'now', 'manual', '喝水', '杯', '[]')`,
+      );
+      legacy.rawExec(
+        `INSERT INTO cycle_definitions (id, name, average_cycle_length_days, created_at, updated_at)
+         VALUES ('c1', '生理期', 28, 'now', 'now')`,
+      );
+      legacy.rawExec(
+        `INSERT INTO cycle_instances (id, definition_id, start_date, created_at, updated_at)
+         VALUES ('ci1', 'c1', '2026-10-01', 'now', 'now')`,
+      );
+
+      const result = await runMigrations(legacy, MIGRATIONS);
+
+      expect(result).toEqual({ from: 5, to: 6, applied: [6] });
+
+      const definitions = legacy.rawAll<{
+        id: string;
+        kind: string;
+        attributes: string;
+        cycle_mode: string | null;
+        average_cycle_length_days: number | null;
+      }>(
+        'SELECT id, kind, attributes, cycle_mode, average_cycle_length_days FROM event_definitions ORDER BY id',
+      );
+      expect(definitions.map((row) => row.id)).toEqual(['c1', 'd1', 'd2', 'd3']);
+      const byId = Object.fromEntries(definitions.map((row) => [row.id, row]));
+
+      expect(byId.c1).toMatchObject({
+        kind: 'cycle',
+        cycle_mode: 'manual',
+        average_cycle_length_days: 28,
+      });
+      expect(byId.c1?.attributes).toBe('[]'); // 周期型不带属性
+      expect(byId.d1).toMatchObject({ kind: 'counter', cycle_mode: null });
+      expect(JSON.parse(byId.d1!.attributes)).toEqual(['杯']);
+      expect(byId.d2?.kind).toBe('counter');
+      expect(JSON.parse(byId.d2!.attributes)).toEqual(['公里']);
+      expect(JSON.parse(byId.d3!.attributes)).toEqual(['a"b\\c']);
+
+      // 快捷选项合并且一行不丢：有 unit 就用它当属性
+      expect(legacy.rawGet("SELECT attribute, value FROM quick_options WHERE id = 'q1'")).toEqual({
+        attribute: 'ml',
+        value: 250,
+      });
+
+      // 历史记录：unit → attributes，快照也跟着改
+      expect(
+        legacy.rawGet("SELECT attributes, snapshot_attributes FROM event_records WHERE id = 'r1'"),
+      ).toEqual({ attributes: '["杯"]', snapshot_attributes: '["杯"]' });
+
+      // 周期实例还指着原来的 id
+      expect(legacy.rawGet("SELECT definition_id FROM cycle_instances WHERE id = 'ci1'")).toEqual({
+        definition_id: 'c1',
+      });
+
+      // 外键一致，旧表清干净
+      expect(legacy.rawAll('PRAGMA foreign_key_check')).toEqual([]);
+      expect(tableExists(legacy, 'cycle_definitions')).toBe(false);
+      expect(
+        legacy.rawAll(
+          "SELECT name FROM sqlite_master WHERE name LIKE '%\\_old' ESCAPE '\\' OR name LIKE '%\\_new' ESCAPE '\\'",
+        ),
+      ).toEqual([]);
+    } finally {
+      legacy.close();
+    }
+  });
+
+  it('重建表之后 8 个索引都还在', () => {
+    const indexes = db
+      .rawAll<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%'")
+      .map((row) => row.name)
+      .sort();
+
+    expect(indexes).toEqual([
+      'idx_cycle_entries_instance_date',
+      'idx_cycle_instances_definition_id',
+      'idx_cycle_instances_start_date',
+      'idx_event_definition_tags_tag_id',
+      'idx_event_definitions_group_id',
+      'idx_event_records_definition_id',
+      'idx_event_records_occurred_at',
+      'idx_quick_options_definition_id',
+    ]);
+  });
+
+  it('v6 迁移对象自带版本号与可执行语句', () => {
+    expect(MIGRATION_V6_CYCLE_AS_EVENT_KIND.version).toBe(6);
+    expect(MIGRATION_V6_CYCLE_AS_EVENT_KIND.statements?.length).toBeGreaterThan(0);
   });
 });

@@ -42,10 +42,11 @@ describe('EventDefinitionRepository', () => {
 
     const created = await definitions.create(
       counterDraft({
+        attributes: ['杯'],
         groupId: group.id,
         quickOptions: [
-          { label: '一杯', value: 1, unit: '杯', sortOrder: 0 },
-          { label: '两杯', value: 2, unit: '杯', sortOrder: 1 },
+          { attribute: '杯', value: 1, sortOrder: 0 },
+          { attribute: '杯', value: 2, sortOrder: 1 },
         ],
         tagIds: [tagA.id, tagB.id],
       }),
@@ -54,19 +55,20 @@ describe('EventDefinitionRepository', () => {
 
     expect(created.name).toBe('喝水');
     expect(created.kind).toBe('counter');
+    expect(created.attributes).toEqual(['杯']);
     expect(created.groupId).toBe(group.id);
     expect(created.tagIds.sort()).toEqual([tagA.id, tagB.id].sort());
-    expect(created.quickOptions.map((option) => option.label)).toEqual(['一杯', '两杯']);
-    expect(created.quickOptions[0]?.unit).toBe('杯');
+    expect(created.quickOptions.map((option) => option.attribute)).toEqual(['杯', '杯']);
+    expect(created.quickOptions.map((option) => option.value)).toEqual([1, 2]);
     expect(created.isArchived).toBe(false);
 
     const fetched = await definitions.getById(created.id);
     expect(fetched).toEqual(created);
   });
 
-  it('默认可选字段为 undefined', async () => {
+  it('默认可选字段为 undefined / 空列表', async () => {
     const created = await definitions.create(counterDraft());
-    expect(created.unit).toBeUndefined();
+    expect(created.attributes).toEqual([]);
     expect(created.groupId).toBeUndefined();
     expect(created.color).toBeUndefined();
     expect(created.icon).toBeUndefined();
@@ -101,7 +103,7 @@ describe('EventDefinitionRepository', () => {
     const tagB = await tags.create({ name: 'b' });
     const created = await definitions.create(
       counterDraft({
-        quickOptions: [{ label: '旧选项', value: 1 }],
+        quickOptions: [{ value: 1 }],
         tagIds: [tagA.id],
       }),
     );
@@ -110,14 +112,14 @@ describe('EventDefinitionRepository', () => {
       created.id,
       counterDraft({
         name: '喝水（含茶）',
-        quickOptions: [{ label: '新选项', value: 3, unit: '杯' }],
+        quickOptions: [{ attribute: '杯', value: 3 }],
         tagIds: [tagB.id],
       }),
       '2026-10-20T00:00:00.000Z',
     );
 
     expect(updated.name).toBe('喝水（含茶）');
-    expect(updated.quickOptions.map((option) => option.label)).toEqual(['新选项']);
+    expect(updated.quickOptions.map((option) => option.attribute)).toEqual(['杯']);
     expect(updated.tagIds).toEqual([tagB.id]);
     expect(updated.updatedAt).toBe('2026-10-20T00:00:00.000Z');
 
@@ -133,7 +135,7 @@ describe('EventDefinitionRepository', () => {
   });
 
   it('归档只改标记，定义与子表都还在', async () => {
-    const created = await definitions.create(counterDraft({ quickOptions: [{ label: '一杯', value: 1 }] }));
+    const created = await definitions.create(counterDraft({ quickOptions: [{ value: 1 }] }));
     await definitions.setArchived(created.id, true);
 
     const archived = await definitions.getById(created.id);
@@ -155,7 +157,7 @@ describe('EventDefinitionRepository', () => {
     const created = await definitions.create(
       counterDraft({
         groupId: group.id,
-        quickOptions: [{ label: '一杯', value: 1 }],
+        quickOptions: [{ value: 1 }],
         tagIds: [tag.id],
       }),
     );
@@ -197,27 +199,48 @@ describe('EventDefinitionRepository', () => {
     await expect(definitions.create(counterDraft({ kind: 'count' as unknown as 'counter' }))).rejects.toThrow(
       ValidationError,
     );
-    await expect(
-      definitions.create(counterDraft({ quickOptions: [{ label: '半次', value: 0.5 }] })),
-    ).rejects.toThrow(ValidationError);
-    await expect(
-      definitions.create(counterDraft({ quickOptions: [{ label: '负', value: -1 }] })),
-    ).rejects.toThrow(ValidationError);
+    await expect(definitions.create(counterDraft({ quickOptions: [{ value: 0.5 }] }))).rejects.toThrow(
+      ValidationError,
+    );
+    await expect(definitions.create(counterDraft({ quickOptions: [{ value: -1 }] }))).rejects.toThrow(
+      ValidationError,
+    );
   });
 
-  it('数量型允许小数取值', async () => {
+  it('计数型的属性可以是多条，空白与前后空格会被规整掉', async () => {
+    const created = await definitions.create(counterDraft({ attributes: [' 温水 ', '500ml', '  ', ''] }));
+
+    expect(created.attributes).toEqual(['温水', '500ml']);
+    expect((await definitions.getById(created.id))?.attributes).toEqual(['温水', '500ml']);
+  });
+
+  it('周期型：做法必填、属性恒为空、周期长度照写', async () => {
     const created = await definitions.create({
-      name: '饮水',
-      kind: 'quantity',
-      unit: '升',
+      name: '生理期',
+      kind: 'cycle',
+      // 周期记的是「哪一天」，不是「一次是什么」：属性与快捷选项一律丢弃
+      attributes: ['不该保留'],
+      quickOptions: [{ value: 1 }],
+      cycleMode: 'auto',
+      averageCycleLengthDays: 28,
+      averagePeriodLengthDays: 5,
       tagIds: [],
-      quickOptions: [{ label: '半升', value: 0.5, unit: '升' }],
     });
-    expect(created.quickOptions[0]?.value).toBe(0.5);
+
+    expect(created.kind).toBe('cycle');
+    expect(created.cycleMode).toBe('auto');
+    expect(created.averageCycleLengthDays).toBe(28);
+    expect(created.averagePeriodLengthDays).toBe(5);
+    expect(created.attributes).toEqual([]);
+    expect(created.quickOptions).toEqual([]);
+
+    // 不写做法时兜底成手动（老数据都是一段自己点开始、自己点结束的周期）
+    const manual = await definitions.create({ name: '减肥', kind: 'cycle', tagIds: [], quickOptions: [] });
+    expect(manual.cycleMode).toBe('manual');
   });
 
   it('写入中途失败会整体回滚，不产生半成品', async () => {
-    const created = await definitions.create(counterDraft({ quickOptions: [{ label: '原选项', value: 1 }] }));
+    const created = await definitions.create(counterDraft({ quickOptions: [{ value: 1 }] }));
 
     // 用一个不存在的标签 id 触发外键错误 → 事务回滚
     await expect(
@@ -229,7 +252,7 @@ describe('EventDefinitionRepository', () => {
 
     const after = await definitions.getById(created.id);
     expect(after?.name).toBe('喝水'); // 名字没被改掉
-    expect(after?.quickOptions.map((option) => option.label)).toEqual(['原选项']); // 快捷选项还在
+    expect(after?.quickOptions.map((option) => option.value)).toEqual([1]); // 快捷选项还在
   });
 
   it('删除不存在的定义抛 NotFoundError', async () => {

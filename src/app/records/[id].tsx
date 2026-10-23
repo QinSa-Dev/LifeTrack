@@ -4,7 +4,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AppText, Badge, Button, Card, EmptyState, Header, Screen, TextField } from '@/components';
 import { useReadyDatabase } from '@/db';
-import type { EventRecord } from '@/domain/models';
+import { attributeText, recordAttributes, type EventRecord } from '@/domain/models';
 import { localDateText, localTimeText, parseLocalDateTime } from '@/features/common/datetime';
 import { formatFullTime, formatRecordValue, isBackfilled, sourceLabel } from '@/features/records/format';
 import { EventRecordRepository } from '@/repositories';
@@ -28,7 +28,7 @@ function DetailItem({ label, value, mono = false }: { label: string; value: stri
  * 以及改与删（页面底部的「更多操作」里：修改 / 删除 / 撤销删除）。行内右侧因此
  * 只剩取值与【+1】，而【+1】点下去就记，不再弹任何确认——**记错了到这里来改**。
  *
- * 页面里的名称、单位、取值全部来自**记录的快照**，不读定义：定义后来改名、换单位、
+ * 页面里的名称、属性、取值全部来自**记录的快照**，不读定义：定义后来改名、换属性、
  * 归档甚至被永久删除，这一页显示的都还是记录当时的样子（见领域规则「历史不可篡改」）。
  */
 export default function RecordDetailScreen() {
@@ -178,8 +178,11 @@ export default function RecordDetailScreen() {
   }
 
   const deleted = record.deletedAt !== undefined;
+  const recordAttributeText = attributeText(recordAttributes(record));
   const valueLabel =
-    record.kind === 'counter' ? '数量（增量）' : `数量${record.unit ? `（${record.unit}）` : ''}`;
+    record.kind === 'counter'
+      ? '数量（增量）'
+      : `数量${recordAttributeText ? `（${recordAttributeText}）` : ''}`;
 
   return (
     <Screen scroll contentStyle={styles.content}>
@@ -216,7 +219,7 @@ export default function RecordDetailScreen() {
       {editing ? (
         <Card
           title="修改这条记录"
-          subtitle="改的是记录本身；记录时的名称与单位是快照，不会跟着变"
+          subtitle="改的是记录本身；记录时的名称与属性是快照，不会跟着变"
           style={styles.spaced}
         >
           <TextField
@@ -265,6 +268,7 @@ export default function RecordDetailScreen() {
 
       <Card title="这条记录" subtitle="记录当时的样子，之后改定义也不会动它" style={styles.spaced}>
         <DetailItem label="事件（记录时的名称）" value={record.snapshot.name} />
+        <DetailItem label="属性" value={recordAttributeText ?? '（没有属性）'} />
         <DetailItem label="取值" value={formatRecordValue(record)} />
         <DetailItem label="发生时间" value={formatFullTime(record.occurredAt)} />
         <DetailItem label="录入时间" value={formatFullTime(record.recordedAt)} />

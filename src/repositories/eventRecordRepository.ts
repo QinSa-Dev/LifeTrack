@@ -3,8 +3,8 @@
  *
  * 职责：把「用户记录了一次事实」落库。核心领域规则在这里被强制执行：
  *
- * 1. **记录时生成快照**：从当前的事件定义取出名称、单位、分组、标签，固化进记录。
- *    之后定义改名/换单位/归档/删除，历史都保持原样（见 domain/models.ts 的 snapshot）。
+ * 1. **记录时生成快照**：从当前的事件定义取出名称、属性、分组、标签，固化进记录。
+ *    之后定义改名/换属性/归档/删除，历史都保持原样（见 domain/models.ts 的 snapshot）。
  * 2. **归档不可新增记录**：`isRecordable` 为假时抛 ConflictError，历史不受影响。
  * 3. **读用 `occurred_at` 排序**（事实发生时间），而不是 `recorded_at`（录入时间）——
  *    这样补录的旧记录会落在时间轴的正确位置。
@@ -13,7 +13,7 @@
  * 5. **删除分两级**：`softDelete` 只写 `deleted_at`（可 `restore` 撤销），真删是 `remove`，
  *    不可撤销、需要界面二次确认。两者划分清楚，避免「以为能撤销，其实是真删」。
  * 6. **记录可以更正**：`update` 只改事实本身（取值、发生时间、备注），
- *    快照（名称、单位、分组、标签）永不更新——「快照不可改，事实可更正」。
+ *    快照（名称、属性、分组、标签）永不更新——「快照不可改，事实可更正」。
  *    已软删除的记录不能改（先撤销删除），避免改了又留在回收站里对不上账。
  *
  * 读取时 `kind` / `source` 都会再过一次守卫（泛型运行时不校验）。
@@ -24,16 +24,18 @@ import type { SqlExecutor, SqlParam } from '@/db/types';
 import { ConflictError, NotFoundError, StorageError, ValidationError } from '@/domain/errors';
 import { newId } from '@/domain/id';
 import {
-  isEventDefinitionKind,
+  isRecordKind,
   isRecordSource,
-  type EventDefinitionKind,
   type EventDefinitionSnapshot,
   type EventRecord,
   type IsoDateTime,
+  type RecordKind,
   type RecordSource,
 } from '@/domain/models';
 import {
+  normalizeTextList,
   optionalText,
+  readTextList,
   requireId,
   requireIsoDateTime,
   requireNotFuture,
@@ -48,14 +50,14 @@ interface RecordRow {
   definition_id: string;
   kind: string;
   value: number;
-  unit: string | null;
+  attributes: string;
   occurred_at: string;
   recorded_at: string;
   note: string | null;
   source: string;
   deleted_at: string | null;
   snapshot_name: string;
-  snapshot_unit: string | null;
+  snapshot_attributes: string;
   snapshot_group_id: string | null;
   snapshot_tag_ids: string;
 }
@@ -64,7 +66,7 @@ interface DefinitionRow {
   id: string;
   name: string;
   kind: string;
-  unit: string | null;
+  attributes: string;
   group_id: string | null;
   is_archived: number;
 }
@@ -74,11 +76,15 @@ interface TagIdRow {
 }
 
 const SELECT_COLUMNS =
-  'id, definition_id, kind, value, unit, occurred_at, recorded_at, note, source, deleted_at, ' +
-  'snapshot_name, snapshot_unit, snapshot_group_id, snapshot_tag_ids';
+  'id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at, ' +
+  'snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_tag_ids';
 
-function toKind(value: unknown): EventDefinitionKind {
-  if (!isEventDefinitionKind(value)) {
+/**
+ * 读库得到的记录类型必须再过一次守卫：它比定义的类型多一个历史遗留的 `quantity`，
+ * 非法值宁可报错也不猜。
+ */
+function toRecordKind(value: unknown): RecordKind {
+  if (!isRecordKind(value)) {
     throw new ValidationError(`事件记录的类型字段不合法：${String(value)}`);
   }
   return value;
@@ -91,28 +97,18 @@ function toSource(value: unknown): RecordSource {
   return value;
 }
 
-/** snapshot_tag_ids 是 JSON 数组文本；解析失败时退化为空数组，而不是让整行读不出来。 */
-function parseTagIds(json: string): string[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) {
-    return [];
-  }
-  return parsed.filter((item): item is string => typeof item === 'string');
-}
-
+/**
+ * 列表类字段（`snapshot_tag_ids` 等）是 JSON 数组文本；解析失败时退化为空数组，
+ * 而不是让整行读不出来。
+ */
 function toRecord(row: RecordRow): EventRecord {
-  const kind = toKind(row.kind);
-  const tagIds = parseTagIds(row.snapshot_tag_ids);
+  const kind = toRecordKind(row.kind);
+  const tagIds = readTextList(row.snapshot_tag_ids);
   const snapshot: EventDefinitionSnapshot = {
     definitionId: row.definition_id,
     name: row.snapshot_name,
     kind,
-    unit: row.snapshot_unit ?? undefined,
+    attributes: readTextList(row.snapshot_attributes),
     groupId: row.snapshot_group_id ?? undefined,
     tagIds,
   };
@@ -121,7 +117,7 @@ function toRecord(row: RecordRow): EventRecord {
     definitionId: row.definition_id,
     kind,
     value: row.value,
-    unit: row.unit ?? undefined,
+    attributes: readTextList(row.attributes),
     occurredAt: row.occurred_at,
     recordedAt: row.recorded_at,
     note: row.note ?? undefined,
@@ -174,7 +170,7 @@ export class EventRecordRepository {
     return guard('新增事件记录', async () => {
       await this.db.withExclusiveTransactionAsync(async (txn) => {
         const definition = await txn.getFirstAsync<DefinitionRow>(
-          'SELECT id, name, kind, unit, group_id, is_archived FROM event_definitions WHERE id = ?',
+          'SELECT id, name, kind, attributes, group_id, is_archived FROM event_definitions WHERE id = ?',
           definitionId,
         );
         if (!definition) {
@@ -183,10 +179,15 @@ export class EventRecordRepository {
         if (definition.is_archived === 1) {
           throw new ConflictError(`事件「${definition.name}」已归档，不能新增记录`);
         }
+        if (definition.kind === 'cycle') {
+          throw new ConflictError(`「${definition.name}」是周期型事件，请在周期详情里记录，而不是记一次`);
+        }
 
-        const kind = toKind(definition.kind);
+        const kind = toRecordKind(definition.kind);
         const value = requireRecordValue(kind, input.value);
-        const unit = optionalText(input.unit) ?? definition.unit ?? undefined;
+        // 记录上标了哪些属性就用哪些；一个都没标就存空列表
+        // （展示时 `recordAttributes` 会回落到快照里的定义属性）。
+        const attributes = normalizeTextList(input.attributes ?? []);
 
         const tagRows = await txn.getAllAsync<TagIdRow>(
           'SELECT tag_id FROM event_definition_tags WHERE definition_id = ? ORDER BY tag_id ASC',
@@ -196,20 +197,20 @@ export class EventRecordRepository {
 
         await txn.runAsync(
           `INSERT INTO event_records
-             (id, definition_id, kind, value, unit, occurred_at, recorded_at, note, source, deleted_at,
-              snapshot_name, snapshot_unit, snapshot_group_id, snapshot_tag_ids)
+             (id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at,
+              snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_tag_ids)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
           id,
           definitionId,
           kind,
           value,
-          unit ?? null,
+          JSON.stringify(attributes),
           occurredAt,
           recordedAt,
           note ?? null,
           source,
           definition.name,
-          definition.unit ?? null,
+          definition.attributes,
           definition.group_id ?? null,
           JSON.stringify(tagIds),
         );
@@ -222,10 +223,10 @@ export class EventRecordRepository {
   /**
    * 更正一条已存在的记录：取值、发生时间、备注。
    *
-   * 动的是「事实」，不是「快照」：记录时的名称、单位、分组、标签保持原样，
+   * 动的是「事实」，不是「快照」：记录时的名称、属性、分组、标签保持原样，
    * 所以改完之后历史仍然自洽（比如定义后来改了名，这条记录还是原名）。
    *
-   * 校验与新增记录同一套：取值按类型（counter 是正整数、quantity 是数字）、
+   * 校验与新增记录同一套：取值按类型（counter 是正整数、历史 quantity 是数字）、
    * 发生时间不能晚于录入时间（未来还没发生，不构成事实——这条与补录共用同一条规则）。
    * 已软删除的记录拒绝修改：先撤销删除再改，免得「改了又躺在回收站里」对不上。
    */

@@ -13,9 +13,9 @@
  * 2. **「一天/一周」按设备本地时区分桶**：与页面展示的时间一致（用户看到 10-19
  *    的记录就该落在 10-19 这一天）。本地时间换算复用 `features/common/datetime`，
  *    与 `domain/dates.ts`（一律按 UTC 的纯日历运算）分工不同，不要混用。
- * 3. **不同单位的值不相加成一个数**：数量型允许每条记录覆盖单位（如「1 杯」与
- *    「500 毫升」），此时合并没有意义。只有单位一致时才给出 `unit`，否则为
- *    `undefined`，界面只显示数值、不加单位。
+ * 3. **不同属性的值不相加成一个数**：历史数量型允许每条记录覆盖属性（如「1 杯」与
+ *    「500 毫升」），此时合并没有意义。只有属性一致时才给出 `attributeText`，否则为
+ *    `undefined`，界面只显示数值、不加属性。
  *
  * 对比（环比 / 同比）同样只用**条数**，不比较取值合计：
  * 「上周 3 杯 + 1 公里」与「本周 2 杯 + 5 公里」在数值上不可比（第 3 条约定）。
@@ -24,11 +24,13 @@
 import { addDays, daysBetween } from '@/domain/dates';
 import { ValidationError } from '@/domain/errors';
 import {
+  attributeText,
   isVisibleRecord,
-  type EventDefinitionKind,
+  recordAttributes,
   type EventRecord,
   type IsoDate,
   type IsoDateTime,
+  type RecordKind,
 } from '@/domain/models';
 import { localDateText, shiftLocalDays } from '@/features/common/datetime';
 
@@ -37,12 +39,12 @@ export interface DefinitionTotal {
   definitionId: string;
   /** 展示名取「最近一条记录」的快照名（定义改名不改历史，用最新的名字代表它） */
   name: string;
-  kind: EventDefinitionKind;
-  /** 所有记录单位一致时给出，否则 undefined（不同单位的值不合并计量） */
-  unit?: string;
+  kind: RecordKind;
+  /** 所有记录的属性一致时给出拼接好的文本，否则 undefined（不同属性的值不合并计量） */
+  attributeText?: string;
   /** 记录条数 */
   recordCount: number;
-  /** 取值合计：counter 是总增量，quantity 是总量 */
+  /** 取值合计：counter 是总增量，历史 quantity 是总量 */
   totalValue: number;
 }
 
@@ -159,7 +161,7 @@ export function aggregateByDefinition(records: readonly EventRecord[]): Definiti
       continue;
     }
 
-    // 展示名与单位取「最近一条记录」的快照：定义改名后历史不变，用最新的名字代表它。
+    // 展示名与属性取「最近一条记录」的快照：定义改名后历史不变，用最新的名字代表它。
     let latest = first;
     let latestMs = occurredAtMs(latest);
     for (const record of bucket) {
@@ -170,15 +172,15 @@ export function aggregateByDefinition(records: readonly EventRecord[]): Definiti
       }
     }
 
-    // 单位不一致（含「有单位」与「无单位」混用）时不做合并计量。
-    const units = new Set(bucket.map((record) => record.unit ?? ''));
-    const unit = units.size === 1 ? latest.unit : undefined;
+    // 属性不一致（含「有属性」与「无属性」混用）时不做合并计量。
+    const texts = new Set(bucket.map((record) => attributeText(recordAttributes(record)) ?? ''));
+    const text = texts.size === 1 ? attributeText(recordAttributes(latest)) : undefined;
 
     totals.push({
       definitionId,
       name: latest.snapshot.name,
       kind: latest.kind,
-      unit,
+      attributeText: text,
       recordCount: bucket.length,
       totalValue: roundValue(bucket.reduce((sum, record) => sum + record.value, 0)),
     });
@@ -312,7 +314,7 @@ export interface DefinitionChange {
   definitionId: string;
   /** 展示名取这两个窗口里「最近一条记录」的快照名 */
   name: string;
-  kind: EventDefinitionKind;
+  kind: RecordKind;
   currentCount: number;
   previousCount: number;
   /** 本期 − 对照期（可为负；两个窗口都没记录的定义不会出现在结果里） */

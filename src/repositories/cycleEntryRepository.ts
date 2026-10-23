@@ -141,7 +141,7 @@ export class CycleEntryRepository {
         return rows.map(toEntry);
       }
 
-      const targetId = requireId(definitionId, '周期定义 id');
+      const targetId = requireId(definitionId, '周期事件 id');
       const rows = await this.db.getAllAsync<CycleEntryRow>(
         `SELECT ${SELECT_COLUMNS_ALIASED} FROM cycle_entries e
            JOIN cycle_instances i ON i.id = e.instance_id
@@ -167,7 +167,7 @@ export class CycleEntryRepository {
                 i.end_date AS instance_end_date
            FROM cycle_entries e
            JOIN cycle_instances i ON i.id = e.instance_id
-           JOIN cycle_definitions d ON d.id = i.definition_id
+           JOIN event_definitions d ON d.id = i.definition_id
           WHERE e.deleted_at IS NOT NULL
           ORDER BY e.deleted_at DESC, e.date DESC, e.id DESC`,
       );

@@ -4,7 +4,6 @@ import { LATEST_SCHEMA_VERSION, MIGRATIONS } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { ImportError, StorageError } from '@/domain/errors';
 import { BackupRepository } from '@/repositories/backupRepository';
-import { CycleDefinitionRepository } from '@/repositories/cycleDefinitionRepository';
 import { CycleEntryRepository } from '@/repositories/cycleEntryRepository';
 import { CycleInstanceRepository } from '@/repositories/cycleInstanceRepository';
 import { EventDefinitionRepository } from '@/repositories/eventDefinitionRepository';
@@ -25,7 +24,6 @@ interface Context {
   tags: TagRepository;
   definitions: EventDefinitionRepository;
   records: EventRecordRepository;
-  cycleDefinitions: CycleDefinitionRepository;
   instances: CycleInstanceRepository;
   entries: CycleEntryRepository;
   meta: MetaRepository;
@@ -41,7 +39,6 @@ async function setup(): Promise<Context> {
     tags: new TagRepository(db),
     definitions: new EventDefinitionRepository(db),
     records: new EventRecordRepository(db),
-    cycleDefinitions: new CycleDefinitionRepository(db),
     instances: new CycleInstanceRepository(db),
     entries: new CycleEntryRepository(db),
     meta: new MetaRepository(db),
@@ -50,7 +47,7 @@ async function setup(): Promise<Context> {
 
 /**
  * 一份有代表性的数据：分组 / 标签 / 带快捷选项的定义 / 归档的定义 /
- * 有效记录 / 软删除记录 / 周期定义 + 实例 + 每日记录。
+ * 有效记录 / 软删除记录 / 周期型事件 + 实例 + 每日记录。
  */
 async function seed(context: Context): Promise<void> {
   const group = await context.groups.create({ name: '健康', color: '#0af' }, T1);
@@ -60,15 +57,15 @@ async function seed(context: Context): Promise<void> {
     {
       name: '喝水',
       kind: 'counter',
-      unit: '杯',
+      attributes: ['杯', '温水'],
       groupId: group.id,
       tagIds: [tag.id],
-      quickOptions: [{ label: '一杯', value: 1, sortOrder: 0 }],
+      quickOptions: [{ attribute: '杯', value: 1, sortOrder: 0 }],
     },
     T1,
   );
   const archived = await context.definitions.create(
-    { name: '咖啡', kind: 'quantity', tagIds: [], quickOptions: [] },
+    { name: '咖啡', kind: 'counter', attributes: ['杯'], tagIds: [], quickOptions: [] },
     T1,
   );
   await context.definitions.setArchived(archived.id, true, T1);
@@ -77,15 +74,25 @@ async function seed(context: Context): Promise<void> {
   if (!definition) {
     throw new Error('夹具数据缺失：喝水');
   }
-  await context.records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+  await context.records.record(
+    { definitionId: definition.id, value: 1, attributes: ['温水'], source: 'manual' },
+    T1,
+  );
   const dropped = await context.records.record(
     { definitionId: definition.id, value: 2, source: 'quick' },
     T2,
   );
   await context.records.softDelete(dropped.id, T3);
 
-  const cycleDefinition = await context.cycleDefinitions.create(
-    { name: '生理期', averageCycleLengthDays: 28 },
+  const cycleDefinition = await context.definitions.create(
+    {
+      name: '生理期',
+      kind: 'cycle',
+      cycleMode: 'manual',
+      averageCycleLengthDays: 28,
+      tagIds: [],
+      quickOptions: [],
+    },
     T1,
   );
   const instance = await context.instances.create(
@@ -133,10 +140,13 @@ describe('BackupRepository.exportAll', () => {
     const file = await context.backup.exportAll(T1);
     const names = file.data.eventDefinitions.map((item) => item.name);
 
-    // 两个定义都是 sortOrder 0 / createdAt 相同，按主键（uuid v7，创建顺序）兜底排序
-    expect(names).toEqual(['喝水', '咖啡']);
+    // 三个定义都是 sortOrder 0 / createdAt 相同，按主键（uuid v7，创建顺序）兜底排序
+    // ——周期型也是事件定义，自然排在一起
+    expect(names).toEqual(['喝水', '咖啡', '生理期']);
     expect(findDefinition(file, '咖啡').isArchived).toBe(true);
+    expect(findDefinition(file, '喝水').attributes).toEqual(['杯', '温水']);
     expect(findDefinition(file, '喝水').quickOptions).toHaveLength(1);
+    expect(findDefinition(file, '生理期').cycleMode).toBe('manual');
     expect(file.data.eventRecords).toHaveLength(2);
     expect(file.data.eventRecords.filter((record) => record.deletedAt !== undefined)).toHaveLength(1);
     expect(file.data.cycleInstances).toHaveLength(1);
@@ -241,23 +251,29 @@ describe('BackupRepository.importAll', () => {
     // 本地改一次名（updatedAt = T3）
     await context.definitions.update(
       id,
-      { name: '喝水（本地）', kind: 'counter', unit: '杯', tagIds: [], quickOptions: [] },
+      { name: '喝水（本地）', kind: 'counter', attributes: ['杯'], tagIds: [], quickOptions: [] },
       T3,
     );
 
     // 备份更旧（T2）→ 本地胜出
-    const older = createBackup(
-      { ...file.data, eventDefinitions: [{ ...original, name: '喝水（旧备份）', updatedAt: T2 }] },
-      { schemaVersion: LATEST_SCHEMA_VERSION, exportedAt: T1 },
-    );
+    const renamed = (name: string, updatedAt: string) => ({
+      ...file.data,
+      eventDefinitions: file.data.eventDefinitions.map((item) =>
+        item.id === id ? { ...item, name, updatedAt } : item,
+      ),
+    });
+    const older = createBackup(renamed('喝水（旧备份）', T2), {
+      schemaVersion: LATEST_SCHEMA_VERSION,
+      exportedAt: T1,
+    });
     await context.backup.importAll(older);
     expect((await context.definitions.getById(id))?.name).toBe('喝水（本地）');
 
     // 备份更新（T4）→ 覆盖本地
-    const newer = createBackup(
-      { ...file.data, eventDefinitions: [{ ...original, name: '喝水（新备份）', updatedAt: T4 }] },
-      { schemaVersion: LATEST_SCHEMA_VERSION, exportedAt: T1 },
-    );
+    const newer = createBackup(renamed('喝水（新备份）', T4), {
+      schemaVersion: LATEST_SCHEMA_VERSION,
+      exportedAt: T1,
+    });
     const summary = await context.backup.importAll(newer);
 
     expect((await context.definitions.getById(id))?.name).toBe('喝水（新备份）');
@@ -347,15 +363,16 @@ describe('BackupRepository.importAll', () => {
     await seed(context);
     const before = sortBackupData(await context.backup.readAll());
     const data = await context.backup.readAll();
+    // 把周期型事件定义抽掉：实例就悬空了（v6 起周期定义并进 eventDefinitions）
     const broken = createBackup(
-      { ...data, cycleDefinitions: [] },
+      { ...data, eventDefinitions: data.eventDefinitions.filter((item) => item.kind !== 'cycle') },
       {
         schemaVersion: LATEST_SCHEMA_VERSION,
         exportedAt: T1,
       },
     );
 
-    await expect(context.backup.importAll(broken)).rejects.toThrow(/指向不存在的周期定义/);
+    await expect(context.backup.importAll(broken)).rejects.toThrow(/指向不存在的周期型事件/);
     expect(sortBackupData(await context.backup.readAll())).toEqual(before);
   });
 

@@ -1,15 +1,20 @@
-import { describeLatestCycle, describeOverlap, describePrediction } from '@/features/cycles/labels';
-import type { CycleDefinition, CycleInstance } from '@/domain/models';
+import {
+  describeAutoSegment,
+  describeCycleDefinition,
+  describeLatestCycle,
+  describeOverlap,
+  describePrediction,
+} from '@/features/cycles/labels';
+import type { CycleInstance, EventDefinition } from '@/domain/models';
 
-function makeDefinition(overrides: Partial<CycleDefinition> = {}): CycleDefinition {
-  return {
-    id: 'd1',
-    name: '生理期',
-    isArchived: false,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    ...overrides,
-  };
+/** describeLatestCycle 只用得到「平均周期长度」这一项配置。 */
+type CycleDefinitionView = Pick<
+  EventDefinition,
+  'averageCycleLengthDays' | 'averagePeriodLengthDays' | 'cycleMode'
+>;
+
+function makeDefinition(overrides: Partial<CycleDefinitionView> = {}): CycleDefinitionView {
+  return { ...overrides };
 }
 
 function makeInstance(overrides: Partial<CycleInstance> = {}): CycleInstance {
@@ -98,6 +103,46 @@ describe('describeOverlap', () => {
   it('进行中的那一段说成「进行中」', () => {
     expect(describeOverlap(makeInstance({ startDate: '2026-09-01', endDate: undefined }))).toContain(
       '2026-09-01 ~ 进行中',
+    );
+  });
+});
+
+describe('describeCycleDefinition', () => {
+  it('手动标记：说清做法与平均长度', () => {
+    expect(
+      describeCycleDefinition({
+        cycleMode: 'manual',
+        averageCycleLengthDays: 28,
+        averagePeriodLengthDays: 5,
+      }),
+    ).toBe('手动标记 · 平均周期 28 天 · 平均持续 5 天');
+  });
+
+  it('自动循环：说成「每 N 天一次」', () => {
+    expect(describeCycleDefinition({ cycleMode: 'auto', averageCycleLengthDays: 30 })).toBe(
+      '自动循环 · 每 30 天一次',
+    );
+  });
+
+  it('自动循环但没设周期长度时明说「还不能生成」', () => {
+    expect(describeCycleDefinition({ cycleMode: 'auto' })).toContain('还不能按规律生成');
+  });
+});
+
+describe('describeAutoSegment', () => {
+  it('还没有可用的规律时不硬给一段', () => {
+    expect(describeAutoSegment(undefined)).toContain('先在上面的「周期长度」里填上');
+  });
+
+  it('说清下一段的日期区间与推算依据', () => {
+    expect(describeAutoSegment({ startDate: '2026-10-19', endDate: '2026-10-23', basis: 'scheduled' })).toBe(
+      '下一段：2026-10-19 ~ 2026-10-23（按上一段的开始日 + 周期长度推出）',
+    );
+  });
+
+  it('还没有任何周期时说明「从今天开始」', () => {
+    expect(describeAutoSegment({ startDate: '2026-10-19', basis: 'first' })).toBe(
+      '下一段：2026-10-19（进行中）（还没有任何周期，这一段从今天开始）',
     );
   });
 });

@@ -14,7 +14,7 @@
  */
 
 import { addDays, daysBetween, isDateWithin } from './dates';
-import type { CycleDefinition, CycleInstance, IsoDate } from './models';
+import type { CycleInstance, EventDefinition, IsoDate } from './models';
 
 /** 一个日期区间；`endDate` 为空表示「进行中」。 */
 export interface DateRange {
@@ -146,7 +146,7 @@ export interface CyclePrediction {
  */
 export function predictNextCycle(
   instances: readonly CycleInstance[],
-  definition: CycleDefinition,
+  definition: Pick<EventDefinition, 'averageCycleLengthDays'>,
   window: number = DEFAULT_PREDICTION_WINDOW,
 ): CyclePrediction | undefined {
   const latest = latestInstance(instances);
@@ -182,4 +182,49 @@ export function latestInstance(instances: readonly CycleInstance[]): CycleInstan
     (latest, instance) => (latest === undefined || instance.startDate > latest.startDate ? instance : latest),
     undefined,
   );
+}
+
+/** 自动循环算出来的下一段：开始日、结束日（配了持续天数才有）。 */
+export interface AutoCycleSegment {
+  startDate: IsoDate;
+  /** 配了「一段通常持续多少天」才会给出结束日；否则这一段仍是进行中 */
+  endDate?: IsoDate;
+  /** `first` = 还没有任何周期，今天就是起点；`scheduled` = 上一段开始日 + 周期长度 */
+  basis: 'first' | 'scheduled';
+}
+
+/**
+ * 自动循环的下一段：**上一段的开始日 + 周期长度**，持续天数落在结束日上。
+ *
+ * 这里刻意只算「下一段是什么」，不碰数据库：与预测一样，「什么时候写库」
+ * 由用户决定（当前的按钮是「生成这一段」）。没有周期长度、或者根本不是
+ * 自动型时返回 `undefined`——不猜。
+ */
+export function nextAutoCycleSegment(
+  instances: readonly CycleInstance[],
+  definition: Pick<EventDefinition, 'cycleMode' | 'averageCycleLengthDays' | 'averagePeriodLengthDays'>,
+  today: IsoDate,
+): AutoCycleSegment | undefined {
+  if (definition.cycleMode !== 'auto') {
+    return undefined;
+  }
+
+  const latest = latestInstance(instances);
+  let startDate = today;
+  let basis: AutoCycleSegment['basis'] = 'first';
+  if (latest !== undefined) {
+    const interval = definition.averageCycleLengthDays;
+    if (interval === undefined) {
+      return undefined;
+    }
+    startDate = addDays(latest.startDate, interval);
+    basis = 'scheduled';
+  }
+
+  const duration = definition.averagePeriodLengthDays;
+  return {
+    startDate,
+    endDate: duration === undefined ? undefined : addDays(startDate, duration - 1),
+    basis,
+  };
 }

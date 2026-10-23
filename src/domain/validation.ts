@@ -10,10 +10,14 @@
 import { isValidIsoDate } from './dates';
 import { ValidationError } from './errors';
 import {
+  isCycleMode,
   isEventDefinitionKind,
+  isRecordKind,
   isRecordSource,
+  type CycleMode,
   type EventDefinitionKind,
   type IsoDate,
+  type RecordKind,
   type RecordSource,
 } from './models';
 
@@ -33,9 +37,9 @@ export interface TagInput {
 /** 快捷选项的输入；id 省略表示新建 */
 export interface QuickOptionInput {
   id?: string;
-  label: string;
+  /** 这一下记的是什么（自由文本，例如「200ml」）；省略表示不带属性 */
+  attribute?: string;
   value: number;
-  unit?: string;
   sortOrder?: number;
 }
 
@@ -46,13 +50,20 @@ export interface QuickOptionInput {
 export interface EventDefinitionDraft {
   name: string;
   kind: EventDefinitionKind;
-  unit?: string;
+  /** 属性：自由文本列表（例如「200ml」「温水」），可以一条都不写 */
+  attributes?: string[];
   groupId?: string;
   color?: string;
   icon?: string;
   sortOrder?: number;
   tagIds: string[];
   quickOptions: QuickOptionInput[];
+  /** 周期型的做法；计数型忽略 */
+  cycleMode?: CycleMode;
+  /** 周期长度（天）：手动型用于预测，自动型是「每隔多少天一次」 */
+  averageCycleLengthDays?: number;
+  /** 一段周期通常持续多少天 */
+  averagePeriodLengthDays?: number;
 }
 
 /**
@@ -62,8 +73,8 @@ export interface EventDefinitionDraft {
 export interface EventRecordInput {
   definitionId: string;
   value: number;
-  /** 覆盖定义/选项的单位，例如快捷选项自带的「杯」 */
-  unit?: string;
+  /** 这一次标上的属性（可多选，也可以不标）；省略即空 */
+  attributes?: string[];
   occurredAt?: string;
   note?: string;
   source: RecordSource;
@@ -72,7 +83,7 @@ export interface EventRecordInput {
 /**
  * 修改一条已存在的记录：只改「事实本身」——取值、发生时间、备注。
  *
- * 不给单位、名称这类**快照**字段：它们是「记录当时的样子」，改了就不是历史了
+ * 不给属性、名称这类**快照**字段：它们是「记录当时的样子」，改了就不是历史了
  * （见 domain/models.ts 的 snapshot）。也不给 source：它说明这条是怎么进来的，
  * 不是用户能重新选的东西。
  */
@@ -81,15 +92,6 @@ export interface EventRecordEditInput {
   occurredAt?: string;
   /** 省略即清空备注：更新是「这条记录的这三个字段整体替换」 */
   note?: string;
-}
-
-/** 周期定义的输入（创建与更新共用）。 */
-export interface CycleDefinitionInput {
-  name: string;
-  /** 平均周期长度（天），用于预测下次开始日；省略表示不预测 */
-  averageCycleLengthDays?: number;
-  /** 平均经期长度（天），仅作参考 */
-  averagePeriodLengthDays?: number;
 }
 
 /** 周期实例的输入（创建与更新共用）。`endDate` 省略表示仍在进行中。 */
@@ -137,12 +139,41 @@ export function optionalText(value: string | undefined | null): string | undefin
   return trimmed.length === 0 ? undefined : trimmed;
 }
 
-/** 事件类型：只接受 counter / quantity，其它值在写库前就拒绝。 */
+/** 事件类型：只接受 counter / cycle，其它值在写库前就拒绝。 */
 export function requireKind(value: unknown): EventDefinitionKind {
   if (!isEventDefinitionKind(value)) {
     throw new ValidationError(`事件类型不合法：${String(value)}`);
   }
   return value;
+}
+
+/**
+ * 历史记录的类型：比定义多一个 `quantity`（早期「数量」型事件留下的记录）。
+ * 历史不可篡改，所以读取与导入时它必须仍然合法。
+ */
+export function requireRecordKind(value: unknown): RecordKind {
+  if (!isRecordKind(value)) {
+    throw new ValidationError(`记录类型不合法：${String(value)}`);
+  }
+  return value;
+}
+
+/** 周期型做法：只接受 auto / manual。 */
+export function requireCycleMode(value: unknown): CycleMode {
+  if (!isCycleMode(value)) {
+    throw new ValidationError(`周期方式不合法：${String(value)}`);
+  }
+  return value;
+}
+
+/**
+ * 可选周期型做法：空值归为 `undefined`（调用方再按 `manual` 兜底）。
+ */
+export function optionalCycleMode(value: unknown): CycleMode | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return requireCycleMode(value);
 }
 
 /** 排序值：必须是整数，允许为 0 与负数（负数表示手动置顶）。 */
@@ -154,11 +185,19 @@ export function requireSortOrder(value: number, field = '排序值'): number {
 }
 
 /**
+ * 取值校验用的「事件类型」：比定义的类型多一个历史遗留的 `quantity`。
+ *
+ * 历史记录（以及老备份）里还可能出现 `quantity`，取值规则与当年一致，
+ * 所以这里让三者在同一处共用一套判断。
+ */
+export type ValueKind = EventDefinitionKind | RecordKind;
+
+/**
  * 正数取值校验（快捷选项与事件记录共用）：
- * - 必须是有限正数（数量型允许小数，例如 0.5 升）；
+ * - 必须是有限正数（历史「数量」型允许小数，例如 0.5 升）；
  * - 计数型的取值必须是正整数（「0.5 次」没有意义）。
  */
-function requirePositiveValue(kind: EventDefinitionKind, value: unknown, field: string): number {
+function requirePositiveValue(kind: ValueKind, value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new ValidationError(`${field}必须是有限数字`);
   }
@@ -171,16 +210,12 @@ function requirePositiveValue(kind: EventDefinitionKind, value: unknown, field: 
   return value;
 }
 
-export function requireQuickOptionValue(
-  kind: EventDefinitionKind,
-  value: unknown,
-  field = '快捷选项取值',
-): number {
+export function requireQuickOptionValue(kind: ValueKind, value: unknown, field = '快捷选项取值'): number {
   return requirePositiveValue(kind, value, field);
 }
 
 /** 事件记录的取值：语义同快捷选项，只是错误文案不同。 */
-export function requireRecordValue(kind: EventDefinitionKind, value: unknown, field = '记录值'): number {
+export function requireRecordValue(kind: ValueKind, value: unknown, field = '记录值'): number {
   return requirePositiveValue(kind, value, field);
 }
 
@@ -257,6 +292,25 @@ export function normalizeTextList(values: readonly string[]): string[] {
     result.push(text);
   }
   return result;
+}
+
+/**
+ * 把库里存的 JSON 数组文本读回字符串数组（属性、标签、症状等共用）。
+ *
+ * 解析失败或不是数组时退化为空数组：一行数据里某个列表字段坏了，
+ * 不该让整条记录读不出来，更不该让整屏崩掉。
+ */
+export function readTextList(json: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return parsed.filter((item): item is string => typeof item === 'string');
 }
 
 /** 日历日期：必须是真实存在的 `YYYY-MM-DD`（2 月 31 日这类不算）。 */

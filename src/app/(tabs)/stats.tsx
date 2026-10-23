@@ -5,7 +5,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { AppText, Card, Chip, EmptyState, ListRow, Screen } from '@/components';
 import { useReadyDatabase } from '@/db';
 import type { CycleEntry, EventRecord } from '@/domain/models';
-import { eventKindLabel } from '@/features/definitions/labels';
+import { recordKindLabel } from '@/features/definitions/labels';
 import { SymptomStatsCard } from '@/features/cycles/SymptomStatsCard';
 import {
   aggregateByDay,
@@ -41,9 +41,9 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** 数量型不同单位的值不合并计量，所以合计单位可能为空。 */
+/** 历史数量型不同属性的值不合并计量，所以合计属性可能为空。 */
 function formatTotalValue(total: DefinitionTotal): string {
-  return total.unit ? `${total.totalValue} ${total.unit}` : String(total.totalValue);
+  return total.attributeText ? `${total.totalValue} ${total.attributeText}` : String(total.totalValue);
 }
 
 /** MM-DD，天与周都用周一/当天的月日做标签。 */
@@ -246,7 +246,10 @@ export default function StatsScreen() {
                   ? definitions.map((total) => {
                       const change = changeById.get(total.definitionId);
                       const changeText = change ? describeDefinitionChange(change, basis) : undefined;
-                      const subtitle = [`${eventKindLabel(total.kind)} · ${total.recordCount} 条`, changeText]
+                      const subtitle = [
+                        `${recordKindLabel(total.kind)} · ${total.recordCount} 条`,
+                        changeText,
+                      ]
                         .filter((part): part is string => Boolean(part))
                         .join(' · ');
                       return (

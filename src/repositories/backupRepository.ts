@@ -3,7 +3,7 @@
  *
  * 这一层只做三件事，规则本身在 `domain/backup.ts`（纯函数，可单测）：
  *
- * 1. **导出**：把七张业务表读成领域对象，交给 `createBackup` 打包。
+ * 1. **导出**：把六张业务表读成领域对象，交给 `createBackup` 打包。
  *    归档的定义、软删除的记录**都要导出**——否则「备份」就不是无损的。
  *    `app_meta`（安装时间 / 启动次数）是本机诊断信息，不进备份。
  * 2. **导入 = 合并**：先读本地现有数据，用纯函数算出「本地 ∪ 备份」的结果，
@@ -31,7 +31,6 @@ import {
 import { ImportError } from '@/domain/errors';
 import type { IsoDateTime } from '@/domain/models';
 
-import { CycleDefinitionRepository } from './cycleDefinitionRepository';
 import { CycleEntryRepository } from './cycleEntryRepository';
 import { CycleInstanceRepository } from './cycleInstanceRepository';
 import { EventDefinitionRepository } from './eventDefinitionRepository';
@@ -43,7 +42,6 @@ import { TagRepository } from './tagRepository';
 const DELETE_ORDER = [
   'cycle_entries',
   'cycle_instances',
-  'cycle_definitions',
   'event_records',
   'event_definition_tags',
   'quick_options',
@@ -52,8 +50,9 @@ const DELETE_ORDER = [
   'event_groups',
 ] as const;
 
-// 写入顺序是上面清空顺序的逆序：父表（分组 / 标签 / 定义 / 周期定义）先写，
+// 写入顺序是上面清空顺序的逆序：父表（分组 / 标签 / 事件定义）先写，
 // 子表（快捷选项 / 关联 / 记录 / 实例 / 周期记录）后写，`writeAll` 里逐表照着来。
+// 周期型事件就在 `event_definitions` 里（kind = 'cycle'），不再是单独一张表。
 
 export class BackupRepository {
   private readonly db: SqlExecutor;
@@ -72,27 +71,24 @@ export class BackupRepository {
       const tags = new TagRepository(this.db);
       const definitions = new EventDefinitionRepository(this.db);
       const records = new EventRecordRepository(this.db);
-      const cycleDefinitions = new CycleDefinitionRepository(this.db);
       const cycleInstances = new CycleInstanceRepository(this.db);
       const cycleEntries = new CycleEntryRepository(this.db);
 
-      const [groupList, tagList, definitionList, recordList, cycleDefinitionList, instanceList, entryList] =
-        await Promise.all([
-          eventGroups.list(),
-          tags.list(),
-          definitions.list({ includeArchived: true }),
-          records.list({ includeDeleted: true }),
-          cycleDefinitions.list({ includeArchived: true }),
-          cycleInstances.list(),
-          cycleEntries.listAll(),
-        ]);
+      const [groupList, tagList, definitionList, recordList, instanceList, entryList] = await Promise.all([
+        eventGroups.list(),
+        tags.list(),
+        // 周期型事件也在 event_definitions 里，所以这一个列表就是全部定义
+        definitions.list({ includeArchived: true }),
+        records.list({ includeDeleted: true }),
+        cycleInstances.list(),
+        cycleEntries.listAll(),
+      ]);
 
       return {
         eventGroups: groupList,
         tags: tagList,
         eventDefinitions: definitionList,
         eventRecords: recordList,
-        cycleDefinitions: cycleDefinitionList,
         cycleInstances: instanceList,
         cycleEntries: entryList,
       };
@@ -177,29 +173,32 @@ export class BackupRepository {
     for (const definition of data.eventDefinitions) {
       await txn.runAsync(
         `INSERT INTO event_definitions
-           (id, name, kind, unit, group_id, color, icon, is_archived, sort_order, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, name, kind, attributes, group_id, color, icon, is_archived, sort_order,
+            cycle_mode, average_cycle_length_days, average_period_length_days, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         definition.id,
         definition.name,
         definition.kind,
-        definition.unit ?? null,
+        JSON.stringify(definition.attributes),
         definition.groupId ?? null,
         definition.color ?? null,
         definition.icon ?? null,
         definition.isArchived ? 1 : 0,
         definition.sortOrder,
+        definition.cycleMode ?? null,
+        definition.averageCycleLengthDays ?? null,
+        definition.averagePeriodLengthDays ?? null,
         definition.createdAt,
         definition.updatedAt,
       );
       for (const option of definition.quickOptions) {
         await txn.runAsync(
-          `INSERT INTO quick_options (id, definition_id, label, value, unit, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO quick_options (id, definition_id, attribute, value, sort_order)
+           VALUES (?, ?, ?, ?, ?)`,
           option.id,
           definition.id,
-          option.label,
+          option.attribute ?? null,
           option.value,
-          option.unit ?? null,
           option.sortOrder,
         );
       }
@@ -215,38 +214,23 @@ export class BackupRepository {
     for (const record of data.eventRecords) {
       await txn.runAsync(
         `INSERT INTO event_records
-           (id, definition_id, kind, value, unit, occurred_at, recorded_at, note, source, deleted_at,
-            snapshot_name, snapshot_unit, snapshot_group_id, snapshot_tag_ids)
+           (id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at,
+            snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_tag_ids)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         record.id,
         record.definitionId,
         record.kind,
         record.value,
-        record.unit ?? null,
+        JSON.stringify(record.attributes),
         record.occurredAt,
         record.recordedAt,
         record.note ?? null,
         record.source,
         record.deletedAt ?? null,
         record.snapshot.name,
-        record.snapshot.unit ?? null,
+        JSON.stringify(record.snapshot.attributes),
         record.snapshot.groupId ?? null,
         JSON.stringify(record.snapshot.tagIds),
-      );
-    }
-
-    for (const definition of data.cycleDefinitions) {
-      await txn.runAsync(
-        `INSERT INTO cycle_definitions
-           (id, name, average_cycle_length_days, average_period_length_days, is_archived, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        definition.id,
-        definition.name,
-        definition.averageCycleLengthDays ?? null,
-        definition.averagePeriodLengthDays ?? null,
-        definition.isArchived ? 1 : 0,
-        definition.createdAt,
-        definition.updatedAt,
       );
     }
 
@@ -293,7 +277,6 @@ function expectedCounts(data: BackupData): readonly { table: string; expected: n
     { table: 'quick_options', expected: sum(data.eventDefinitions.map((d) => d.quickOptions.length)) },
     { table: 'event_definition_tags', expected: sum(data.eventDefinitions.map((d) => d.tagIds.length)) },
     { table: 'event_records', expected: data.eventRecords.length },
-    { table: 'cycle_definitions', expected: data.cycleDefinitions.length },
     { table: 'cycle_instances', expected: data.cycleInstances.length },
     { table: 'cycle_entries', expected: data.cycleEntries.length },
   ];

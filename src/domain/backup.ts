@@ -22,9 +22,9 @@ import { isEntryWithinRange } from './cycles';
 import { ImportError, ValidationError } from './errors';
 import { assertEntityId } from './id';
 import {
-  type CycleDefinition,
   type CycleEntry,
   type CycleInstance,
+  type CycleMode,
   type EventDefinition,
   type EventGroup,
   type EventRecord,
@@ -35,6 +35,7 @@ import {
 import {
   normalizeIdList,
   normalizeTextList,
+  optionalCycleMode,
   optionalPositiveInteger,
   optionalText,
   requireIsoDate,
@@ -43,6 +44,7 @@ import {
   requireName,
   requireNotFuture,
   requireQuickOptionValue,
+  requireRecordKind,
   requireRecordSource,
   requireRecordValue,
   requireSortOrder,
@@ -52,15 +54,14 @@ import {
 export const BACKUP_FORMAT = 'lifetrack-backup';
 
 /** 备份**格式**版本（数据结构本身的版本，与数据库 schema 版本是两件事） */
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 2;
 
-/** 备份里包含的七个集合，顺序即写入顺序（父表在前） */
+/** 备份里包含的六个集合，顺序即写入顺序（父表在前） */
 export const BACKUP_COLLECTIONS = [
   'eventGroups',
   'tags',
   'eventDefinitions',
   'eventRecords',
-  'cycleDefinitions',
   'cycleInstances',
   'cycleEntries',
 ] as const;
@@ -71,9 +72,9 @@ export type BackupCollection = (typeof BACKUP_COLLECTIONS)[number];
 export interface BackupData {
   eventGroups: EventGroup[];
   tags: Tag[];
+  /** 事件定义：计数型与周期型都在这里（周期型就是多几个周期字段） */
   eventDefinitions: EventDefinition[];
   eventRecords: EventRecord[];
-  cycleDefinitions: CycleDefinition[];
   cycleInstances: CycleInstance[];
   cycleEntries: CycleEntry[];
 }
@@ -114,7 +115,6 @@ export function emptyBackupData(): BackupData {
     tags: [],
     eventDefinitions: [],
     eventRecords: [],
-    cycleDefinitions: [],
     cycleInstances: [],
     cycleEntries: [],
   };
@@ -246,29 +246,79 @@ function parseTag(value: unknown, path: string): Tag {
   };
 }
 
-function parseQuickOption(value: unknown, path: string, kind: EventDefinition['kind']): QuickOption {
+/**
+ * 解析上下文：**v1 备份的折算规则**。
+ *
+ * 格式 v1 里「数量」还是一种事件类型、字段叫 `unit`，周期定义也还单独放在
+ * `cycleDefinitions` 里；v2 起类型只有计数/周期、属性叫 `attributes`（可多条）、
+ * 周期定义并进 `eventDefinitions`。导入老备份时按这些规则折成新模型，
+ * 而不是让用户「备份来自旧版本，请重新导出」——那等于让人丢掉历史。
+ */
+interface ParseContext {
+  /** 备份格式版本 < 2：需要折算 `quantity` 与 `unit` */
+  legacy: boolean;
+}
+
+/**
+ * 属性列表的解析。
+ *
+ * v2 起是 `attributes: string[]`；v1 里只有一个 `unit`（事件定义与事件记录），
+ * 快捷选项则是 `label`——折成单元素列表，老备份照样读得进来。
+ */
+function parseAttributes(row: JsonObject, path: string, legacyKeys: readonly string[]): string[] {
+  if (row.attributes !== undefined && row.attributes !== null) {
+    return normalizeTextList(textList(row.attributes, `${path}.attributes`));
+  }
+  for (const key of legacyKeys) {
+    const single = textOrUndefined(row[key], `${path}.${key}`);
+    if (single !== undefined) {
+      return [single];
+    }
+  }
+  return [];
+}
+
+/** 快捷选项 = 属性 + 取值；v1 里属性叫 `unit`，没有单位时退用原来的名称 `label`。 */
+function parseQuickOption(value: unknown, path: string, kind: DefinitionKindOrLegacy): QuickOption {
   const row = asObject(value, path);
   return {
     id: entityId(row.id, `${path}.id`),
-    label: name(row.label, `${path}.label`),
+    attribute: textOrUndefined(row.attribute ?? row.unit ?? row.label, `${path}.attribute`),
     value: check(`${path}.value`, () =>
       requireQuickOptionValue(kind, numberValue(row.value, `${path}.value`), `${path}.value`),
     ),
-    unit: textOrUndefined(row.unit, `${path}.unit`),
     sortOrder: check(`${path}.sortOrder`, () =>
       requireSortOrder(numberValue(row.sortOrder, `${path}.sortOrder`)),
     ),
   };
 }
 
-function parseDefinition(value: unknown, path: string): EventDefinition {
+/** 定义的类型在解析阶段允许的取值：v1 备份里还可能出现 `quantity`。 */
+type DefinitionKindOrLegacy = EventDefinition['kind'] | 'quantity';
+
+/** 可选正整数（周期长度这类配置）：null / undefined 都归为「没配置」。 */
+function optionalInteger(value: unknown, path: string): number | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return check(path, () => optionalPositiveInteger(numberValue(value, path), path));
+}
+
+function parseDefinition(value: unknown, path: string, context: ParseContext): EventDefinition {
   const row = asObject(value, path);
-  const kind = check(`${path}.kind`, () => requireKind(row.kind));
+  const rawKind = text(row.kind, `${path}.kind`);
+  const kind: EventDefinition['kind'] =
+    context.legacy && rawKind === 'quantity' ? 'counter' : check(`${path}.kind`, () => requireKind(rawKind));
+  const cycleMode: CycleMode | undefined =
+    kind === 'cycle'
+      ? (check(`${path}.cycleMode`, () => optionalCycleMode(row.cycleMode)) ?? 'manual')
+      : undefined;
+
   return {
     id: entityId(row.id, `${path}.id`),
     name: name(row.name, `${path}.name`),
     kind,
-    unit: textOrUndefined(row.unit, `${path}.unit`),
+    attributes: parseAttributes(row, path, ['unit']),
     groupId: textOrUndefined(row.groupId, `${path}.groupId`),
     color: textOrUndefined(row.color, `${path}.color`),
     icon: textOrUndefined(row.icon, `${path}.icon`),
@@ -282,12 +332,50 @@ function parseDefinition(value: unknown, path: string): EventDefinition {
       parseQuickOption(item, itemPath, kind),
     ),
     tagIds: normalizeIdList(textList(row.tagIds, `${path}.tagIds`)),
+    cycleMode,
+    averageCycleLengthDays:
+      kind === 'cycle'
+        ? optionalInteger(row.averageCycleLengthDays, `${path}.averageCycleLengthDays`)
+        : undefined,
+    averagePeriodLengthDays:
+      kind === 'cycle'
+        ? optionalInteger(row.averagePeriodLengthDays, `${path}.averagePeriodLengthDays`)
+        : undefined,
+  };
+}
+
+/**
+ * v1 备份里的 `cycleDefinitions`：折成「周期型事件定义」。
+ *
+ * 老的周期定义只有名字与两个平均长度，没有做法（那会儿还没有自动/手动之分），
+ * 因此按「手动标记」兜底——这也正是它当年唯一的行为。
+ */
+function parseLegacyCycleDefinition(value: unknown, path: string): EventDefinition {
+  const row = asObject(value, path);
+  return {
+    id: entityId(row.id, `${path}.id`),
+    name: name(row.name, `${path}.name`),
+    kind: 'cycle',
+    cycleMode: 'manual',
+    // 周期型不使用属性
+    attributes: [],
+    groupId: undefined,
+    color: undefined,
+    icon: undefined,
+    isArchived: booleanValue(row.isArchived, `${path}.isArchived`),
+    sortOrder: 0,
+    quickOptions: [],
+    tagIds: [],
+    createdAt: dateTime(row.createdAt, `${path}.createdAt`),
+    updatedAt: dateTime(row.updatedAt, `${path}.updatedAt`),
+    averageCycleLengthDays: optionalInteger(row.averageCycleLengthDays, `${path}.averageCycleLengthDays`),
+    averagePeriodLengthDays: optionalInteger(row.averagePeriodLengthDays, `${path}.averagePeriodLengthDays`),
   };
 }
 
 function parseRecord(value: unknown, path: string): EventRecord {
   const row = asObject(value, path);
-  const kind = check(`${path}.kind`, () => requireKind(row.kind));
+  const kind = check(`${path}.kind`, () => requireRecordKind(row.kind));
   const definitionId = entityId(row.definitionId, `${path}.definitionId`);
   const occurredAt = dateTime(row.occurredAt, `${path}.occurredAt`);
   const recordedAt = dateTime(row.recordedAt, `${path}.recordedAt`);
@@ -298,8 +386,8 @@ function parseRecord(value: unknown, path: string): EventRecord {
   const snapshot = {
     definitionId: entityId(snapshotRow.definitionId, `${path}.snapshot.definitionId`),
     name: name(snapshotRow.name, `${path}.snapshot.name`),
-    kind: check(`${path}.snapshot.kind`, () => requireKind(snapshotRow.kind)),
-    unit: textOrUndefined(snapshotRow.unit, `${path}.snapshot.unit`),
+    kind: check(`${path}.snapshot.kind`, () => requireRecordKind(snapshotRow.kind)),
+    attributes: parseAttributes(snapshotRow, `${path}.snapshot`, ['unit']),
     groupId: textOrUndefined(snapshotRow.groupId, `${path}.snapshot.groupId`),
     tagIds: normalizeIdList(textList(snapshotRow.tagIds, `${path}.snapshot.tagIds`)),
   };
@@ -323,7 +411,7 @@ function parseRecord(value: unknown, path: string): EventRecord {
     value: check(`${path}.value`, () =>
       requireRecordValue(kind, numberValue(row.value, `${path}.value`), `${path}.value`),
     ),
-    unit: textOrUndefined(row.unit, `${path}.unit`),
+    attributes: parseAttributes(row, path, ['unit']),
     occurredAt,
     recordedAt,
     note: textOrUndefined(row.note, `${path}.note`),
@@ -334,33 +422,6 @@ function parseRecord(value: unknown, path: string): EventRecord {
       row.deletedAt === undefined || row.deletedAt === null
         ? undefined
         : dateTime(row.deletedAt, `${path}.deletedAt`),
-  };
-}
-
-function parseCycleDefinition(value: unknown, path: string): CycleDefinition {
-  const row = asObject(value, path);
-  return {
-    id: entityId(row.id, `${path}.id`),
-    name: name(row.name, `${path}.name`),
-    averageCycleLengthDays: check(`${path}.averageCycleLengthDays`, () =>
-      optionalPositiveInteger(
-        row.averageCycleLengthDays === null || row.averageCycleLengthDays === undefined
-          ? undefined
-          : numberValue(row.averageCycleLengthDays, `${path}.averageCycleLengthDays`),
-        `${path}.averageCycleLengthDays`,
-      ),
-    ),
-    averagePeriodLengthDays: check(`${path}.averagePeriodLengthDays`, () =>
-      optionalPositiveInteger(
-        row.averagePeriodLengthDays === null || row.averagePeriodLengthDays === undefined
-          ? undefined
-          : numberValue(row.averagePeriodLengthDays, `${path}.averagePeriodLengthDays`),
-        `${path}.averagePeriodLengthDays`,
-      ),
-    ),
-    isArchived: booleanValue(row.isArchived, `${path}.isArchived`),
-    createdAt: dateTime(row.createdAt, `${path}.createdAt`),
-    updatedAt: dateTime(row.updatedAt, `${path}.updatedAt`),
   };
 }
 
@@ -423,7 +484,6 @@ export function assertBackupIntegrity(data: BackupData): void {
   assertUniqueIds(data.tags, 'data.tags');
   assertUniqueIds(data.eventDefinitions, 'data.eventDefinitions');
   assertUniqueIds(data.eventRecords, 'data.eventRecords');
-  assertUniqueIds(data.cycleDefinitions, 'data.cycleDefinitions');
   assertUniqueIds(data.cycleInstances, 'data.cycleInstances');
   assertUniqueIds(data.cycleEntries, 'data.cycleEntries');
 
@@ -439,12 +499,23 @@ export function assertBackupIntegrity(data: BackupData): void {
         fail(`${path}.tagIds`, `指向不存在的标签：${tagId}`);
       }
     }
+    // 周期型定义必须有做法，计数型不能带周期字段（与 v6 的结构约束一致）
+    if (definition.kind === 'cycle' && definition.cycleMode === undefined) {
+      fail(`${path}.cycleMode`, '周期型事件必须说明是自动循环还是手动标记');
+    }
+    if (definition.kind === 'counter' && definition.cycleMode !== undefined) {
+      fail(`${path}.cycleMode`, '计数型事件不该带周期方式');
+    }
   });
 
-  const cycleDefinitionIds = new Set(data.cycleDefinitions.map((definition) => definition.id));
+  const cycleDefinitionIds = new Set(
+    data.eventDefinitions
+      .filter((definition) => definition.kind === 'cycle')
+      .map((definition) => definition.id),
+  );
   data.cycleInstances.forEach((instance, index) => {
     if (!cycleDefinitionIds.has(instance.definitionId)) {
-      fail(`data.cycleInstances[${index}].definitionId`, `指向不存在的周期定义：${instance.definitionId}`);
+      fail(`data.cycleInstances[${index}].definitionId`, `指向不存在的周期型事件：${instance.definitionId}`);
     }
   });
 
@@ -495,12 +566,18 @@ function parseBackupRoot(value: unknown): BackupFile {
   }
 
   const data = asObject(root.data, 'data');
+  const context: ParseContext = { legacy: formatVersion < BACKUP_FORMAT_VERSION };
+  const definitions = parseArray(data.eventDefinitions, 'data.eventDefinitions', (item, itemPath) =>
+    parseDefinition(item, itemPath, context),
+  );
+  // v1 备份里周期定义还是独立集合；折成「周期型事件定义」后并进同一个列表，
+  // 这样「实例指向的定义」在同一个集合里，下面的引用完整性检查才说得清。
+  const legacyCycles = parseArray(data.cycleDefinitions, 'data.cycleDefinitions', parseLegacyCycleDefinition);
   const parsed: BackupData = {
     eventGroups: parseArray(data.eventGroups, 'data.eventGroups', parseGroup),
     tags: parseArray(data.tags, 'data.tags', parseTag),
-    eventDefinitions: parseArray(data.eventDefinitions, 'data.eventDefinitions', parseDefinition),
+    eventDefinitions: [...definitions, ...legacyCycles],
     eventRecords: parseArray(data.eventRecords, 'data.eventRecords', parseRecord),
-    cycleDefinitions: parseArray(data.cycleDefinitions, 'data.cycleDefinitions', parseCycleDefinition),
     cycleInstances: parseArray(data.cycleInstances, 'data.cycleInstances', parseCycleInstance),
     cycleEntries: parseArray(data.cycleEntries, 'data.cycleEntries', parseCycleEntry),
   };
@@ -540,9 +617,6 @@ export function sortBackupData(data: BackupData): BackupData {
     // 历史按发生时间正序（档案顺序），id 作为并列时的稳定次序
     eventRecords: [...data.eventRecords].sort(
       (a, b) => compareText(a.occurredAt, b.occurredAt) || compareText(a.id, b.id),
-    ),
-    cycleDefinitions: [...data.cycleDefinitions].sort(
-      (a, b) => compareText(a.name, b.name) || compareText(a.id, b.id),
     ),
     cycleInstances: [...data.cycleInstances].sort(
       (a, b) => compareText(a.startDate, b.startDate) || compareText(a.id, b.id),
@@ -705,7 +779,6 @@ export function mergeBackup(
   const tags = mergeCollection(current.tags, incoming.tags, byUpdatedAt);
   const definitions = mergeCollection(current.eventDefinitions, incoming.eventDefinitions, byUpdatedAt);
   const records = mergeCollection(current.eventRecords, incoming.eventRecords, preferIncomingRecord);
-  const cycleDefinitions = mergeCollection(current.cycleDefinitions, incoming.cycleDefinitions, byUpdatedAt);
   const cycleInstances = mergeCollection(current.cycleInstances, incoming.cycleInstances, byUpdatedAt);
   const cycleEntries = mergeCollection(current.cycleEntries, incoming.cycleEntries, byUpdatedAt);
 
@@ -714,7 +787,6 @@ export function mergeBackup(
     tags: tags.counts,
     eventDefinitions: definitions.counts,
     eventRecords: records.counts,
-    cycleDefinitions: cycleDefinitions.counts,
     cycleInstances: cycleInstances.counts,
     cycleEntries: cycleEntries.counts,
   };
@@ -725,7 +797,6 @@ export function mergeBackup(
       tags: tags.items,
       eventDefinitions: definitions.items,
       eventRecords: records.items,
-      cycleDefinitions: cycleDefinitions.items,
       cycleInstances: cycleInstances.items,
       cycleEntries: cycleEntries.items,
     }),

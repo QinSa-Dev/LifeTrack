@@ -15,11 +15,12 @@ function makeRecord(
     definitionId,
     kind: 'counter',
     value: 1,
+    attributes: [],
     occurredAt,
     recordedAt: occurredAt,
     source: 'manual',
     tagIds: [],
-    snapshot: { definitionId, name: `事件 ${definitionId}`, kind: 'counter', tagIds: [] },
+    snapshot: { definitionId, name: `事件 ${definitionId}`, kind: 'counter', attributes: [], tagIds: [] },
     ...overrides,
   };
 }
@@ -81,10 +82,10 @@ describe('groupRecordsByDefinition', () => {
     const gone = { name: '已删掉的事件' };
     const records = [
       makeRecord('r2', 'd-gone', '2026-10-22T07:00:00.000Z', {
-        snapshot: { definitionId: 'd-gone', name: gone.name, kind: 'counter', tagIds: [] },
+        snapshot: { definitionId: 'd-gone', name: gone.name, kind: 'counter', attributes: [], tagIds: [] },
       }),
       makeRecord('r1', 'd-gone', '2026-10-22T05:00:00.000Z', {
-        snapshot: { definitionId: 'd-gone', name: gone.name, kind: 'counter', tagIds: [] },
+        snapshot: { definitionId: 'd-gone', name: gone.name, kind: 'counter', attributes: [], tagIds: [] },
       }),
     ];
 

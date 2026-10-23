@@ -2,15 +2,16 @@ import { runMigrations } from '@/db/migrations';
 import { MIGRATIONS } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { NotFoundError, ValidationError } from '@/domain/errors';
-import { CycleDefinitionRepository } from '@/repositories/cycleDefinitionRepository';
 import { CycleEntryRepository } from '@/repositories/cycleEntryRepository';
 import { CycleInstanceRepository } from '@/repositories/cycleInstanceRepository';
+import { EventDefinitionRepository } from '@/repositories/eventDefinitionRepository';
 
 const T1 = '2026-10-19T08:00:00.000Z';
 const T2 = '2026-10-19T09:00:00.000Z';
 
 describe('CycleEntryRepository', () => {
   let db: TestDatabase;
+  let definitions: EventDefinitionRepository;
   let instances: CycleInstanceRepository;
   let entries: CycleEntryRepository;
   let instanceId: string;
@@ -18,10 +19,10 @@ describe('CycleEntryRepository', () => {
   beforeEach(async () => {
     db = createTestDatabase();
     await runMigrations(db, MIGRATIONS);
-    const definitions = new CycleDefinitionRepository(db);
+    definitions = new EventDefinitionRepository(db);
     instances = new CycleInstanceRepository(db);
     entries = new CycleEntryRepository(db);
-    const definition = await definitions.create({ name: '生理期' }, T1);
+    const definition = await createCycle('生理期');
     const instance = await instances.create(
       { definitionId: definition.id, startDate: '2026-10-01', endDate: '2026-10-05' },
       T1,
@@ -32,6 +33,14 @@ describe('CycleEntryRepository', () => {
   afterEach(() => {
     db.close();
   });
+
+  /** 建一个周期型事件定义：v6 起周期就是事件的一种类型，走同一个仓储。 */
+  async function createCycle(cycleName: string) {
+    return definitions.create(
+      { name: cycleName, kind: 'cycle', cycleMode: 'manual', tagIds: [], quickOptions: [] },
+      T1,
+    );
+  }
 
   it('保存某一天的记录并读回（症状存 JSON、顺手去空去重）', async () => {
     const saved = await entries.save(
@@ -70,8 +79,7 @@ describe('CycleEntryRepository', () => {
   });
 
   it('listAll 跨实例返回全部记录，按日期正序（导出备份用）', async () => {
-    const definitions = new CycleDefinitionRepository(db);
-    const second = await definitions.create({ name: '第二个周期' }, T1);
+    const second = await createCycle('第二个周期');
     const otherInstance = await instances.create(
       { definitionId: second.id, startDate: '2026-11-01', endDate: '2026-11-03' },
       T1,
@@ -84,8 +92,7 @@ describe('CycleEntryRepository', () => {
   });
 
   it('listVisible 跨实例返回可见记录，且不含软删除（展示与统计用）', async () => {
-    const definitions = new CycleDefinitionRepository(db);
-    const second = await definitions.create({ name: '第二个周期' }, T1);
+    const second = await createCycle('第二个周期');
     const otherInstance = await instances.create(
       { definitionId: second.id, startDate: '2026-11-01', endDate: '2026-11-03' },
       T1,
@@ -100,8 +107,7 @@ describe('CycleEntryRepository', () => {
   });
 
   it('listVisible 传定义 id 时只返回这个定义下的记录', async () => {
-    const definitions = new CycleDefinitionRepository(db);
-    const second = await definitions.create({ name: '第二个周期' }, T1);
+    const second = await createCycle('第二个周期');
     const otherInstance = await instances.create(
       { definitionId: second.id, startDate: '2026-11-01', endDate: '2026-11-03' },
       T1,

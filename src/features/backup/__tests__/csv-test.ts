@@ -10,7 +10,7 @@ function makeRecord(overrides: Partial<EventRecord> = {}): EventRecord {
     definitionId: '018fed00-0000-7000-8000-000000000301',
     kind: 'counter',
     value: 1,
-    unit: '杯',
+    attributes: ['杯'],
     occurredAt: T1,
     recordedAt: T1,
     source: 'manual',
@@ -19,7 +19,7 @@ function makeRecord(overrides: Partial<EventRecord> = {}): EventRecord {
       definitionId: '018fed00-0000-7000-8000-000000000301',
       name: '喝水',
       kind: 'counter',
-      unit: '杯',
+      attributes: ['杯'],
       groupId: '018fed00-0000-7000-8000-000000000101',
       tagIds: [],
     },
@@ -72,15 +72,15 @@ describe('recordsToCsv', () => {
     expect(cells[12]).toBe('018fed00-0000-7000-8000-000000000401');
   });
 
-  it('数量型与补录的来源都如实写出', () => {
+  it('历史数量型与补录的来源都如实写出', () => {
     const csv = recordsToCsv([
       makeRecord({
         kind: 'quantity',
         value: 0.5,
         source: 'backfill',
-        unit: undefined,
+        attributes: [],
         occurredAt: '2026-10-01T00:00:00.000Z',
-        snapshot: { ...makeRecord().snapshot, kind: 'quantity' },
+        snapshot: { ...makeRecord().snapshot, kind: 'quantity', attributes: [] },
       }),
     ]);
     const cells = rows(csv)[1]!.split(',');
@@ -89,6 +89,13 @@ describe('recordsToCsv', () => {
     expect(cells[4]).toBe('数量');
     expect(cells[5]).toBe('0.5');
     expect(cells[6]).toBe('');
+  });
+
+  it('一条记录标了多个属性时用竖线分隔', () => {
+    const csv = recordsToCsv([makeRecord({ attributes: ['温水', '500ml'] })]);
+    const cells = rows(csv)[1]!.split(',');
+
+    expect(cells[6]).toBe('温水 | 500ml');
   });
 
   it('软删除的记录标成「已删除」并带上删除时间', () => {

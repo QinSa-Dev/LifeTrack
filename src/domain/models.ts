@@ -9,17 +9,54 @@
  * 5. 删除历史用软删除（deletedAt），以便撤销最近操作。
  */
 
+import { ValidationError } from './errors';
+
 /** ISO-8601 带时区的时间戳，例如 2026-10-19T07:30:00.000Z */
 export type IsoDateTime = string;
 /** ISO-8601 日期，例如 2026-10-19 */
 export type IsoDate = string;
 
-/** 事件类型：纯计数 / 数量计量 */
-export type EventDefinitionKind = 'counter' | 'quantity';
+/**
+ * 事件类型：**计数**（点一次记一次）或**周期**（一段有开始与结束的区间）。
+ *
+ * 「数量」（每次填一个数值）不再是一种类型：要表达「一次是多少」就用定义上的
+ * **属性**（`attributes`）这些自由文本，例如「200ml」「5km」——
+ * 用户自己怎么写、写几条，应用就怎么显示，不做单位换算与一致性校验。
+ */
+export type EventDefinitionKind = 'counter' | 'cycle';
 
-export const EVENT_DEFINITION_KINDS: readonly EventDefinitionKind[] = ['counter', 'quantity'];
+export const EVENT_DEFINITION_KINDS: readonly EventDefinitionKind[] = ['counter', 'cycle'];
 
 export function isEventDefinitionKind(value: unknown): value is EventDefinitionKind {
+  return value === 'counter' || value === 'cycle';
+}
+
+/**
+ * 周期型事件的两种做法。
+ *
+ * - `auto`：按配置好的规律自动生成，到时间自动开始、自动结束（例如每 30 天一次、每周）；
+ * - `manual`：由用户自己点开始、点结束，时长不预先限定，真实发生后再记录。
+ */
+export type CycleMode = 'auto' | 'manual';
+
+export const CYCLE_MODES: readonly CycleMode[] = ['auto', 'manual'];
+
+export function isCycleMode(value: unknown): value is CycleMode {
+  return value === 'auto' || value === 'manual';
+}
+
+/**
+ * **历史记录**的类型：比定义的类型多一个 `quantity`。
+ *
+ * 为什么留着它：`quantity` 是 2026-10 之前「数量」型事件留下的记录，
+ * 历史不可篡改——那些行仍然按「数量」的方式展示（`5 公里` 而不是 `+5 公里`），
+ * 相关字段与约束也照旧，只是**新建事件时不再有这个类型**。
+ */
+export type RecordKind = 'counter' | 'quantity';
+
+export const RECORD_KINDS: readonly RecordKind[] = ['counter', 'quantity'];
+
+export function isRecordKind(value: unknown): value is RecordKind {
   return value === 'counter' || value === 'quantity';
 }
 
@@ -32,14 +69,13 @@ export function isRecordSource(value: unknown): value is RecordSource {
   return value === 'manual' || value === 'quick' || value === 'backfill';
 }
 
-/** 快捷选项：一键记录常用的取值 */
+/** 快捷选项：一键记录一组「属性 + 取值」 */
 export interface QuickOption {
   id: string;
-  label: string;
-  /** counter：一次的增量（通常为 1）；quantity：数量 */
+  /** 这一下记的是什么，例如「200ml」；留空表示只记取值、不带属性 */
+  attribute?: string;
+  /** counter：一次的增量（通常为 1） */
   value: number;
-  /** 覆盖定义默认单位，例如「毫升」 */
-  unit?: string;
   sortOrder: number;
 }
 
@@ -67,8 +103,12 @@ export interface EventDefinition {
   id: string;
   name: string;
   kind: EventDefinitionKind;
-  /** quantity 的默认单位，例如「杯」「公里」 */
-  unit?: string;
+  /**
+   * 属性：用户自定义的自由文本，说明「一次是什么」，例如「200ml」「5km」。
+   * 可以写多条（例如「温水」「500ml」）；应用只负责原样展示，不做单位换算。
+   * 周期型不使用属性（周期记的是「哪一天」，不是「一次是什么」），恒为空数组。
+   */
+  attributes: string[];
   groupId?: string;
   color?: string;
   /** 图标标识（前端映射），不存字形本身 */
@@ -78,19 +118,32 @@ export interface EventDefinition {
   /** 归档后不再出现在记录入口，但历史保留 */
   isArchived: boolean;
   sortOrder: number;
+  /** 周期型的做法（`auto` / `manual`）；计数型恒为 `undefined` */
+  cycleMode?: CycleMode;
+  /** 周期长度（天）：手动型用于预测下次开始日；自动型就是「每隔多少天一次」 */
+  averageCycleLengthDays?: number;
+  /** 一段周期通常持续多少天；自动型据此给出结束日 */
+  averagePeriodLengthDays?: number;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 }
 
+/** 只有周期型定义才有意义的那部分配置，供预测等纯函数按需取用。 */
+export type CycleConfig = Pick<
+  EventDefinition,
+  'cycleMode' | 'averageCycleLengthDays' | 'averagePeriodLengthDays'
+>;
+
 /**
  * 记录时刻的事件定义快照。
- * 事件定义被改名、换单位、归档、甚至删除后，历史记录依然展示当初的样子。
+ * 事件定义被改名、换属性、归档、甚至删除后，历史记录依然展示当初的样子。
  */
 export interface EventDefinitionSnapshot {
   definitionId: string;
   name: string;
-  kind: EventDefinitionKind;
-  unit?: string;
+  kind: RecordKind;
+  /** 记录时刻定义上的属性列表（可能为空） */
+  attributes: string[];
   groupId?: string;
   tagIds: string[];
 }
@@ -99,10 +152,14 @@ export interface EventDefinitionSnapshot {
 export interface EventRecord {
   id: string;
   definitionId: string;
-  kind: EventDefinitionKind;
-  /** counter：本次增量；quantity：本次数量 */
+  kind: RecordKind;
+  /** counter：本次增量；quantity（历史数据）：本次数量 */
   value: number;
-  unit?: string;
+  /**
+   * 这一次记录标上的属性（可多选，也可以一个都不标）。
+   * 展示时若为空会回落到快照里的属性列表，见 `recordAttributes`。
+   */
+  attributes: string[];
   /** 事实发生时间（补录时可能早于 recordedAt） */
   occurredAt: IsoDateTime;
   /** 录入时间 */
@@ -118,19 +175,6 @@ export interface EventRecord {
 
 /** 周期阶段：不写死枚举，允许自定义名称 */
 export type CyclePhase = string;
-
-/** 周期定义，例如「生理期」 */
-export interface CycleDefinition {
-  id: string;
-  name: string;
-  /** 用于预测下一次周期的平均长度（天），可为空表示不预测 */
-  averageCycleLengthDays?: number;
-  /** 平均持续时间（天），可为空 */
-  averagePeriodLengthDays?: number;
-  isArchived: boolean;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-}
 
 /** 周期实例：一段真实的周期区间 */
 export interface CycleInstance {
@@ -189,18 +233,46 @@ export function isRecordable(definition: EventDefinition): boolean {
   return !definition.isArchived;
 }
 
+/** 是不是周期型事件（周期型走周期实例与每日记录，不使用事件记录）。 */
+export function isCycleDefinition(definition: EventDefinition): boolean {
+  return definition.kind === 'cycle';
+}
+
+/**
+ * 一条记录最终展示用的属性。
+ *
+ * 用户记录时标了属性就用标上的；一个都没标（`attributes` 为空）时回落到记录时刻的
+ * 定义属性——「一次是什么」本来就由定义描述，不该因为没勾选就在历史里丢掉。
+ */
+export function recordAttributes(record: EventRecord): string[] {
+  return record.attributes.length > 0 ? record.attributes : record.snapshot.attributes;
+}
+
+/** 把属性列表拼成一行展示文本；空列表返回 `undefined`（调用方据此决定要不要显示）。 */
+export function attributeText(attributes: readonly string[]): string | undefined {
+  return attributes.length === 0 ? undefined : attributes.join(' · ');
+}
+
+/** 定义的类型 → 记录的类型。周期型不产生事件记录，传进来就是编程错误。 */
+export function toRecordKind(kind: EventDefinitionKind): RecordKind {
+  if (kind !== 'counter') {
+    throw new ValidationError('周期型事件不产生事件记录，请走周期实例与每日记录');
+  }
+  return 'counter';
+}
+
 /**
  * 把事件定义在「记录的这一刻」固化成一个快照。
  *
  * 这是「历史不可篡改」的实现手段：快照一旦写入记录就永不更新，
- * 之后定义改名、换单位、归档甚至被永久删除，历史都不受影响。
+ * 之后定义改名、换属性、归档甚至被永久删除，历史都不受影响。
  */
 export function toDefinitionSnapshot(definition: EventDefinition): EventDefinitionSnapshot {
   return {
     definitionId: definition.id,
     name: definition.name,
-    kind: definition.kind,
-    unit: definition.unit,
+    kind: toRecordKind(definition.kind),
+    attributes: [...definition.attributes],
     groupId: definition.groupId,
     tagIds: [...definition.tagIds],
   };

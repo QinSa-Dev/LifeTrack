@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppText, Button, Card, EmptyState } from '@/components';
 import { META_KEYS, useReadyDatabase } from '@/db';
-import type { EventDefinition, EventRecord } from '@/domain/models';
+import { recordAttributes, type EventDefinition, type EventRecord } from '@/domain/models';
 import { groupRecordsByDefinition, type RecordGroup } from '@/features/records/groupRecords';
 import { RecordGroupRow } from '@/features/records/RecordGroupRow';
 import { RecordRow } from '@/features/records/RecordRow';
@@ -118,7 +118,7 @@ export default function TimelineScreen() {
       .record({
         definitionId: record.definitionId,
         value: record.value,
-        unit: record.unit,
+        attributes: recordAttributes(record),
         source: 'quick',
       })
       .then(() => {

@@ -5,17 +5,22 @@ import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 import { AppText, Badge, Button, Card, EmptyState, Header, ListRow, Screen, TextField } from '@/components';
 import { META_KEYS, useReadyDatabase } from '@/db';
 import { addDays } from '@/domain/dates';
-import { instanceLengthDays, latestInstance, predictNextCycle } from '@/domain/cycles';
-import type { CycleDefinition, CycleEntry, CycleInstance } from '@/domain/models';
-import { CycleDefinitionForm } from '@/features/cycles/CycleDefinitionForm';
-import { describeCycleDefinition, describePrediction } from '@/features/cycles/labels';
+import { instanceLengthDays, latestInstance, nextAutoCycleSegment, predictNextCycle } from '@/domain/cycles';
+import type { CycleEntry, CycleInstance, EventDefinition } from '@/domain/models';
+import { EventDefinitionForm } from '@/features/definitions/EventDefinitionForm';
+import {
+  CYCLE_MODE_HINTS,
+  describeAutoSegment,
+  describeCycleDefinition,
+  describePrediction,
+} from '@/features/cycles/labels';
 import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/features/cycles/predictionWindow';
 import { SymptomStatsCard } from '@/features/cycles/SymptomStatsCard';
 import { localDateText } from '@/features/common/datetime';
 import {
-  CycleDefinitionRepository,
   CycleEntryRepository,
   CycleInstanceRepository,
+  EventDefinitionRepository,
   MetaRepository,
 } from '@/repositories';
 import { palette, spacing } from '@/theme';
@@ -25,18 +30,23 @@ function maxIsoDate(a: string, b: string): string {
 }
 
 /**
- * 周期定义详情：定义本身 + 它的周期实例列表。
+ * 周期型事件详情：定义本身 + 它的周期实例列表。
  *
- * 「开始新周期」的默认开始日会避开上一段周期的结束日（结束后一天），
- * 这样既不会和上一段重叠（仓储会拒绝重叠），也符合直觉。
+ * 这里是「周期并入事件」之后周期功能的落点：从「事件」页点一个周期型事件就到这里，
+ * 而不是再有一个独立的「周期」标签页。
+ *
+ * 两种做法各有一套入口：
+ * - 手动标记：自己填开始日点「开始新周期」，结束在某一段里点；
+ * - 自动循环：按配置好的规律算出下一段，点「生成这一段」把它落库
+ *   （本轮只做「配置 + 生成下一段」，不做后台自动写库）。
  */
-export default function CycleDefinitionScreen() {
+export default function CycleEventScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { db } = useReadyDatabase();
 
   // undefined = 加载中，null = 未找到
-  const [definition, setDefinition] = useState<CycleDefinition | null | undefined>(undefined);
+  const [definition, setDefinition] = useState<EventDefinition | null | undefined>(undefined);
   const [instances, setInstances] = useState<CycleInstance[]>([]);
   // 这个定义下全部的每日记录（症状统计用；仓储已过滤软删除）
   const [entries, setEntries] = useState<CycleEntry[]>([]);
@@ -50,7 +60,7 @@ export default function CycleDefinitionScreen() {
   const load = useCallback(() => {
     let cancelled = false;
     Promise.all([
-      new CycleDefinitionRepository(db).getById(id),
+      new EventDefinitionRepository(db).getById(id),
       new CycleInstanceRepository(db).list({ definitionId: id }),
       new CycleEntryRepository(db).listVisible(id),
       new MetaRepository(db).get(META_KEYS.predictionWindow),
@@ -93,7 +103,7 @@ export default function CycleDefinitionScreen() {
       <Screen scroll contentStyle={styles.content}>
         <Header title="周期" onBack={() => router.back()} />
         <EmptyState
-          title="找不到这个周期定义"
+          title="找不到这个周期事件"
           description="它可能已经被删除。"
           footnote={error ?? undefined}
         />
@@ -101,9 +111,29 @@ export default function CycleDefinitionScreen() {
     );
   }
 
+  if (definition.kind !== 'cycle') {
+    return (
+      <Screen scroll contentStyle={styles.content}>
+        <Header title={definition.name} onBack={() => router.back()} />
+        <Card title="这不是周期型事件" style={styles.spaced}>
+          <AppText variant="body" color={palette.textMuted}>
+            周期功能只对「周期」类型的事件开放。想点一次记一次，请到它的记录页。
+          </AppText>
+          <Button
+            label="去记录页"
+            onPress={() => router.replace({ pathname: '/record/[id]', params: { id: definition.id } })}
+            style={styles.spacedTop}
+          />
+        </Card>
+      </Screen>
+    );
+  }
+
   const today = localDateText(new Date());
   const ongoing = instances.find((instance) => instance.endDate === undefined);
   const prediction = predictNextCycle(instances, definition, predictionWindow);
+  const autoSegment = nextAutoCycleSegment(instances, definition, today);
+  const cycleMode = definition.cycleMode ?? 'manual';
 
   const toggleArchive = () => {
     if (busy) {
@@ -112,7 +142,7 @@ export default function CycleDefinitionScreen() {
     const next = !definition.isArchived;
     setBusy(true);
     setError(null);
-    new CycleDefinitionRepository(db)
+    new EventDefinitionRepository(db)
       .setArchived(definition.id, next)
       .then(() => {
         setDefinition({ ...definition, isArchived: next });
@@ -130,7 +160,7 @@ export default function CycleDefinitionScreen() {
       return;
     }
     Alert.alert(
-      '永久删除周期定义',
+      '永久删除周期事件',
       `「${definition.name}」及其 ${instances.length} 段周期、以及这些周期里的全部记录都会被永久删除。此操作不可撤销。`,
       [
         { text: '取消', style: 'cancel' },
@@ -140,7 +170,7 @@ export default function CycleDefinitionScreen() {
           onPress: () => {
             setBusy(true);
             setError(null);
-            new CycleDefinitionRepository(db)
+            new EventDefinitionRepository(db)
               .remove(definition.id)
               .then(() => router.back())
               .catch((cause: unknown) => {
@@ -153,6 +183,10 @@ export default function CycleDefinitionScreen() {
     );
   };
 
+  const openInstance = (instance: CycleInstance) => {
+    router.push({ pathname: '/cycle-instances/[id]', params: { id: instance.id } });
+  };
+
   const startNewCycle = () => {
     if (busy) {
       return;
@@ -161,9 +195,29 @@ export default function CycleDefinitionScreen() {
     setError(null);
     new CycleInstanceRepository(db)
       .create({ definitionId: definition.id, startDate: newStart })
-      .then((created) => {
-        router.push({ pathname: '/cycle-instances/[id]', params: { id: created.id } });
+      .then(openInstance)
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
       })
+      .finally(() => {
+        setBusy(false);
+      });
+  };
+
+  /** 自动循环：「按规律生成下一段」——开始日与结束日一起给出，之后仍可手改。 */
+  const generateNext = () => {
+    if (busy || autoSegment === undefined) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    new CycleInstanceRepository(db)
+      .create({
+        definitionId: definition.id,
+        startDate: autoSegment.startDate,
+        endDate: autoSegment.endDate,
+      })
+      .then(openInstance)
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause));
       })
@@ -189,7 +243,7 @@ export default function CycleDefinitionScreen() {
       {definition.isArchived ? (
         <Card title="已归档" style={styles.spaced}>
           <AppText variant="body" color={palette.warning}>
-            这个周期定义已归档，不能再开新周期。已有的周期与记录不受影响。
+            这个周期事件已归档，不能再开新周期。已有的周期与记录不受影响。
           </AppText>
         </Card>
       ) : null}
@@ -204,11 +258,11 @@ export default function CycleDefinitionScreen() {
 
       {editing ? (
         <View style={styles.spaced}>
-          <CycleDefinitionForm
+          <EventDefinitionForm
             initial={definition}
             submitLabel="保存修改"
-            onSubmit={async (input) => {
-              const updated = await new CycleDefinitionRepository(db).update(definition.id, input);
+            onSubmit={async (draft) => {
+              const updated = await new EventDefinitionRepository(db).update(definition.id, draft);
               setDefinition(updated);
               setEditing(false);
             }}
@@ -218,6 +272,9 @@ export default function CycleDefinitionScreen() {
         <Card title="定义信息" style={styles.spaced}>
           <AppText variant="body">{describeCycleDefinition(definition)}</AppText>
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
+            {CYCLE_MODE_HINTS[cycleMode]}
+          </AppText>
+          <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
             {describePrediction(prediction)}
           </AppText>
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
@@ -225,6 +282,29 @@ export default function CycleDefinitionScreen() {
           </AppText>
         </Card>
       )}
+
+      {cycleMode === 'auto' ? (
+        <Card
+          title="自动循环：生成下一段"
+          subtitle="按配置好的规律算出下一段，由你确认写入"
+          style={styles.spaced}
+        >
+          <AppText variant="body" color={palette.textMuted}>
+            {describeAutoSegment(autoSegment)}
+          </AppText>
+          <Button
+            label={busy ? '处理中…' : '生成这一段'}
+            onPress={generateNext}
+            disabled={busy || autoSegment === undefined || ongoing !== undefined || definition.isArchived}
+            style={styles.spacedTop}
+          />
+          {ongoing !== undefined ? (
+            <AppText variant="caption" color={palette.warning} style={styles.spacedTop}>
+              当前有一段进行中的周期，先结束它再生成下一段。
+            </AppText>
+          ) : null}
+        </Card>
+      ) : null}
 
       <Card
         title="周期记录"
@@ -245,9 +325,7 @@ export default function CycleDefinitionScreen() {
                 subtitle={
                   instance.note ? `${days ?? ''} 天 · ${instance.note}` : days ? `共 ${days} 天` : undefined
                 }
-                onPress={() =>
-                  router.push({ pathname: '/cycle-instances/[id]', params: { id: instance.id } })
-                }
+                onPress={() => openInstance(instance)}
                 right={instance.endDate ? undefined : <Badge label="进行中" tone="success" />}
               />
             );

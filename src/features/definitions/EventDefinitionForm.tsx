@@ -3,19 +3,34 @@ import { StyleSheet, View } from 'react-native';
 
 import { AppText, Button, Card, Chip, TextField } from '@/components';
 import { useReadyDatabase } from '@/db';
-import type { EventDefinition, EventDefinitionKind, EventGroup, Tag } from '@/domain/models';
+import type { CycleMode, EventDefinition, EventDefinitionKind, EventGroup, Tag } from '@/domain/models';
 import type { EventDefinitionDraft, QuickOptionInput } from '@/domain/validation';
+import { CYCLE_MODE_HINTS, CYCLE_MODE_LABELS } from '@/features/cycles/labels';
 import { EventGroupRepository, TagRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
-const KINDS: readonly EventDefinitionKind[] = ['counter', 'quantity'];
+/** 可以**新建**的类型：计数与周期。历史里的「数量」型只会在编辑老定义时出现。 */
+const KINDS: readonly EventDefinitionKind[] = ['counter', 'cycle'];
+
+const CYCLE_MODES: readonly CycleMode[] = ['auto', 'manual'];
+
+const KIND_LABELS: Record<EventDefinitionKind, string> = {
+  counter: '计数（点一次记一次）',
+  cycle: '周期（有开始与结束）',
+};
 
 /** 表单里快捷选项用字符串暂存取值，提交时才转数字，方便中途留空编辑。 */
 interface QuickOptionRow {
   id?: string;
-  label: string;
+  /** 「属性 + 取值」里的属性；空串表示这一下不带属性 */
+  attribute: string;
   valueText: string;
-  unit: string;
+}
+
+/** 数字输入框留空表示「不配置」，交给仓储把空串变成 undefined。 */
+function parseOptionalInteger(text: string): number | undefined {
+  const trimmed = text.trim();
+  return trimmed.length === 0 ? undefined : Number(trimmed);
 }
 
 export interface EventDefinitionFormProps {
@@ -31,13 +46,26 @@ export interface EventDefinitionFormProps {
  *
  * 表单只负责收集与本地校验，真正的写库与导航交给路由页，
  * 因此同一个组件能在 `/events/new` 与 `/events/[id]` 里复用。
+ *
+ * 两处产品模型体现在这里：
+ * - 「周期」是事件的一种类型：选它之后，这一页会自动换成周期需要的字段
+ *   （做法 + 周期长度 + 持续天数），而不是跳到另一个「周期定义」表单；
+ * - 「属性」是自由文本、**可以写多条**（例如「温水」「500ml」），而快捷选项
+ *   就是「属性 + 取值」——属性从上面那份列表里挑，不用重复填一遍。
  */
 export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDefinitionFormProps) {
   const { db } = useReadyDatabase();
 
   const [name, setName] = useState(initial?.name ?? '');
   const [kind, setKind] = useState<EventDefinitionKind>(initial?.kind ?? 'counter');
-  const [unit, setUnit] = useState(initial?.unit ?? '');
+  const [attributes, setAttributes] = useState<string[]>(initial?.attributes ?? []);
+  const [cycleMode, setCycleMode] = useState<CycleMode>(initial?.cycleMode ?? 'manual');
+  const [cycleLength, setCycleLength] = useState(
+    initial?.averageCycleLengthDays === undefined ? '' : String(initial.averageCycleLengthDays),
+  );
+  const [periodLength, setPeriodLength] = useState(
+    initial?.averagePeriodLengthDays === undefined ? '' : String(initial.averagePeriodLengthDays),
+  );
   const [groupId, setGroupId] = useState<string | undefined>(initial?.groupId);
   const [tagIds, setTagIds] = useState<string[]>(initial?.tagIds ?? []);
   const [options, setOptions] = useState<QuickOptionRow[]>(
@@ -45,9 +73,8 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((option) => ({
         id: option.id,
-        label: option.label,
+        attribute: option.attribute ?? '',
         valueText: String(option.value),
-        unit: option.unit ?? '',
       })),
   );
   const [groups, setGroups] = useState<EventGroup[]>([]);
@@ -79,12 +106,29 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
     setTagIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
   };
 
+  /** 属性列表里已填好的名字（去空白、去重）：快捷选项只在这份名单里挑。 */
+  const attributeNames = Array.from(
+    new Set(attributes.map((text) => text.trim()).filter((text) => text.length > 0)),
+  );
+
+  const updateAttribute = (index: number, text: string) => {
+    setAttributes((current) => current.map((value, i) => (i === index ? text : value)));
+  };
+
+  const addAttribute = () => {
+    setAttributes((current) => [...current, '']);
+  };
+
+  const removeAttribute = (index: number) => {
+    setAttributes((current) => current.filter((_, i) => i !== index));
+  };
+
   const updateOption = (index: number, patch: Partial<QuickOptionRow>) => {
     setOptions((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   };
 
   const addOption = () => {
-    setOptions((current) => [...current, { label: '', valueText: '1', unit: '' }]);
+    setOptions((current) => [...current, { attribute: '', valueText: '1' }]);
   };
 
   const removeOption = (index: number) => {
@@ -100,13 +144,25 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
 
     const quickOptions: QuickOptionInput[] = options.map((row, index) => ({
       id: row.id,
-      label: row.label,
+      attribute: row.attribute,
       value: Number(row.valueText.trim()),
-      unit: row.unit,
       sortOrder: index,
     }));
 
-    const draft: EventDefinitionDraft = { name, kind, unit, groupId, tagIds, quickOptions };
+    // 两种类型各交各的字段：周期型不带快捷选项与属性，计数型不带周期字段。
+    const draft: EventDefinitionDraft =
+      kind === 'counter'
+        ? { name, kind, attributes, groupId, tagIds, quickOptions }
+        : {
+            name,
+            kind,
+            groupId,
+            tagIds,
+            quickOptions: [],
+            cycleMode,
+            averageCycleLengthDays: parseOptionalInteger(cycleLength),
+            averagePeriodLengthDays: parseOptionalInteger(periodLength),
+          };
 
     onSubmit(draft)
       .catch((cause: unknown) => {
@@ -135,21 +191,79 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
           {KINDS.map((item) => (
             <Chip
               key={item}
-              label={item === 'counter' ? '计数（+1）' : '数量（记多少）'}
+              label={KIND_LABELS[item]}
               selected={kind === item}
               onPress={() => setKind(item)}
             />
           ))}
         </View>
 
-        <TextField
-          label="单位（可选）"
-          value={unit}
-          onChangeText={setUnit}
-          placeholder={kind === 'quantity' ? '例如：杯 / 公里' : '例如：次'}
-          containerStyle={styles.spacedTop}
-        />
+        {kind === 'cycle' ? (
+          <>
+            <AppText variant="label" color={palette.textMuted} style={styles.spacedTop}>
+              周期方式
+            </AppText>
+            <View style={styles.chipRow}>
+              {CYCLE_MODES.map((item) => (
+                <Chip
+                  key={item}
+                  label={CYCLE_MODE_LABELS[item]}
+                  selected={cycleMode === item}
+                  onPress={() => setCycleMode(item)}
+                />
+              ))}
+            </View>
+            <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
+              {CYCLE_MODE_HINTS[cycleMode]}
+            </AppText>
+
+            <TextField
+              label={cycleMode === 'auto' ? '周期长度（天）：每隔多少天一次' : '平均周期长度（天，可选）'}
+              value={cycleLength}
+              onChangeText={setCycleLength}
+              placeholder="例如：28"
+              keyboardType="number-pad"
+              hint={
+                cycleMode === 'auto'
+                  ? '自动循环按它推算下一段的开始日。'
+                  : '两个周期开始日之间的平均天数，用来预测下次开始日。'
+              }
+            />
+            <TextField
+              label="一段通常持续多少天（可选）"
+              value={periodLength}
+              onChangeText={setPeriodLength}
+              placeholder="例如：5"
+              keyboardType="number-pad"
+              hint={cycleMode === 'auto' ? '自动生成时会按它一并给出结束日。' : '只作参考，不限定真实时长。'}
+            />
+          </>
+        ) : null}
       </Card>
+
+      {kind === 'counter' ? (
+        <Card title="属性" subtitle="描述「一次是什么」；可以写多条，记录时可以多选" style={styles.spaced}>
+          {attributes.length === 0 ? (
+            <AppText variant="caption" color={palette.textMuted}>
+              还没有属性。例如「200ml」「温水」；不写也行，那就只记次数。
+            </AppText>
+          ) : (
+            attributes.map((text, index) => (
+              <View key={index} style={styles.attributeRow}>
+                <TextField
+                  label={`属性 ${index + 1}`}
+                  value={text}
+                  onChangeText={(next) => updateAttribute(index, next)}
+                  placeholder="例如：200ml"
+                  containerStyle={styles.attributeField}
+                />
+                <Button label="移除" tone="danger" size="sm" onPress={() => removeAttribute(index)} />
+              </View>
+            ))
+          )}
+          <Button label="+ 添加属性" tone="secondary" onPress={addAttribute} style={styles.spacedTop} />
+        </Card>
+      ) : null}
 
       <Card title="分组" subtitle="分组用于归类；删除分组不会删除事件" style={styles.spaced}>
         <View style={styles.chipRow}>
@@ -191,42 +305,50 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
         )}
       </Card>
 
-      <Card title="快捷选项" subtitle="一键记录常用的取值" style={styles.spaced}>
-        {options.length === 0 ? (
-          <AppText variant="caption" color={palette.textMuted}>
-            还没有快捷选项。添加后，记录时可以一键填入。
-          </AppText>
-        ) : (
-          options.map((row, index) => (
-            <View key={row.id ?? index} style={styles.option}>
-              <TextField
-                label={`选项 ${index + 1} 名称`}
-                value={row.label}
-                onChangeText={(text) => updateOption(index, { label: text })}
-                placeholder="例如：一杯"
-              />
-              <View style={styles.optionRow}>
+      {kind === 'counter' ? (
+        <Card title="快捷选项" subtitle="一键记录「属性 + 取值」" style={styles.spaced}>
+          {options.length === 0 ? (
+            <AppText variant="caption" color={palette.textMuted}>
+              还没有快捷选项。添加后，记录页上会多出一排一点就记的胶囊。
+            </AppText>
+          ) : (
+            options.map((row, index) => (
+              <View key={row.id ?? index} style={styles.option}>
+                {attributeNames.length > 0 ? (
+                  <>
+                    <AppText variant="label" color={palette.textMuted} style={styles.fieldLabel}>
+                      属性
+                    </AppText>
+                    <View style={styles.chipRow}>
+                      <Chip
+                        label="不填属性"
+                        selected={row.attribute === ''}
+                        onPress={() => updateOption(index, { attribute: '' })}
+                      />
+                      {attributeNames.map((attribute) => (
+                        <Chip
+                          key={attribute}
+                          label={attribute}
+                          selected={row.attribute === attribute}
+                          onPress={() => updateOption(index, { attribute })}
+                        />
+                      ))}
+                    </View>
+                  </>
+                ) : null}
                 <TextField
                   label="取值"
                   value={row.valueText}
                   onChangeText={(text) => updateOption(index, { valueText: text })}
-                  keyboardType="decimal-pad"
-                  containerStyle={styles.optionHalf}
+                  keyboardType="number-pad"
                 />
-                <TextField
-                  label="单位（可选）"
-                  value={row.unit}
-                  onChangeText={(text) => updateOption(index, { unit: text })}
-                  placeholder="杯"
-                  containerStyle={styles.optionHalf}
-                />
+                <Button label="移除该选项" tone="danger" onPress={() => removeOption(index)} />
               </View>
-              <Button label="移除该选项" tone="danger" onPress={() => removeOption(index)} />
-            </View>
-          ))
-        )}
-        <Button label="+ 添加快捷选项" tone="secondary" onPress={addOption} style={styles.spacedTop} />
-      </Card>
+            ))
+          )}
+          <Button label="+ 添加快捷选项" tone="secondary" onPress={addOption} style={styles.spacedTop} />
+        </Card>
+      ) : null}
 
       {error ? (
         <AppText variant="body" color={palette.danger} style={styles.spaced}>
@@ -254,21 +376,27 @@ const styles = StyleSheet.create({
   fieldLabel: {
     marginBottom: spacing.sm,
   },
+  hint: {
+    marginBottom: spacing.md,
+  },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
   },
+  attributeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  attributeField: {
+    flex: 1,
+    marginBottom: 0,
+  },
   option: {
     paddingVertical: spacing.md,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: palette.border,
-  },
-  optionRow: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  optionHalf: {
-    flex: 1,
   },
 });

@@ -223,6 +223,173 @@ export const MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE: Migration = {
   statements: [`ALTER TABLE cycle_entries ADD COLUMN deleted_at TEXT;`],
 };
 
+/**
+ * v6：周期并入事件定义，「单位」改为「属性」。
+ *
+ * 产品模型变了：**周期不再是独立的一类东西，而是事件的一个类型**
+ * （`kind IN ('counter', 'cycle')`），所以 `cycle_definitions` 整体并进
+ * `event_definitions`；又因为「数量」不再是一种类型（记多少改成用户自定义的
+ * 「属性」自由文本），`unit` 一律改名 `attribute`。
+ *
+ * 数据怎么搬：
+ * - 事件定义：`quantity` 统一并入 `counter`；单个 `unit` 包成属性列表
+ *   （v6 起属性可以是多条，例如「温水」「500ml」）；
+ * - 周期定义：写进 `event_definitions`，**沿用原来的 id**，
+ *   因此 `cycle_instances.definition_id` 的取值一个都不用改；
+ * - 快捷选项：原来「名称 + 取值 + 单位」合并成「属性 + 取值」，
+ *   属性取 `COALESCE(unit, label)`——有单位用单位（它是记多少的量纲），
+ *   没有就退而用原来的名称；
+ * - 周期实例 / 周期记录 / 历史记录：一行不丢，只是换了所属表的指向与列名。
+ *
+ * 属性列表用 `json_array()` 生成：手写字符串拼接在属性里带引号时会拼出坏 JSON，
+ * 交给 SQLite 的 JSON 函数转义才可靠（一条都不写时存 `'[]'`）。
+ *
+ * 为什么必须重建表：`kind` 的 CHECK 约束与列名都改不了 ALTER；
+ * 而连接上 `PRAGMA foreign_keys = ON`，迁移又在事务里跑（SQLite 规定
+ * 事务内改不动这个 PRAGMA），所以用「旧表改名 → 建同名新表 → 搬数据 →
+ * 重建引用它的子表 → 删旧表」的顺序，全程不依赖关外键。
+ */
+export const MIGRATION_V6_CYCLE_AS_EVENT_KIND: Migration = {
+  version: 6,
+  name: 'cycle_as_event_kind_and_attributes',
+  statements: [
+    // --- 1. 事件定义：类型集合改成 counter / cycle，unit → attributes，并带上周期字段 ---
+    `ALTER TABLE event_definitions RENAME TO event_definitions_old;`,
+    `CREATE TABLE event_definitions (
+       id                         TEXT    PRIMARY KEY NOT NULL,
+       name                       TEXT    NOT NULL,
+       kind                       TEXT    NOT NULL CHECK (kind IN ('counter', 'cycle')),
+       attributes                 TEXT    NOT NULL DEFAULT '[]',
+       group_id                   TEXT    REFERENCES event_groups(id) ON DELETE SET NULL,
+       color                      TEXT,
+       icon                       TEXT,
+       is_archived                INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
+       sort_order                 INTEGER NOT NULL DEFAULT 0,
+       cycle_mode                 TEXT    CHECK (cycle_mode IS NULL OR cycle_mode IN ('auto', 'manual')),
+       average_cycle_length_days  INTEGER CHECK (average_cycle_length_days IS NULL OR average_cycle_length_days > 0),
+       average_period_length_days INTEGER CHECK (average_period_length_days IS NULL OR average_period_length_days > 0),
+       created_at                 TEXT    NOT NULL,
+       updated_at                 TEXT    NOT NULL,
+       CHECK ((kind = 'cycle') = (cycle_mode IS NOT NULL))
+     );`,
+    `INSERT INTO event_definitions
+       (id, name, kind, attributes, group_id, color, icon, is_archived, sort_order,
+        cycle_mode, average_cycle_length_days, average_period_length_days, created_at, updated_at)
+     SELECT id, name, CASE kind WHEN 'quantity' THEN 'counter' ELSE kind END,
+            CASE WHEN unit IS NULL OR trim(unit) = '' THEN '[]' ELSE json_array(unit) END,
+            group_id, color, icon,
+            is_archived, sort_order, NULL, NULL, NULL, created_at, updated_at
+       FROM event_definitions_old;`,
+    `INSERT INTO event_definitions
+       (id, name, kind, attributes, group_id, color, icon, is_archived, sort_order,
+        cycle_mode, average_cycle_length_days, average_period_length_days, created_at, updated_at)
+     SELECT id, name, 'cycle', '[]', NULL, NULL, NULL, is_archived, 0,
+            'manual', average_cycle_length_days, average_period_length_days, created_at, updated_at
+       FROM cycle_definitions;`,
+    // 索引跟着改名的表走，先删掉再在新表上重建
+    `DROP INDEX idx_event_definitions_group_id;`,
+    `CREATE INDEX idx_event_definitions_group_id ON event_definitions(group_id);`,
+    // --- 2. 定义的子表：外键重新指向新表（快捷选项合并成「属性 + 取值」） ---
+    `CREATE TABLE quick_options_new (
+       id            TEXT    PRIMARY KEY NOT NULL,
+       definition_id TEXT    NOT NULL REFERENCES event_definitions(id) ON DELETE CASCADE,
+       attribute     TEXT,
+       value         REAL    NOT NULL,
+       sort_order    INTEGER NOT NULL DEFAULT 0
+     );`,
+    `INSERT INTO quick_options_new (id, definition_id, attribute, value, sort_order)
+     SELECT id, definition_id,
+            CASE WHEN unit IS NULL OR trim(unit) = '' THEN label ELSE unit END,
+            value, sort_order
+       FROM quick_options;`,
+    `DROP TABLE quick_options;`,
+    `ALTER TABLE quick_options_new RENAME TO quick_options;`,
+    `CREATE INDEX idx_quick_options_definition_id ON quick_options(definition_id);`,
+    `CREATE TABLE event_definition_tags_new (
+       definition_id TEXT NOT NULL REFERENCES event_definitions(id) ON DELETE CASCADE,
+       tag_id        TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+       PRIMARY KEY (definition_id, tag_id)
+     );`,
+    `INSERT INTO event_definition_tags_new (definition_id, tag_id)
+     SELECT definition_id, tag_id FROM event_definition_tags;`,
+    `DROP TABLE event_definition_tags;`,
+    `ALTER TABLE event_definition_tags_new RENAME TO event_definition_tags;`,
+    `CREATE INDEX idx_event_definition_tags_tag_id ON event_definition_tags(tag_id);`,
+    `DROP TABLE event_definitions_old;`,
+    // --- 3. 历史记录：unit → attributes（快照语义不变，一行不丢） ---
+    `CREATE TABLE event_records_new (
+       id                  TEXT    PRIMARY KEY NOT NULL,
+       definition_id       TEXT    NOT NULL,
+       kind                TEXT    NOT NULL CHECK (kind IN ('counter', 'quantity')),
+       value               REAL    NOT NULL,
+       attributes          TEXT    NOT NULL DEFAULT '[]',
+       occurred_at         TEXT    NOT NULL,
+       recorded_at         TEXT    NOT NULL,
+       note                TEXT,
+       source              TEXT    NOT NULL CHECK (source IN ('manual', 'quick', 'backfill')),
+       deleted_at          TEXT,
+       snapshot_name       TEXT    NOT NULL,
+       snapshot_attributes TEXT    NOT NULL DEFAULT '[]',
+       snapshot_group_id   TEXT,
+       snapshot_tag_ids    TEXT    NOT NULL DEFAULT '[]'
+     );`,
+    `INSERT INTO event_records_new
+       (id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at,
+        snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_tag_ids)
+     SELECT id, definition_id, kind, value,
+            CASE WHEN unit IS NULL OR trim(unit) = '' THEN '[]' ELSE json_array(unit) END,
+            occurred_at, recorded_at, note, source, deleted_at,
+            snapshot_name,
+            CASE WHEN snapshot_unit IS NULL OR trim(snapshot_unit) = '' THEN '[]'
+                 ELSE json_array(snapshot_unit) END,
+            snapshot_group_id, snapshot_tag_ids
+       FROM event_records;`,
+    `DROP TABLE event_records;`,
+    `ALTER TABLE event_records_new RENAME TO event_records;`,
+    `CREATE INDEX idx_event_records_occurred_at ON event_records(occurred_at DESC);`,
+    `CREATE INDEX idx_event_records_definition_id ON event_records(definition_id);`,
+    // --- 4. 周期实例 / 记录：外键从 cycle_definitions 改指 event_definitions ---
+    `ALTER TABLE cycle_instances RENAME TO cycle_instances_old;`,
+    `CREATE TABLE cycle_instances (
+       id            TEXT    PRIMARY KEY NOT NULL,
+       definition_id TEXT    NOT NULL REFERENCES event_definitions(id) ON DELETE CASCADE,
+       start_date    TEXT    NOT NULL,
+       end_date      TEXT,
+       note          TEXT,
+       created_at    TEXT    NOT NULL,
+       updated_at    TEXT    NOT NULL,
+       CHECK (end_date IS NULL OR end_date >= start_date)
+     );`,
+    `INSERT INTO cycle_instances (id, definition_id, start_date, end_date, note, created_at, updated_at)
+     SELECT id, definition_id, start_date, end_date, note, created_at, updated_at FROM cycle_instances_old;`,
+    `DROP INDEX idx_cycle_instances_definition_id;`,
+    `DROP INDEX idx_cycle_instances_start_date;`,
+    `CREATE INDEX idx_cycle_instances_definition_id ON cycle_instances(definition_id);`,
+    `CREATE INDEX idx_cycle_instances_start_date ON cycle_instances(start_date DESC);`,
+    `CREATE TABLE cycle_entries_new (
+       id          TEXT    PRIMARY KEY NOT NULL,
+       instance_id TEXT    NOT NULL REFERENCES cycle_instances(id) ON DELETE CASCADE,
+       date        TEXT    NOT NULL,
+       phase       TEXT,
+       symptoms    TEXT    NOT NULL DEFAULT '[]',
+       feelings    TEXT,
+       note        TEXT,
+       created_at  TEXT    NOT NULL,
+       updated_at  TEXT    NOT NULL,
+       deleted_at  TEXT
+     );`,
+    `INSERT INTO cycle_entries_new
+       (id, instance_id, date, phase, symptoms, feelings, note, created_at, updated_at, deleted_at)
+     SELECT id, instance_id, date, phase, symptoms, feelings, note, created_at, updated_at, deleted_at
+       FROM cycle_entries;`,
+    `DROP TABLE cycle_entries;`,
+    `ALTER TABLE cycle_entries_new RENAME TO cycle_entries;`,
+    `CREATE UNIQUE INDEX idx_cycle_entries_instance_date ON cycle_entries(instance_id, date);`,
+    `DROP TABLE cycle_instances_old;`,
+    `DROP TABLE cycle_definitions;`,
+  ],
+};
+
 /** 全部迁移，顺序即执行顺序。 */
 export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V1_BASELINE,
@@ -230,6 +397,7 @@ export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V3_EVENT_RECORDS,
   MIGRATION_V4_CYCLE,
   MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE,
+  MIGRATION_V6_CYCLE_AS_EVENT_KIND,
 ];
 
 /** 当前应用支持的 schema 版本。 */

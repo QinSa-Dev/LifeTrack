@@ -5,6 +5,7 @@ import {
   optionalIsoDate,
   optionalPositiveInteger,
   optionalText,
+  requireCycleMode,
   requireDateRange,
   requireId,
   requireIsoDate,
@@ -13,6 +14,7 @@ import {
   requireName,
   requireNotFuture,
   requireQuickOptionValue,
+  requireRecordKind,
   requireRecordSource,
   requireRecordValue,
   requireSortOrder,
@@ -47,14 +49,40 @@ describe('校验与规整规则', () => {
   });
 
   describe('requireKind', () => {
-    it('接受 counter / quantity', () => {
+    it('接受 counter / cycle', () => {
       expect(requireKind('counter')).toBe('counter');
-      expect(requireKind('quantity')).toBe('quantity');
+      expect(requireKind('cycle')).toBe('cycle');
+    });
+
+    it('不再接受 quantity（那只是历史记录的类型）', () => {
+      expect(() => requireKind('quantity')).toThrow(ValidationError);
     });
 
     it('拒绝其它值', () => {
       expect(() => requireKind('count')).toThrow(ValidationError);
       expect(() => requireKind(1)).toThrow(ValidationError);
+    });
+  });
+
+  describe('requireRecordKind', () => {
+    it('记录类型接受 counter / quantity（历史数据仍要能读）', () => {
+      expect(requireRecordKind('counter')).toBe('counter');
+      expect(requireRecordKind('quantity')).toBe('quantity');
+    });
+
+    it('记录里不会出现 cycle', () => {
+      expect(() => requireRecordKind('cycle')).toThrow(ValidationError);
+    });
+  });
+
+  describe('requireCycleMode', () => {
+    it('接受 auto / manual', () => {
+      expect(requireCycleMode('auto')).toBe('auto');
+      expect(requireCycleMode('manual')).toBe('manual');
+    });
+
+    it('拒绝其它值', () => {
+      expect(() => requireCycleMode('weekly')).toThrow(ValidationError);
     });
   });
 
@@ -76,7 +104,7 @@ describe('校验与规整规则', () => {
       expect(() => requireQuickOptionValue('counter', 0)).toThrow(ValidationError);
     });
 
-    it('数量型接受正小数', () => {
+    it('历史数量型（记录里的 quantity）接受正小数', () => {
       expect(requireQuickOptionValue('quantity', 0.5)).toBe(0.5);
       expect(() => requireQuickOptionValue('quantity', -0.5)).toThrow(ValidationError);
     });

@@ -5,11 +5,12 @@ import {
   isEntryWithinRange,
   isOngoingInstance,
   latestInstance,
+  nextAutoCycleSegment,
   observedCycleLength,
   predictNextCycle,
   rangesOverlap,
 } from '@/domain/cycles';
-import type { CycleDefinition, CycleInstance } from '@/domain/models';
+import type { CycleInstance, EventDefinition } from '@/domain/models';
 
 function makeInstance(overrides: Partial<CycleInstance> = {}): CycleInstance {
   return {
@@ -23,15 +24,14 @@ function makeInstance(overrides: Partial<CycleInstance> = {}): CycleInstance {
   };
 }
 
-function makeDefinition(overrides: Partial<CycleDefinition> = {}): CycleDefinition {
-  return {
-    id: 'd1',
-    name: '生理期',
-    isArchived: false,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    ...overrides,
-  };
+/** 「周期定义」在纯函数眼里只需要周期那几项配置（并入事件定义之后仍是这几项）。 */
+type CycleDefinitionView = Pick<
+  EventDefinition,
+  'cycleMode' | 'averageCycleLengthDays' | 'averagePeriodLengthDays'
+>;
+
+function makeDefinition(overrides: Partial<CycleDefinitionView> = {}): CycleDefinitionView {
+  return { ...overrides };
 }
 
 describe('findDatesOutside', () => {
@@ -219,5 +219,55 @@ describe('latestInstance', () => {
 
   it('空列表返回 undefined', () => {
     expect(latestInstance([])).toBeUndefined();
+  });
+});
+
+describe('nextAutoCycleSegment', () => {
+  const at = (startDate: string) => makeInstance({ id: startDate, startDate, endDate: undefined });
+
+  it('手动标记不算「下一段」：什么时候开始由用户说了算', () => {
+    expect(
+      nextAutoCycleSegment(
+        [],
+        makeDefinition({ cycleMode: 'manual', averageCycleLengthDays: 28 }),
+        '2026-10-19',
+      ),
+    ).toBeUndefined();
+  });
+
+  it('自动循环 + 还没有任何周期：今天就是起点', () => {
+    expect(
+      nextAutoCycleSegment(
+        [],
+        makeDefinition({ cycleMode: 'auto', averageCycleLengthDays: 30 }),
+        '2026-10-19',
+      ),
+    ).toEqual({ startDate: '2026-10-19', endDate: undefined, basis: 'first' });
+  });
+
+  it('配置了持续天数时一并给出结束日（含首尾）', () => {
+    expect(
+      nextAutoCycleSegment(
+        [at('2026-09-19')],
+        makeDefinition({ cycleMode: 'auto', averageCycleLengthDays: 30, averagePeriodLengthDays: 5 }),
+        '2026-10-19',
+      ),
+    ).toEqual({ startDate: '2026-10-19', endDate: '2026-10-23', basis: 'scheduled' });
+  });
+
+  it('按「上一段的开始日 + 周期长度」推算，与今天无关', () => {
+    expect(
+      nextAutoCycleSegment(
+        [at('2026-09-01')],
+        makeDefinition({ cycleMode: 'auto', averageCycleLengthDays: 28 }),
+        '2026-10-19',
+      ),
+    ).toEqual({ startDate: '2026-09-29', endDate: undefined, basis: 'scheduled' });
+  });
+
+  it('自动型但没设周期长度时不猜（连第一段也生不出来）', () => {
+    expect(
+      nextAutoCycleSegment([at('2026-09-01')], makeDefinition({ cycleMode: 'auto' }), '2026-10-19'),
+    ).toBeUndefined();
   });
 });

@@ -22,7 +22,7 @@ import {
   isOngoingInstance,
   predictNextCycle,
 } from '@/domain/cycles';
-import type { CycleDefinition, CycleEntry, CycleInstance } from '@/domain/models';
+import type { CycleEntry, CycleInstance, EventDefinition } from '@/domain/models';
 import { localDateText } from '@/features/common/datetime';
 import {
   buildMonthGrid,
@@ -44,9 +44,9 @@ import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/feat
 import { MonthCalendar } from '@/features/cycles/MonthCalendar';
 import { UndoBar } from '@/features/records/UndoBar';
 import {
-  CycleDefinitionRepository,
   CycleEntryRepository,
   CycleInstanceRepository,
+  EventDefinitionRepository,
   MetaRepository,
 } from '@/repositories';
 import { palette, spacing } from '@/theme';
@@ -88,7 +88,7 @@ export default function CycleInstanceScreen() {
   const { db } = useReadyDatabase();
 
   const [instance, setInstance] = useState<CycleInstance | null | undefined>(undefined);
-  const [definition, setDefinition] = useState<CycleDefinition | null>(null);
+  const [definition, setDefinition] = useState<EventDefinition | null>(null);
   const [entries, setEntries] = useState<CycleEntry[]>([]);
   // 同一定义的全部实例：预测要用「实际观察到的间隔」，只看当前这一段不够
   const [definitionInstances, setDefinitionInstances] = useState<CycleInstance[]>([]);
@@ -126,7 +126,7 @@ export default function CycleInstanceScreen() {
         setBoundaryEnd(loaded.endDate ?? '');
 
         const [loadedDefinition, loadedEntries, loadedInstances, loadedWindow] = await Promise.all([
-          new CycleDefinitionRepository(db).getById(loaded.definitionId),
+          new EventDefinitionRepository(db).getById(loaded.definitionId),
           new CycleEntryRepository(db).listByInstance(loaded.id),
           new CycleInstanceRepository(db).list({ definitionId: loaded.definitionId }),
           new MetaRepository(db).get(META_KEYS.predictionWindow),

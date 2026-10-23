@@ -4,7 +4,13 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AppText, Button, Card, Chip, EmptyState, Header, Screen, TextField } from '@/components';
 import { useReadyDatabase } from '@/db';
-import type { EventDefinition, EventRecord, RecordSource } from '@/domain/models';
+import {
+  attributeText,
+  recordAttributes,
+  type EventDefinition,
+  type EventRecord,
+  type RecordSource,
+} from '@/domain/models';
 import { localDateText, localTimeText, parseLocalDateTime, shiftLocalDays } from '@/features/common/datetime';
 import { describeRecord, formatOccurredAt, sourceLabel } from '@/features/records/format';
 import { RecordRow } from '@/features/records/RecordRow';
@@ -22,6 +28,8 @@ export default function RecordScreen() {
   const [definition, setDefinition] = useState<EventDefinition | null | undefined>(undefined);
   const [recent, setRecent] = useState<EventRecord[]>([]);
   const [manualValue, setManualValue] = useState('1');
+  // 这一次要标上的属性（可多选）。默认一个都不选：用户明确说了「默认不选」。
+  const [attributes, setAttributes] = useState<string[]>([]);
   const [note, setNote] = useState('');
   // 补录：开启后填写过去的日期与时间
   const [backfill, setBackfill] = useState(false);
@@ -67,7 +75,7 @@ export default function RecordScreen() {
    */
   const save = (
     value: number,
-    unit: string | undefined,
+    usedAttributes: string[],
     source: RecordSource,
     options: { occurredAt?: string; note?: string } = {},
   ): Promise<void> => {
@@ -82,7 +90,7 @@ export default function RecordScreen() {
       .record({
         definitionId: definition.id,
         value,
-        unit,
+        attributes: usedAttributes,
         note: usedNote,
         source,
         occurredAt: options.occurredAt,
@@ -108,7 +116,15 @@ export default function RecordScreen() {
       return;
     }
     setRepeatingId(record.id);
-    void save(record.value, record.unit, 'quick', { note: '' }).finally(() => setRepeatingId(null));
+    void save(record.value, recordAttributes(record), 'quick', { note: '' }).finally(() =>
+      setRepeatingId(null),
+    );
+  };
+
+  const toggleAttribute = (attribute: string) => {
+    setAttributes((current) =>
+      current.includes(attribute) ? current.filter((item) => item !== attribute) : [...current, attribute],
+    );
   };
 
   const submitManual = () => {
@@ -116,7 +132,7 @@ export default function RecordScreen() {
       return;
     }
     if (!backfill) {
-      void save(Number(manualValue.trim()), undefined, 'manual');
+      void save(Number(manualValue.trim()), attributes, 'manual');
       return;
     }
     const occurredAt = parseLocalDateTime(dateText, timeText);
@@ -124,7 +140,7 @@ export default function RecordScreen() {
       setError('日期或时间格式不正确，日期应形如 2026-10-19，时间应形如 08:30。');
       return;
     }
-    void save(Number(manualValue.trim()), undefined, 'backfill', { occurredAt });
+    void save(Number(manualValue.trim()), attributes, 'backfill', { occurredAt });
   };
 
   if (definition === undefined) {
@@ -145,6 +161,7 @@ export default function RecordScreen() {
   }
 
   const archived = definition.isArchived;
+  const selectedAttributeText = attributeText(attributes);
 
   return (
     <Screen scroll contentStyle={styles.content}>
@@ -159,6 +176,19 @@ export default function RecordScreen() {
           />
         }
       />
+
+      {definition.kind === 'cycle' ? (
+        <Card title="这是周期型事件" style={styles.spaced}>
+          <AppText variant="body" color={palette.textMuted}>
+            周期型事件不点一次记一次，而是在它的详情页里开一段周期、逐天记录。
+          </AppText>
+          <Button
+            label="去周期页面"
+            onPress={() => router.replace({ pathname: '/cycles/[id]', params: { id: definition.id } })}
+            style={styles.spacedTop}
+          />
+        </Card>
+      ) : null}
 
       {archived ? (
         <Card title="已归档" style={styles.spaced}>
@@ -184,35 +214,44 @@ export default function RecordScreen() {
         </Card>
       ) : null}
 
-      {!archived && definition.quickOptions.length > 0 ? (
-        <Card title="快捷记录" subtitle="点一下即可记录" style={styles.spaced}>
+      {!archived && definition.kind === 'counter' && definition.quickOptions.length > 0 ? (
+        <Card title="快捷记录" subtitle="点一下即可记录（属性 + 取值）" style={styles.spaced}>
           <View style={styles.chipRow}>
             {definition.quickOptions.map((option) => (
               <Chip
                 key={option.id}
-                label={`${option.label}（+${option.value}${option.unit ?? definition.unit ?? ''}）`}
-                onPress={() => void save(option.value, option.unit, 'quick')}
+                label={option.attribute ? `${option.attribute}（+${option.value}）` : `+${option.value}`}
+                onPress={() => void save(option.value, option.attribute ? [option.attribute] : [], 'quick')}
               />
             ))}
           </View>
         </Card>
       ) : null}
 
-      {!archived ? (
-        <Card
-          title="手动记录"
-          subtitle={definition.kind === 'counter' ? '记录本次增量（正整数）' : '记录本次数量'}
-          style={styles.spaced}
-        >
+      {!archived && definition.kind === 'counter' ? (
+        <Card title="手动记录" subtitle="记录本次的增量（正整数）" style={styles.spaced}>
+          {definition.attributes.length > 0 ? (
+            <>
+              <AppText variant="label" color={palette.textMuted} style={styles.fieldLabel}>
+                属性（可多选，不选就只记数量）
+              </AppText>
+              <View style={styles.chipRow}>
+                {definition.attributes.map((attribute) => (
+                  <Chip
+                    key={attribute}
+                    label={attribute}
+                    selected={attributes.includes(attribute)}
+                    onPress={() => toggleAttribute(attribute)}
+                  />
+                ))}
+              </View>
+            </>
+          ) : null}
           <TextField
-            label={
-              definition.kind === 'counter'
-                ? '数量'
-                : `数量${definition.unit ? `（${definition.unit}）` : ''}`
-            }
+            label={selectedAttributeText === undefined ? '数量' : `数量（${selectedAttributeText}）`}
             value={manualValue}
             onChangeText={setManualValue}
-            keyboardType={definition.kind === 'counter' ? 'number-pad' : 'decimal-pad'}
+            keyboardType="number-pad"
           />
           <TextField
             label="备注（可选）"
@@ -306,10 +345,16 @@ const styles = StyleSheet.create({
   spaced: {
     marginTop: spacing.md,
   },
+  spacedTop: {
+    marginTop: spacing.md,
+  },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  fieldLabel: {
     marginBottom: spacing.sm,
   },
   toggleRow: {

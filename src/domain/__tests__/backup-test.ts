@@ -15,7 +15,6 @@ import {
 } from '@/domain/backup';
 import { ImportError } from '@/domain/errors';
 import type {
-  CycleDefinition,
   CycleEntry,
   CycleInstance,
   EventDefinition,
@@ -72,8 +71,9 @@ function makeDefinition(index: number, overrides: Partial<EventDefinition> = {})
     id: id(DEFINITION_BASE + index),
     name: `事件${index}`,
     kind: 'counter',
+    attributes: ['杯'],
     groupId: id(GROUP_BASE + 1),
-    quickOptions: [{ id: id(900 + index), label: '一次', value: 1, sortOrder: 0 }],
+    quickOptions: [{ id: id(900 + index), attribute: '杯', value: 1, sortOrder: 0 }],
     tagIds: [id(TAG_BASE + 1)],
     isArchived: false,
     sortOrder: index,
@@ -90,6 +90,7 @@ function makeRecord(index: number, overrides: Partial<EventRecord> = {}): EventR
     definitionId,
     kind: 'counter',
     value: index,
+    attributes: [],
     occurredAt: T1,
     recordedAt: T1,
     source: 'manual',
@@ -98,6 +99,7 @@ function makeRecord(index: number, overrides: Partial<EventRecord> = {}): EventR
       definitionId,
       name: '事件1',
       kind: 'counter',
+      attributes: ['杯'],
       groupId: id(GROUP_BASE + 1),
       tagIds: [id(TAG_BASE + 1)],
     },
@@ -105,11 +107,21 @@ function makeRecord(index: number, overrides: Partial<EventRecord> = {}): EventR
   };
 }
 
-function makeCycleDefinition(index: number, overrides: Partial<CycleDefinition> = {}): CycleDefinition {
+/** 周期型事件定义：并入事件定义之后，它就是「多几个周期字段」的事件定义。 */
+function makeCycleDefinition(index: number, overrides: Partial<EventDefinition> = {}): EventDefinition {
   return {
     id: id(CYCLE_DEFINITION_BASE + index),
     name: `周期${index}`,
+    kind: 'cycle',
+    cycleMode: 'manual',
+    averageCycleLengthDays: 28,
+    averagePeriodLengthDays: 5,
+    // 周期型不使用属性
+    attributes: [],
+    quickOptions: [],
+    tagIds: [],
     isArchived: false,
+    sortOrder: index,
     createdAt: T1,
     updatedAt: T1,
     ...overrides,
@@ -140,14 +152,13 @@ function makeCycleEntry(index: number, overrides: Partial<CycleEntry> = {}): Cyc
   };
 }
 
-/** 一份自洽的最小数据：1 分组 / 1 标签 / 1 定义 / 1 记录 / 1 周期定义 / 1 实例 / 1 记录 */
+/** 一份自洽的最小数据：1 分组 / 1 标签 / 1 计数定义 + 1 周期定义 / 1 记录 / 1 实例 / 1 每日记录 */
 function fixtureData(overrides: Partial<BackupData> = {}): BackupData {
   return {
     eventGroups: [makeGroup(1)],
     tags: [makeTag(1)],
-    eventDefinitions: [makeDefinition(1)],
+    eventDefinitions: [makeDefinition(1), makeCycleDefinition(1)],
     eventRecords: [makeRecord(1)],
-    cycleDefinitions: [makeCycleDefinition(1)],
     cycleInstances: [makeCycleInstance(1)],
     cycleEntries: [makeCycleEntry(1)],
     ...overrides,
@@ -266,7 +277,7 @@ describe('parseBackup', () => {
     const file = makeFile({
       data: fixtureData({
         eventGroups: [makeGroup(1, { id: group })],
-        eventDefinitions: [makeDefinition(1, { id: definition, groupId: group })],
+        eventDefinitions: [makeDefinition(1, { id: definition, groupId: group }), makeCycleDefinition(1)],
         eventRecords: [
           makeRecord(1, {
             id: record,
@@ -275,6 +286,7 @@ describe('parseBackup', () => {
               definitionId: definition,
               name: '事件1',
               kind: 'counter',
+              attributes: ['杯'],
               groupId: group,
               tagIds: [id(TAG_BASE + 1)],
             },
@@ -384,7 +396,7 @@ describe('parseBackup', () => {
     ).toThrow(/指向不存在的标签/);
     expect(() =>
       parseBackup(rawFile({ cycleInstances: [jsonOf(makeCycleInstance(1, { definitionId: id(999) }))] })),
-    ).toThrow(/指向不存在的周期定义/);
+    ).toThrow(/指向不存在的周期型事件/);
     expect(() =>
       parseBackup(rawFile({ cycleEntries: [jsonOf(makeCycleEntry(1, { instanceId: id(999) }))] })),
     ).toThrow(/指向不存在的周期实例/);
@@ -394,7 +406,7 @@ describe('parseBackup', () => {
     expect(() =>
       parseBackup(
         rawFile({
-          cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+          eventDefinitions: [jsonOf(makeCycleDefinition(1))],
           cycleInstances: [jsonOf(makeCycleInstance(1))],
           cycleEntries: [jsonOf(makeCycleEntry(1, { date: '2026-10-09' }))],
         }),
@@ -403,7 +415,7 @@ describe('parseBackup', () => {
     expect(() =>
       parseBackup(
         rawFile({
-          cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+          eventDefinitions: [jsonOf(makeCycleDefinition(1))],
           cycleInstances: [jsonOf(makeCycleInstance(1))],
           cycleEntries: [jsonOf(makeCycleEntry(1, { date: '2026-10-09' }))],
         }),
@@ -414,7 +426,7 @@ describe('parseBackup', () => {
   it('周期记录的软删除标记：缺失即「未删除」，写了就照原样读回', () => {
     const parsed = parseBackup(
       rawFile({
-        cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+        eventDefinitions: [jsonOf(makeCycleDefinition(1))],
         cycleInstances: [jsonOf(makeCycleInstance(1))],
         // v5 之前的备份里没有 deletedAt 这个字段
         cycleEntries: [jsonOf(makeCycleEntry(1))],
@@ -424,7 +436,7 @@ describe('parseBackup', () => {
 
     const withFlag = parseBackup(
       rawFile({
-        cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+        eventDefinitions: [jsonOf(makeCycleDefinition(1))],
         cycleInstances: [jsonOf(makeCycleInstance(1))],
         cycleEntries: [{ ...jsonOf(makeCycleEntry(1)), deletedAt: T1 }],
       }),
@@ -438,7 +450,7 @@ describe('parseBackup', () => {
     expect(() =>
       parseBackup(
         rawFile({
-          cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+          eventDefinitions: [jsonOf(makeCycleDefinition(1))],
           cycleInstances: [jsonOf(makeCycleInstance(1))],
           cycleEntries: [{ ...jsonOf(makeCycleEntry(1, { date: '2026-10-09' })), deletedAt: T1 }],
         }),
@@ -453,7 +465,7 @@ describe('parseBackup', () => {
     expect(() =>
       parseBackup(
         rawFile({
-          cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+          eventDefinitions: [jsonOf(makeCycleDefinition(1))],
           cycleInstances: [jsonOf(makeCycleInstance(1))],
           cycleEntries: [jsonOf(makeCycleEntry(1)), jsonOf(makeCycleEntry(2, { date: '2026-10-02' }))],
         }),
@@ -484,10 +496,138 @@ describe('parseBackup', () => {
       parseBackup(
         rawFile({
           cycleInstances: [jsonOf(makeCycleInstance(1, { startDate: '2026-10-05', endDate: '2026-10-01' }))],
-          cycleDefinitions: [jsonOf(makeCycleDefinition(1))],
+          eventDefinitions: [jsonOf(makeCycleDefinition(1))],
         }),
       ),
     ).toThrow(/endDate/);
+  });
+
+  it('v1 备份：周期定义在单独一个集合里，导入时折成「周期型事件定义」', () => {
+    const parsed = parseBackup(
+      rawFile(
+        {
+          cycleDefinitions: [
+            {
+              id: id(CYCLE_DEFINITION_BASE + 1),
+              name: '生理期',
+              averageCycleLengthDays: 28,
+              averagePeriodLengthDays: 5,
+              isArchived: false,
+              createdAt: T1,
+              updatedAt: T1,
+            },
+          ],
+          cycleInstances: [jsonOf(makeCycleInstance(1))],
+          cycleEntries: [jsonOf(makeCycleEntry(1))],
+        },
+        { formatVersion: 1 },
+      ),
+    );
+
+    expect(parsed.data.eventDefinitions).toEqual([
+      {
+        id: id(CYCLE_DEFINITION_BASE + 1),
+        name: '生理期',
+        kind: 'cycle',
+        // v1 没有「做法」这个字段，按当年唯一的行为（自己点开始、自己点结束）兜底
+        cycleMode: 'manual',
+        averageCycleLengthDays: 28,
+        averagePeriodLengthDays: 5,
+        quickOptions: [],
+        tagIds: [],
+        attributes: [],
+        isArchived: false,
+        sortOrder: 0,
+        createdAt: T1,
+        updatedAt: T1,
+      },
+    ]);
+    // 实例与每日记录跟着搬，不丢
+    expect(parsed.data.cycleInstances).toHaveLength(1);
+    expect(parsed.data.cycleEntries).toHaveLength(1);
+  });
+
+  it('v1 备份：quantity 折成计数型，unit 变成属性', () => {
+    const parsed = parseBackup(
+      rawFile(
+        {
+          eventDefinitions: [
+            {
+              id: id(DEFINITION_BASE + 1),
+              name: '里程',
+              kind: 'quantity',
+              unit: '公里',
+              quickOptions: [{ id: id(901), label: '一次', value: 1, unit: '公里', sortOrder: 0 }],
+              tagIds: [],
+              isArchived: false,
+              sortOrder: 0,
+              createdAt: T1,
+              updatedAt: T1,
+            },
+          ],
+        },
+        { formatVersion: 1 },
+      ),
+    );
+
+    expect(parsed.data.eventDefinitions[0]).toMatchObject({
+      kind: 'counter',
+      attributes: ['公里'],
+      // 快捷选项折成「属性 + 取值」：有 unit 就用它
+      quickOptions: [{ attribute: '公里', value: 1 }],
+    });
+  });
+
+  it('格式 v2 起不再接受 quantity 定义（类型只有计数 / 周期）', () => {
+    const definition = { ...jsonOf(makeDefinition(1)), kind: 'quantity' };
+    expect(() => parseBackup(rawFile({ eventDefinitions: [definition] }))).toThrow(
+      /data\.eventDefinitions\[0\]\.kind/,
+    );
+  });
+
+  it('属性可以是多条，按顺序读回', () => {
+    const definition = {
+      ...jsonOf(makeDefinition(1)),
+      groupId: undefined,
+      tagIds: [],
+      attributes: ['温水', '200ml'],
+    };
+    const parsed = parseBackup(rawFile({ eventDefinitions: [definition] }));
+
+    expect(parsed.data.eventDefinitions[0]?.attributes).toEqual(['温水', '200ml']);
+  });
+
+  it('属性必须是字符串数组，写错了要拒绝（不是默默丢掉）', () => {
+    const definition = {
+      ...jsonOf(makeDefinition(1)),
+      groupId: undefined,
+      tagIds: [],
+      attributes: ['温水', 200],
+    };
+    expect(() => parseBackup(rawFile({ eventDefinitions: [definition] }))).toThrow(
+      /data\.eventDefinitions\[0\]\.attributes\[1\]/,
+    );
+  });
+
+  it('历史记录里的 quantity 仍然合法，v1 的 unit 读成属性', () => {
+    const base = jsonOf(makeRecord(1));
+    // 老记录没有 attributes 这个字段，只有一个 unit
+    const record: Record<string, unknown> = {
+      ...base,
+      kind: 'quantity',
+      attributes: undefined,
+      unit: '公里',
+    };
+    record.snapshot = {
+      ...(base.snapshot as Record<string, unknown>),
+      kind: 'quantity',
+      attributes: undefined,
+      unit: '公里',
+    };
+    const parsed = parseBackup(rawFile({ eventRecords: [record] }, { formatVersion: 1 }));
+
+    expect(parsed.data.eventRecords[0]).toMatchObject({ kind: 'quantity', attributes: ['公里'] });
+    expect(parsed.data.eventRecords[0]?.snapshot.attributes).toEqual(['公里']);
   });
 });
 
@@ -506,9 +646,27 @@ describe('assertBackupCompatible / assertBackupIntegrity', () => {
 
   it('assertBackupIntegrity 对自洽数据放行，对断裂引用报路径', () => {
     expect(() => assertBackupIntegrity(fixtureData())).not.toThrow();
-    expect(() => assertBackupIntegrity(fixtureData({ cycleDefinitions: [] }))).toThrow(
+    // 周期实例指向的定义不存在（这里把周期定义从 eventDefinitions 里拿掉）
+    expect(() => assertBackupIntegrity(fixtureData({ eventDefinitions: [makeDefinition(1)] }))).toThrow(
       /data\.cycleInstances\[0\]\.definitionId/,
     );
+  });
+
+  it('周期型必须说明做法；计数型不该带周期字段', () => {
+    expect(() =>
+      assertBackupIntegrity(
+        fixtureData({
+          eventDefinitions: [makeDefinition(1), makeCycleDefinition(1, { cycleMode: undefined })],
+        }),
+      ),
+    ).toThrow(/必须说明是自动循环还是手动标记/);
+    expect(() =>
+      assertBackupIntegrity(
+        fixtureData({
+          eventDefinitions: [makeDefinition(1, { cycleMode: 'manual' }), makeCycleDefinition(1)],
+        }),
+      ),
+    ).toThrow(/计数型事件不该带周期方式/);
   });
 });
 

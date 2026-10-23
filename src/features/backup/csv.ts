@@ -14,7 +14,7 @@
  *    行尾用 CRLF，并在开头加 BOM——否则 Excel 打开中文会乱码。
  */
 
-import type { EventDefinitionKind, EventRecord, RecordSource } from '@/domain/models';
+import { recordAttributes, type EventRecord, type RecordKind, type RecordSource } from '@/domain/models';
 
 const SOURCE_LABELS: Record<RecordSource, string> = {
   manual: '手动',
@@ -22,7 +22,8 @@ const SOURCE_LABELS: Record<RecordSource, string> = {
   backfill: '补录',
 };
 
-const KIND_LABELS: Record<EventDefinitionKind, string> = {
+/** 记录类型（历史数据里还有 `quantity`）：CSV 是给人看的，所以照旧给出中文。 */
+const KIND_LABELS: Record<RecordKind, string> = {
   counter: '计数',
   quantity: '数量',
 };
@@ -37,7 +38,7 @@ export const RECORDS_CSV_HEADERS = [
   '事件',
   '类型',
   '取值',
-  '单位',
+  '属性',
   '分组',
   '标签',
   '备注',
@@ -75,7 +76,8 @@ export function recordsToCsv(records: readonly EventRecord[], options: RecordsCs
         KIND_LABELS[record.kind],
         // 取值保留原始数字（不加「+」），方便表格软件直接求和
         String(record.value),
-        record.unit ?? '',
+        // 一条记录可以标多个属性，用竖线分隔（与标签/分组同一套约定）
+        recordAttributes(record).join(LIST_SEPARATOR),
         resolveIds(record.snapshot.groupId ? [record.snapshot.groupId] : [], options.groupNameById),
         resolveIds(record.snapshot.tagIds, options.tagNameById),
         record.note ?? '',

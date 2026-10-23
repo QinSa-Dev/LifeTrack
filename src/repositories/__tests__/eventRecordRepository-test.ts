@@ -28,24 +28,25 @@ describe('EventRecordRepository', () => {
     db.close();
   });
 
-  async function createCounter(overrides: { name?: string; unit?: string } = {}) {
+  async function createCounter(overrides: { name?: string; attributes?: string[] } = {}) {
     return definitions.create({
       name: overrides.name ?? '喝水',
       kind: 'counter',
-      unit: overrides.unit,
+      attributes: overrides.attributes,
       tagIds: [],
       quickOptions: [],
     });
   }
 
   it('记录计数型事件：写入并生成快照', async () => {
-    const definition = await createCounter({ unit: '杯' });
+    const definition = await createCounter({ attributes: ['杯'] });
     const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
 
     expect(record.id).toBeTruthy();
     expect(record.kind).toBe('counter');
     expect(record.value).toBe(1);
-    expect(record.unit).toBe('杯');
+    expect(record.attributes).toEqual([]); // 一个都没标
+    expect(record.snapshot.attributes).toEqual(['杯']); // 定义当时的属性留在快照里
     expect(record.occurredAt).toBe(T1);
     expect(record.recordedAt).toBe(T1);
     expect(record.source).toBe('manual');
@@ -56,22 +57,24 @@ describe('EventRecordRepository', () => {
     expect(await records.getById(record.id)).toEqual(record);
   });
 
-  it('记录数量型事件，快捷选项可覆盖单位', async () => {
+  it('记录时标上的属性会写进记录（可多条），快照仍留定义当时的属性', async () => {
     const definition = await definitions.create({
       name: '饮水',
-      kind: 'quantity',
-      unit: '升',
+      kind: 'counter',
+      attributes: ['升'],
       tagIds: [],
       quickOptions: [],
     });
     const record = await records.record(
-      { definitionId: definition.id, value: 0.5, unit: '瓶', source: 'quick' },
+      { definitionId: definition.id, value: 1, attributes: ['温水', '瓶'], source: 'quick' },
       T1,
     );
 
-    expect(record.value).toBe(0.5);
-    expect(record.unit).toBe('瓶');
+    expect(record.value).toBe(1);
+    expect(record.attributes).toEqual(['温水', '瓶']);
+    expect(record.snapshot.attributes).toEqual(['升']);
     expect(record.source).toBe('quick');
+    expect((await records.getById(record.id))?.attributes).toEqual(['温水', '瓶']);
   });
 
   it('记录时先落一条再读回，按事实发生时间倒序', async () => {
@@ -223,21 +226,21 @@ describe('EventRecordRepository', () => {
     expect(record.occurredAt).toBe(T1);
   });
 
-  it('快照不可篡改：之后改名/换单位/归档都不影响历史', async () => {
-    const definition = await createCounter({ unit: '杯' });
+  it('快照不可篡改：之后改名/换属性/归档都不影响历史', async () => {
+    const definition = await createCounter({ attributes: ['杯'] });
     const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
 
     await definitions.update(definition.id, {
       name: '喝水（含茶）',
       kind: 'counter',
-      unit: '毫升',
+      attributes: ['毫升'],
       tagIds: [],
       quickOptions: [],
     });
 
     const after = await records.getById(record.id);
     expect(after?.snapshot.name).toBe('喝水');
-    expect(after?.snapshot.unit).toBe('杯');
+    expect(after?.snapshot.attributes).toEqual(['杯']);
   });
 
   it('记录时把定义的标签固化为快照', async () => {
@@ -271,7 +274,7 @@ describe('EventRecordRepository', () => {
   });
 
   it('软删除：默认从列表消失，includeDeleted 时才列出，行与快照都保留', async () => {
-    const definition = await createCounter({ unit: '杯' });
+    const definition = await createCounter({ attributes: ['杯'] });
     const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
 
     const deleted = await records.softDelete(record.id, T2);
@@ -395,11 +398,11 @@ describe('EventRecordRepository.update', () => {
     db.close();
   });
 
-  async function createCounter(overrides: { name?: string; unit?: string } = {}) {
+  async function createCounter(overrides: { name?: string; attributes?: string[] } = {}) {
     return definitions.create({
       name: overrides.name ?? '喝水',
       kind: 'counter',
-      unit: overrides.unit,
+      attributes: overrides.attributes,
       tagIds: [],
       quickOptions: [],
     });
@@ -408,20 +411,20 @@ describe('EventRecordRepository.update', () => {
   it('改取值与备注：改动落库，快照纹丝不动', async () => {
     const definition = await definitions.create({
       name: '喝水',
-      kind: 'quantity',
-      unit: '毫升',
+      kind: 'counter',
+      attributes: ['毫升'],
       tagIds: [],
       quickOptions: [],
     });
     const record = await records.record(
-      { definitionId: definition.id, value: 300, note: '随手一杯', source: 'manual' },
+      { definitionId: definition.id, value: 300, attributes: ['毫升'], note: '随手一杯', source: 'manual' },
       T1,
     );
-    // 定义后来改名换单位：历史不该跟着变
+    // 定义后来改名换属性：历史不该跟着变
     await definitions.update(definition.id, {
       name: '饮水',
-      kind: 'quantity',
-      unit: '升',
+      kind: 'counter',
+      attributes: ['升'],
       tagIds: [],
       quickOptions: [],
     });
@@ -430,7 +433,8 @@ describe('EventRecordRepository.update', () => {
 
     expect(updated.value).toBe(500);
     expect(updated.note).toBe('大杯');
-    expect(updated.unit).toBe('毫升'); // 记录当时的单位
+    expect(updated.attributes).toEqual(['毫升']); // 记录当时标的属性
+    expect(updated.snapshot.attributes).toEqual(['毫升']); // 记录当时的定义属性
     expect(updated.snapshot.name).toBe('喝水'); // 记录当时的名称
     expect(updated.recordedAt).toBe(T1);
     expect(updated.source).toBe('manual');

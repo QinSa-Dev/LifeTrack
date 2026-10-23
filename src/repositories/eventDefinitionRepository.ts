@@ -17,6 +17,7 @@ import { NotFoundError, StorageError, ValidationError } from '@/domain/errors';
 import { newId } from '@/domain/id';
 import {
   isEventDefinitionKind,
+  type CycleMode,
   type EventDefinition,
   type EventDefinitionKind,
   type IsoDateTime,
@@ -24,7 +25,11 @@ import {
 } from '@/domain/models';
 import {
   normalizeIdList,
+  normalizeTextList,
+  optionalCycleMode,
+  optionalPositiveInteger,
   optionalText,
+  readTextList,
   requireKind,
   requireName,
   requireQuickOptionValue,
@@ -37,12 +42,15 @@ interface DefinitionRow {
   id: string;
   name: string;
   kind: string;
-  unit: string | null;
+  attributes: string;
   group_id: string | null;
   color: string | null;
   icon: string | null;
   is_archived: number;
   sort_order: number;
+  cycle_mode: string | null;
+  average_cycle_length_days: number | null;
+  average_period_length_days: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -50,9 +58,8 @@ interface DefinitionRow {
 interface QuickOptionRow {
   id: string;
   definition_id: string;
-  label: string;
+  attribute: string | null;
   value: number;
-  unit: string | null;
   sort_order: number;
 }
 
@@ -62,7 +69,7 @@ interface DefinitionTagRow {
 }
 
 const DEFINITION_COLUMNS =
-  'id, name, kind, unit, group_id, color, icon, is_archived, sort_order, created_at, updated_at';
+  'id, name, kind, attributes, group_id, color, icon, is_archived, sort_order, cycle_mode, average_cycle_length_days, average_period_length_days, created_at, updated_at';
 
 /** 生成 IN (?, ?, ...) 的占位符，个数与传入 id 数量一致。 */
 function placeholders(count: number): string {
@@ -82,7 +89,7 @@ function toDefinition(row: DefinitionRow, quickOptions: QuickOption[], tagIds: s
     id: row.id,
     name: row.name,
     kind: toKind(row.kind),
-    unit: row.unit ?? undefined,
+    attributes: readTextList(row.attributes),
     groupId: row.group_id ?? undefined,
     color: row.color ?? undefined,
     icon: row.icon ?? undefined,
@@ -90,6 +97,9 @@ function toDefinition(row: DefinitionRow, quickOptions: QuickOption[], tagIds: s
     tagIds,
     isArchived: row.is_archived === 1,
     sortOrder: row.sort_order,
+    cycleMode: optionalCycleMode(row.cycle_mode),
+    averageCycleLengthDays: row.average_cycle_length_days ?? undefined,
+    averagePeriodLengthDays: row.average_period_length_days ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -105,7 +115,7 @@ async function loadQuickOptions(
     return grouped;
   }
   const rows = await db.getAllAsync<QuickOptionRow>(
-    `SELECT id, definition_id, label, value, unit, sort_order
+    `SELECT id, definition_id, attribute, value, sort_order
        FROM quick_options
       WHERE definition_id IN (${placeholders(definitionIds.length)})
       ORDER BY sort_order ASC, id ASC`,
@@ -115,9 +125,8 @@ async function loadQuickOptions(
     const list = grouped.get(row.definition_id) ?? [];
     list.push({
       id: row.id,
-      label: row.label,
+      attribute: row.attribute ?? undefined,
       value: row.value,
-      unit: row.unit ?? undefined,
       sortOrder: row.sort_order,
     });
     grouped.set(row.definition_id, list);
@@ -146,18 +155,84 @@ async function loadTagIds(db: SqlExecutor, definitionIds: readonly string[]): Pr
   return grouped;
 }
 
-/** 校验并规整快捷选项输入。 */
+/** 校验并规整快捷选项输入：一条就是「属性 + 取值」（属性可省略）。 */
 function normalizeQuickOptions(
   kind: EventDefinitionKind,
   inputs: readonly QuickOptionInput[],
 ): QuickOptionInput[] {
   return inputs.map((input) => ({
     id: input.id,
-    label: requireName(input.label, '快捷选项名称'),
+    attribute: optionalText(input.attribute),
     value: requireQuickOptionValue(kind, input.value),
-    unit: optionalText(input.unit),
     sortOrder: requireSortOrder(input.sortOrder ?? 0),
   }));
+}
+
+/** 草稿规整后的落库形态。 */
+interface NormalizedDraft {
+  name: string;
+  kind: EventDefinitionKind;
+  attributes: string[];
+  groupId: string | undefined;
+  color: string | undefined;
+  icon: string | undefined;
+  tagIds: string[];
+  quickOptions: QuickOptionInput[];
+  sortOrder: number;
+  cycleMode: CycleMode | undefined;
+  averageCycleLengthDays: number | undefined;
+  averagePeriodLengthDays: number | undefined;
+}
+
+/**
+ * 草稿 → 可直接落库的规整结果。
+ *
+ * 两种类型各管各的字段，规则在这里收口，`create` 与 `update` 共用同一份判断：
+ * - 计数型：允许快捷选项，**不允许**带周期字段；
+ * - 周期型：必须有一种做法（省略按「手动标记」兜底），带周期长度与持续天数，
+ *   不使用快捷选项（周期记的是「哪一天」，不是「点了几次」）。
+ */
+function normalizeDraft(draft: EventDefinitionDraft): NormalizedDraft {
+  const name = requireName(draft.name, '事件名称');
+  const kind = requireKind(draft.kind);
+  const groupId = optionalText(draft.groupId);
+  const color = optionalText(draft.color);
+  const icon = optionalText(draft.icon);
+  const tagIds = normalizeIdList(draft.tagIds);
+  const sortOrder = requireSortOrder(draft.sortOrder ?? 0);
+
+  if (kind === 'counter') {
+    return {
+      name,
+      kind,
+      attributes: normalizeTextList(draft.attributes ?? []),
+      groupId,
+      color,
+      icon,
+      tagIds,
+      quickOptions: normalizeQuickOptions(kind, draft.quickOptions),
+      sortOrder,
+      cycleMode: undefined,
+      averageCycleLengthDays: undefined,
+      averagePeriodLengthDays: undefined,
+    };
+  }
+
+  return {
+    name,
+    kind,
+    // 周期型不使用属性：周期记的是「哪一天」，不是「一次是什么」。
+    attributes: [],
+    groupId,
+    color,
+    icon,
+    tagIds,
+    quickOptions: [],
+    sortOrder,
+    cycleMode: optionalCycleMode(draft.cycleMode) ?? 'manual',
+    averageCycleLengthDays: optionalPositiveInteger(draft.averageCycleLengthDays, '周期长度'),
+    averagePeriodLengthDays: optionalPositiveInteger(draft.averagePeriodLengthDays, '持续天数'),
+  };
 }
 
 async function insertQuickOptions(
@@ -167,13 +242,12 @@ async function insertQuickOptions(
 ): Promise<void> {
   for (const option of options) {
     await db.runAsync(
-      `INSERT INTO quick_options (id, definition_id, label, value, unit, sort_order)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO quick_options (id, definition_id, attribute, value, sort_order)
+       VALUES (?, ?, ?, ?, ?)`,
       option.id ?? newId(),
       definitionId,
-      option.label,
+      option.attribute ?? null,
       option.value,
-      option.unit ?? null,
       option.sortOrder ?? 0,
     );
   }
@@ -218,36 +292,32 @@ export class EventDefinitionRepository {
     draft: EventDefinitionDraft,
     now: IsoDateTime = new Date().toISOString(),
   ): Promise<EventDefinition> {
-    const name = requireName(draft.name, '事件名称');
-    const kind = requireKind(draft.kind);
-    const unit = optionalText(draft.unit);
-    const groupId = optionalText(draft.groupId);
-    const color = optionalText(draft.color);
-    const icon = optionalText(draft.icon);
-    const tagIds = normalizeIdList(draft.tagIds);
-    const quickOptions = normalizeQuickOptions(kind, draft.quickOptions);
-    const sortOrder = requireSortOrder(draft.sortOrder ?? 0);
+    const normalized = normalizeDraft(draft);
     const id = newId();
 
     return guard('创建事件定义', async () => {
       await this.db.withExclusiveTransactionAsync(async (txn) => {
         await txn.runAsync(
           `INSERT INTO event_definitions
-             (id, name, kind, unit, group_id, color, icon, is_archived, sort_order, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+             (id, name, kind, attributes, group_id, color, icon, is_archived, sort_order,
+              cycle_mode, average_cycle_length_days, average_period_length_days, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
           id,
-          name,
-          kind,
-          unit ?? null,
-          groupId ?? null,
-          color ?? null,
-          icon ?? null,
-          sortOrder,
+          normalized.name,
+          normalized.kind,
+          JSON.stringify(normalized.attributes),
+          normalized.groupId ?? null,
+          normalized.color ?? null,
+          normalized.icon ?? null,
+          normalized.sortOrder,
+          normalized.cycleMode ?? null,
+          normalized.averageCycleLengthDays ?? null,
+          normalized.averagePeriodLengthDays ?? null,
           now,
           now,
         );
-        await insertQuickOptions(txn, id, quickOptions);
-        await insertTags(txn, id, tagIds);
+        await insertQuickOptions(txn, id, normalized.quickOptions);
+        await insertTags(txn, id, normalized.tagIds);
       });
       return this.mustReadOne(id);
     });
@@ -259,30 +329,26 @@ export class EventDefinitionRepository {
     draft: EventDefinitionDraft,
     now: IsoDateTime = new Date().toISOString(),
   ): Promise<EventDefinition> {
-    const name = requireName(draft.name, '事件名称');
-    const kind = requireKind(draft.kind);
-    const unit = optionalText(draft.unit);
-    const groupId = optionalText(draft.groupId);
-    const color = optionalText(draft.color);
-    const icon = optionalText(draft.icon);
-    const tagIds = normalizeIdList(draft.tagIds);
-    const quickOptions = normalizeQuickOptions(kind, draft.quickOptions);
-    const sortOrder = requireSortOrder(draft.sortOrder ?? 0);
+    const normalized = normalizeDraft(draft);
 
     return guard('更新事件定义', async () => {
       await this.db.withExclusiveTransactionAsync(async (txn) => {
         const result = await txn.runAsync(
           `UPDATE event_definitions
-              SET name = ?, kind = ?, unit = ?, group_id = ?, color = ?, icon = ?,
-                  sort_order = ?, updated_at = ?
+              SET name = ?, kind = ?, attributes = ?, group_id = ?, color = ?, icon = ?,
+                  sort_order = ?, cycle_mode = ?, average_cycle_length_days = ?,
+                  average_period_length_days = ?, updated_at = ?
             WHERE id = ?`,
-          name,
-          kind,
-          unit ?? null,
-          groupId ?? null,
-          color ?? null,
-          icon ?? null,
-          sortOrder,
+          normalized.name,
+          normalized.kind,
+          JSON.stringify(normalized.attributes),
+          normalized.groupId ?? null,
+          normalized.color ?? null,
+          normalized.icon ?? null,
+          normalized.sortOrder,
+          normalized.cycleMode ?? null,
+          normalized.averageCycleLengthDays ?? null,
+          normalized.averagePeriodLengthDays ?? null,
           now,
           id,
         );
@@ -292,8 +358,8 @@ export class EventDefinitionRepository {
         // 整体替换：先清掉旧的子表数据，再按草稿重建
         await txn.runAsync('DELETE FROM quick_options WHERE definition_id = ?', id);
         await txn.runAsync('DELETE FROM event_definition_tags WHERE definition_id = ?', id);
-        await insertQuickOptions(txn, id, quickOptions);
-        await insertTags(txn, id, tagIds);
+        await insertQuickOptions(txn, id, normalized.quickOptions);
+        await insertTags(txn, id, normalized.tagIds);
       });
       return this.mustReadOne(id);
     });

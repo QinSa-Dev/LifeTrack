@@ -1,5 +1,5 @@
 import { ValidationError } from '@/domain/errors';
-import type { EventDefinitionKind, EventRecord } from '@/domain/models';
+import type { EventRecord, RecordKind } from '@/domain/models';
 import {
   aggregateByDay,
   aggregateByDefinition,
@@ -22,9 +22,9 @@ import {
 function makeRecord(options: {
   definitionId?: string;
   name?: string;
-  kind?: EventDefinitionKind;
+  kind?: RecordKind;
   value?: number;
-  unit?: string;
+  attributes?: string[];
   at: [number, number, number, number?, number?];
   deletedAt?: string;
   id?: string;
@@ -39,12 +39,18 @@ function makeRecord(options: {
     definitionId,
     kind,
     value: options.value ?? 1,
-    unit: options.unit,
+    attributes: options.attributes ?? [],
     occurredAt,
     recordedAt: occurredAt,
     source: 'manual',
     tagIds: [],
-    snapshot: { definitionId, name: options.name ?? '喝水', kind, unit: options.unit, tagIds: [] },
+    snapshot: {
+      definitionId,
+      name: options.name ?? '喝水',
+      kind,
+      attributes: options.attributes ?? [],
+      tagIds: [],
+    },
     deletedAt: options.deletedAt,
   };
 }
@@ -57,13 +63,13 @@ function findTotal(totals: ReturnType<typeof aggregateByDefinition>, definitionI
 describe('aggregateByDefinition', () => {
   it('按定义分组：统计条数并合计取值', () => {
     const totals = aggregateByDefinition([
-      makeRecord({ definitionId: 'd1', name: '喝水', unit: '杯', value: 1, at: [2026, 10, 18] }),
-      makeRecord({ definitionId: 'd1', name: '喝水', unit: '杯', value: 2, at: [2026, 10, 19] }),
+      makeRecord({ definitionId: 'd1', name: '喝水', attributes: ['杯'], value: 1, at: [2026, 10, 18] }),
+      makeRecord({ definitionId: 'd1', name: '喝水', attributes: ['杯'], value: 2, at: [2026, 10, 19] }),
       makeRecord({
         definitionId: 'd2',
         name: '跑步',
         kind: 'quantity',
-        unit: '公里',
+        attributes: ['公里'],
         value: 5,
         at: [2026, 10, 19],
       }),
@@ -72,7 +78,7 @@ describe('aggregateByDefinition', () => {
     expect(totals).toHaveLength(2);
     expect(findTotal(totals, 'd1')?.recordCount).toBe(2);
     expect(findTotal(totals, 'd1')?.totalValue).toBe(3);
-    expect(findTotal(totals, 'd1')?.unit).toBe('杯');
+    expect(findTotal(totals, 'd1')?.attributeText).toBe('杯');
     expect(findTotal(totals, 'd2')?.kind).toBe('quantity');
     expect(findTotal(totals, 'd2')?.totalValue).toBe(5);
   });
@@ -86,14 +92,32 @@ describe('aggregateByDefinition', () => {
     expect(findTotal(totals, 'd1')?.name).toBe('喝水（含茶）');
   });
 
-  it('单位不一致时不给合计单位，但数值仍然合计', () => {
+  it('属性不一致时不给合计属性，但数值仍然合计', () => {
     const totals = aggregateByDefinition([
-      makeRecord({ definitionId: 'd1', unit: '杯', value: 1, at: [2026, 10, 18] }),
-      makeRecord({ definitionId: 'd1', unit: '毫升', value: 500, at: [2026, 10, 19] }),
+      makeRecord({ definitionId: 'd1', attributes: ['杯'], value: 1, at: [2026, 10, 18] }),
+      makeRecord({ definitionId: 'd1', attributes: ['毫升'], value: 500, at: [2026, 10, 19] }),
     ]);
 
-    expect(findTotal(totals, 'd1')?.unit).toBeUndefined();
+    expect(findTotal(totals, 'd1')?.attributeText).toBeUndefined();
     expect(findTotal(totals, 'd1')?.totalValue).toBe(501);
+  });
+
+  it('多条属性按顺序拼成一行；只要有一致就算一致', () => {
+    const totals = aggregateByDefinition([
+      makeRecord({ definitionId: 'd1', attributes: ['温水', '500ml'], at: [2026, 10, 18] }),
+      makeRecord({ definitionId: 'd1', attributes: ['温水', '500ml'], at: [2026, 10, 19] }),
+    ]);
+
+    expect(findTotal(totals, 'd1')?.attributeText).toBe('温水 · 500ml');
+  });
+
+  it('「有属性」与「没属性」混在一起也不合并属性', () => {
+    const totals = aggregateByDefinition([
+      makeRecord({ definitionId: 'd1', attributes: ['杯'], at: [2026, 10, 18] }),
+      makeRecord({ definitionId: 'd1', attributes: [], at: [2026, 10, 19] }),
+    ]);
+
+    expect(findTotal(totals, 'd1')?.attributeText).toBeUndefined();
   });
 
   it('排除软删除的记录', () => {
