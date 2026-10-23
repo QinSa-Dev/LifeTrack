@@ -16,8 +16,8 @@
 | 【+1】 | 点一下就以该行的取值「现在」再记一条（来源 `quick`）：**不弹二次确认、不给撤销条** |
 | 记录详情页 | 新增 `/records/[id]`：只读快照 + 底部「更多操作」（修改 / 删除 / 撤销删除） |
 | 修改这条记录 | 只改**事实**（取值 / 发生时间 / 备注）；快照（名称、单位、分组、标签）永不更新 |
-| 显示方式 | 列表头「逐条 / 同类合并」开关；合并行显示「共 N 次 · 最近 … · 展开逐条」，点行就地展开 |
-| 偏好落点 | `app_meta` 的 `app.timeline_view`（默认逐条）——**零迁移**，不为它加表或列 |
+| 显示方式 | 「设置 → 偏好设置」里的「逐条 / 合并」分组；合并行显示「共 N 次 · 最近 … · 展开逐条」，点行就地展开 |
+| 偏好落点 | `app_meta` 的 `app.timeline_view`（默认**合并**）——**零迁移**，不为它加表或列 |
 | 定义状态 | 已归档 → 【+1】禁用并标「已归档」；定义被永久删除 → 标「定义已删除」且不渲染按钮 |
 | 仓储 | 新增 `EventRecordRepository.update`（含三道校验，见 4.7） |
 
@@ -31,16 +31,17 @@
 | `src/features/records/RecordRow.tsx` | 功能组件 | **重写 props**：去掉 `onDelete` / `deleting`，加上 `onPress` / `onRepeat` / `repeatBlockedReason` / `definitionGone` |
 | `src/features/records/RecordGroupRow.tsx` | 功能组件 | **新增**：合并行（最近一次的事实 + 【+1】+ 就地展开的插槽） |
 | `src/features/records/groupRecords.ts` | 纯函数 | **新增**：`groupRecordsByDefinition`（按定义分组、组内保序、给 `latest`） |
-| `src/features/records/timelineView.ts` | 纯函数 | **新增**：显示方式的类型 / 默认值 / 解析 |
+| `src/features/records/timelineView.ts` | 纯函数 | **新增**：显示方式的类型 / 默认值（合并）/ 解析 / 界面叫法 |
 | `src/features/records/format.ts` | 纯函数 | 新增 `formatRowValue`（计数型且增量为 1 时返回 `null`）与 `formatFullTime` |
-| `src/app/(tabs)/index.tsx` | 页面 | 时间轴：开关（写 `app_meta`）、两种视图、行内【+1】、点行进详情、定义状态映射 |
+| `src/app/(tabs)/index.tsx` | 页面 | 时间轴：两种视图（**聚焦时重读偏好**）、行内【+1】、点行进详情、定义状态映射 |
+| `src/app/(tabs)/settings.tsx` | 页面 | **后来修改**：加「偏好设置」卡片——「时间轴显示」与「周期预测窗口」两个分组（写 `app_meta`） |
 | `src/app/records/[id].tsx` | 页面 | **新增**：单条记录详情（快照 + 「更多操作」里的改 / 删 / 撤销） |
 | `src/app/record/[id].tsx` | 页面 | 记录页的「最近记录」也换成取值 + 【+1】；`save` 改成返回 `Promise` 并接受 `{ occurredAt, note }` |
 | `src/repositories/eventRecordRepository.ts` | 仓储 | 新增 `update` |
 | `src/domain/validation.ts` | 领域 | 新增 `EventRecordEditInput`（只给事实三个字段，不给快照字段） |
 | `src/db/schema.ts` | 数据库 | `META_KEYS.timelineView = 'app.timeline_view'`（**无迁移**） |
 | `src/features/records/__tests__/` | 测试 | `groupRecords-test` / `timelineView-test` / `format-test` |
-| `.maestro/flows/02`、`03`、`09` | 端到端 | 02/03 改走详情页；09 覆盖【+1】与「逐条 / 同类合并」 |
+| `.maestro/flows/02`、`03`、`09` | 端到端 | 02/03 改走详情页（先经子流程 `use-expanded-view` 钉成「逐条」）；09 覆盖【+1】与「逐条 / 合并」 |
 
 ## 3. 相关技术概念
 
@@ -125,24 +126,34 @@ export interface EventRecordEditInput {
 **用在哪**：`src/db/schema.ts` 的 `META_KEYS.timelineView` + `src/features/records/timelineView.ts`：
 
 ```ts
-export const DEFAULT_TIMELINE_VIEW_MODE: TimelineViewMode = 'expanded';
+export const DEFAULT_TIMELINE_VIEW_MODE: TimelineViewMode = 'merged';
+
+/** 两种显示方式在界面上的叫法（设置页的胶囊用它，避免文案散落）。 */
+export const TIMELINE_VIEW_LABELS: Record<TimelineViewMode, string> = {
+  expanded: '逐条',
+  merged: '合并',
+};
 
 /** 把 `app_meta` 里存着的字符串解析成显示方式；空值与不认识的值都回退到默认。 */
 export function parseTimelineViewMode(value: string | null | undefined): TimelineViewMode {
-  return value === 'merged' ? 'merged' : DEFAULT_TIMELINE_VIEW_MODE;
+  return value === 'expanded' || value === 'merged' ? value : DEFAULT_TIMELINE_VIEW_MODE;
 }
 ```
 
 **两个刻意的细节**：
-1. **默认值 = 既有行为**（逐条）。偏好只在使用者按了开关之后才写库。
+1. **默认值是「合并」**（按钮就叫「合并」，早先叫「同类合并」）。偏好只在使用者选了之后才写库；
+   已经存过值的使用者不受影响。
 2. 读失败 / 存了不认识的值 → 回退默认，**不弹错误卡片**：偏好没记住不是错误，
    不值得打断使用者（写失败才报，因为它下次开也记不住）。
+
+**后来又挪了位置**（第 4.9 节）：开关从时间轴页头收进了「设置 → 偏好设置」，
+和「周期预测窗口」并成一个分组；时间轴页头只留一句指路的说明。
 
 **不用会怎样**：为每个 UI 开关加表加列，迁移越滚越多，而它们都不承载事实。
 
 ### 3.4 派生数据不落库：分组是纯函数
 
-**是什么**：「同类合并」要在同一个事件的多次记录上算「共 N 次」「最近一条」「展开后是哪些」。
+**是什么**：「合并」要在同一个事件的多次记录上算「共 N 次」「最近一条」「展开后是哪些」。
 
 **为什么本项目需要**：这些都能从已有记录**算出来**，存一份就多一份要同步的东西。
 库里的记录是按 `occurred_at` 倒序取回来的，一次分组就能得到视图需要的一切。
@@ -349,6 +360,55 @@ async update(id: string, input: EventRecordEditInput): Promise<EventRecord> {
 - `RecordRow` 的 【+1】按钮在请求期间变成「+1…」并禁用（`repeating`），
   回来的那一刻按钮复位、列表已经刷新——**反馈来自列表本身**（新记录出现在最上面）。
 
+### 4.9 开关挪到「设置」里：偏好该住在哪一层
+
+时间轴页头原先并排放着「逐条 / 合并」两个胶囊，首页顶到「回收站」旁边。后来把它们**收进
+「设置 → 偏好设置」**，和一栏「周期预测窗口」并成一个分组。
+
+三条理由：
+
+1. **页头该回答「这一页是什么」**，不该放会改变页面读法的开关；首页顶着一排胶囊，
+   每次扫列表都要先越过它。
+2. **设置项集中才好找**。时间轴显示方式、周期预测窗口都是同一类东西（纯展示偏好、都存 `app_meta`），
+   散在各自的页面上，使用者记不住「那个开关在哪」。
+3. **顺手修正一个错位**：预测窗口本来是**全局**的，早先却挂在某一个周期定义页上——看起来像只改这一个。
+   挪进设置之后，语义与位置对上了。
+
+挪动带出两个实现细节，都值得记：
+
+- **必须「聚焦时重读」**。偏好是在**别的页面**改的，时间轴如果只在挂载时读一次 `app_meta`，
+  改完切回来不会变（要重启才生效）：
+
+  ```ts
+  // src/app/(tabs)/index.tsx
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      new MetaRepository(db)
+        .get(META_KEYS.timelineView)
+        .then((stored) => {
+          if (!cancelled) setViewMode(parseTimelineViewMode(stored));
+        })
+        .catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
+    }, [db]),
+  );
+  ```
+
+- **页头改留一句指路**，并且跟着模式换措辞——合并视图点行是「就地展开」，逐条视图点行才是「看详情」：
+
+  ```tsx
+  {viewMode === 'merged'
+    ? '点行就地展开逐条，点【+1】按同样的取值再记一条（显示方式可在「设置」里改）'
+    : '点行看详情，点【+1】按同样的取值再记一条（显示方式可在「设置」里改）'}
+  ```
+
+代价是**端到端流程要跟着走**：02 / 03 要「点行进详情」，默认却是合并（点行是展开），
+于是抽了一个子流程 `use-expanded-view.yaml`，先绕到设置里钉成「逐条」再回来。
+（第 6 节的验证清单、`09` 的合并断言都据此更新过。）
+
 ## 5. 一次完整数据流：点一下【+1】
 
 前提：时间轴「逐条」视图，第一行是「喝水 +1」（`10-22 18:20 · 手动`）。
@@ -368,7 +428,7 @@ async update(id: string, input: EventRecordEditInput): Promise<EventRecord> {
 ## 6. 如何验证
 
 ```bash
-npm run verify           # typecheck + lint + test：27 个套件 / 411 个用例
+npm run verify           # typecheck + lint + test：28 个套件 / 421 个用例
 npm run format:check     # 通过
 npx expo export --platform ios   # 通过（js bundle 3.1MB）
 ```
@@ -387,7 +447,7 @@ npm test -- src/repositories          # 含 EventRecordRepository.update 的六�
 端到端（真的点，需要先起 Metro）：
 
 ```bash
-maestro test .maestro/flows       # 10/10 通过，5m42s
+maestro test .maestro/flows       # 11/11 通过，7m36s
 ```
 
 其中与本篇直接相关的三条：
@@ -396,7 +456,10 @@ maestro test .maestro/flows       # 10/10 通过，5m42s
   （断言来源变成「事后补记的」）→ 删除 → 撤销删除 → 回时间轴那条还在；
 - `03-trash-restore-perma.yaml`：从详情页删除 → 回收站恢复 → 再删 → 永久删除（含原生二次确认）；
 - `09-timeline-repeat-merge.yaml`：【+1】→ 进那条记录的详情页核对来源是「快捷」→
-  切「同类合并」→ 点行就地展开「收起」→ 切回「逐条」。
+  到「设置 → 偏好设置」切「合并」→ 回时间轴，点行就地展开「收起」→ 再切回「逐条」。
+
+02 / 03 / 09 开头都先跑子流程 `use-expanded-view.yaml`（去设置里钉成「逐条」），
+因为**默认是合并**：合并行点一下是就地展开，不是进详情（见 4.9 节）。
 
 跑完**读库核对**（界面断言会被「文字恰好相同」骗过）：
 
@@ -416,8 +479,9 @@ sqlite3 "$DB" "select key, value from app_meta;"   # app.timeline_view
 
 ### 问题：点行没进详情，反而把行「展开」了
 
-**原因**：当前是「同类合并」视图。合并行的一下先用来**就地展开**（副标题会从
+**原因**：默认就是「合并」视图。合并行的一下先用来**就地展开**（副标题会从
 「展开逐条」变成「收起」），展开之后再点其中的某一条才是进详情（4.4）。
+想一进来就「点行 = 看详情」，去「设置 → 偏好设置 → 时间轴显示」选「逐条」。
 
 ### 问题：改了发生日期之后，那条记录在时间轴里找不到了
 
@@ -459,14 +523,16 @@ sqlite3 "$DB" "select key, value from app_meta;"   # app.timeline_view
 3. **同一套校验只写一遍**：`update` 复用 `requireRecordValue` / `requireNotFuture`，
    与新增记录共用规则，不会出现「新建拦得住、改就绕过去」。
 4. **纯展示偏好不进业务表**：`app_meta` + 默认值 + 不认识就回退。
-5. **派生数据现算**：分组是纯函数，库里不加「组」这张表。
-6. **无障碍元素要拆**：文字区与行内按钮分开，读屏与自动化才能各自命中。
+5. **偏好住在「设置」里，页面只在聚焦时读**：开关集中一处，别散在各页页头；
+   改完切回来要立刻生效，就得每次聚焦重读，不能只在挂载时读一次（4.9）。
+6. **派生数据现算**：分组是纯函数，库里不加「组」这张表。
+7. **无障碍元素要拆**：文字区与行内按钮分开，读屏与自动化才能各自命中。
 
 **练习**（都能在仓库里做，改完记得跑 `npm run verify`）：
 
 1. 给时间轴加一个「只看某个事件」的筛选：复用 `groupRecordsByDefinition` 的分组键，
-   在页面里加一个 Chip（想想它该不该存进 `app_meta`）。
-2. 给「同类合并」行加一个「展开后高亮最近一次」的样式：`RecordGroupRow` 的 `children`
+   在页面里加一个 Chip（想想它该不该存进 `app_meta`——4.9 节刚挪过一次开关，先想清楚位置）。
+2. 给「合并」行加一个「展开后高亮最近一次」的样式：`RecordGroupRow` 的 `children`
    是插槽，`index.tsx` 里已经把逐条交给 `RecordRow` 渲染，从哪里传一个 `first` 标记最省事？
 3. 试着给 `update` 加「把发生时间改到未来」的用例并观察仓储抛什么错；
    再想想：如果允许改到未来，哪些地方（统计的「本期」、时间轴的排序）会变得难以解释？

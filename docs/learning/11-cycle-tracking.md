@@ -15,10 +15,10 @@
 | 周期定义 | 名称 + 可选的「平均周期长度」「平均经期长度」；平均周期长度只用来**预测**下次开始日 |
 | 周期实例 | 一段真实区间：`startDate` ~ `endDate`；`endDate` 为空表示**进行中** |
 | 周期内记录 | 某一天的阶段、症状、感受、备注；**一天一条**，重复保存即覆盖 |
-| 预测 | 按「最近一段开始日 + 周期长度」给出下次预测；长度优先用**实际观察到的间隔平均**，没有历史才退回配置值，都没有就**不预测**（不猜） |
+| 预测 | 按「最近一段开始日 + 周期长度」给出下次预测；长度优先用**实际观察到的间隔平均**，没有历史才退回配置值，都没有就**不预测**（不猜）。「最近若干段」的窗口可调（第 4.11 节） |
 | 归档 | 归档只表示「不再开新周期」，**已有周期与记录都留着** |
 | 删除分两级 | **某天的记录**：软删除（可撤销，回收站里再彻底删除，见第 4.9 节）；**定义 / 整段实例**：不可逆的永久删除，`Alert` 二次确认 |
-| 边界预演 | 改边界时**保存之前**就提示「会有哪几天落到区间外」，不必等报错（第 4.8 节） |
+| 边界预演 | 改边界时**保存之前**就提示「会有哪几天落到区间外」「会和哪一段周期重叠」，不必等报错（第 4.8、4.12 节） |
 
 这一项真正的新东西是三条**领域规则**，它们不是「顺手删掉就行」，而是要在代码里站住：
 
@@ -27,11 +27,13 @@
 2. **同一定义的周期实例不重叠**——否则「这是第几天」会含糊（见第 3.4 节）。
 3. **一天一条**——用 `UNIQUE(instance_id, date)` + UPSERT 从结构上保证（见第 3.5 节）。
 
-**后来补的增强**（本文档已同步，见第 4.2、4.8 节）：
+**后来补的增强**（本文档已同步，见第 4.2、4.8、4.11、4.12 节）：
 
 - 预测不再只看配置值：改成「最近若干段实际间隔的平均」，并把**依据**（算出来的 / 按配置推的）显示出来。
+- 预测的**窗口可调**：默认「最近 3 段」，可在「设置 → 偏好设置」里改成 1 / 3 / 5 段（第 4.11 节）。
 - 越界提示提前到保存之前：界面用已加载的记录 + 同一个纯函数实时预演，
   因此删掉了仓储里那个重复的只读查询 `listOutsideEntryDates`（规则只留一份）。
+- **重叠也提前提示**：改边界时若压到同一定义的另一段周期，保存前就点名是哪一段（第 4.12 节）。
 - **月视图（可点选的日历）**：实例页多了一张「月视图」卡片，点某一天 = 把那一天填进同一个表单（第 4.10 节）。
 
 **当时明确不做、后来又做的**：日历式可点选的月视图（第 4.10 节）；按症状统计挂在统计侧，
@@ -45,19 +47,21 @@
 | `src/domain/dates.ts` | 领域 | **新增**：纯日历日期运算（`isValidIsoDate` / `addDays` / `daysBetween` / `isDateWithin`） |
 | `src/domain/cycles.ts` | 领域 | **新增**：周期规则纯函数（`findDatesOutside` / `findOverlappingInstance` / `instanceLengthDays` / `latestInstance`）；后来补上 `observedCycleLength` / `predictNextCycle`（取代原来的 `predictNextCycleStart`） |
 | `src/domain/validation.ts` | 领域 | 新增 `requireIsoDate` / `optionalIsoDate` / `requireDateRange` / `optionalPositiveInteger` / `normalizeTextList` 与三个周期输入类型 |
-| `src/db/schema.ts` | 数据库 | **新增 `MIGRATION_V4_CYCLE`**：`cycle_definitions` / `cycle_instances` / `cycle_entries` + 索引 |
+| `src/db/schema.ts` | 数据库 | **新增 `MIGRATION_V4_CYCLE`**：`cycle_definitions` / `cycle_instances` / `cycle_entries` + 索引；后来加 `META_KEYS.predictionWindow = 'app.prediction_window'`（**无迁移**） |
 | `src/repositories/cycleDefinitionRepository.ts` | 仓储 | **新增**：定义 CRUD + 归档 |
 | `src/repositories/cycleInstanceRepository.ts` | 仓储 | **新增**：实例 CRUD；`update` 内的越界检查（本项核心）与重叠检查 |
 | `src/repositories/cycleEntryRepository.ts` | 仓储 | **新增**：按 `(instance_id, date)` UPSERT 保存某天记录；日期必须落在区间内 |
 | `src/features/common/datetime.ts` | 功能组件 | 从 `features/records/datetime.ts` **移动**过来（周期也要用「今天」） |
-| `src/features/cycles/labels.ts` | 功能组件 | **新增**：文案与症状文本解析 |
+| `src/features/cycles/labels.ts` | 功能组件 | **新增**：文案与症状文本解析；后来 `describeLatestCycle` 接受窗口参数、新增 `describeOverlap`（重叠预演的文案） |
+| `src/features/cycles/predictionWindow.ts` | 功能组件 | **后来新增**：预测窗口这个**纯偏好**的取值选项 / 默认值 / 解析 / 文案（存 `app_meta`，**零迁移**；第 4.11 节） |
 | `src/features/cycles/CycleDefinitionForm.tsx` | 功能组件 | **新增**：新建 / 编辑周期定义共用表单 |
-| `src/app/(tabs)/cycles.tsx` | 页面 | **新增**：周期标签页（定义列表） |
+| `src/app/(tabs)/cycles.tsx` | 页面 | **新增**：周期标签页（定义列表）；副标题里的预测按设置的窗口算 |
 | `src/app/cycles/new.tsx`、`src/app/cycles/[id].tsx` | 页面 | **新增**：新建定义 / 定义详情（周期列表、开始新周期、归档、删除） |
-| `src/app/cycle-instances/[id].tsx` | 页面 | **新增**：一段周期 + 每日记录 + 边界调整 + 删除；后来加「月视图」卡片（第 4.10 节） |
+| `src/app/cycle-instances/[id].tsx` | 页面 | **新增**：一段周期 + 每日记录 + 边界调整 + 删除；后来加「月视图」卡片（第 4.10 节）与重叠预演（第 4.12 节） |
 | `src/features/cycles/calendar.ts` | 功能组件 | **后来新增**：月视图的纯计算（`buildMonthGrid` / `shiftMonth` / `monthIntersectsRange` / `clampMonthToRange` / `indexEntriesByDate` / `describeCalendarDay`） |
 | `src/features/cycles/MonthCalendar.tsx` | 功能组件 | **后来新增**：月视图网格（纯展示，无状态） |
 | `src/app/(tabs)/_layout.tsx` | 页面 | 底部由三标签变**四标签**（时间轴 / 事件 / 周期 / 设置） |
+| `src/app/(tabs)/settings.tsx` | 页面 | **后来修改**：加「偏好设置」卡片——预测窗口（与时间轴显示方式并成一组）在这里改（第 4.11 节） |
 
 ## 3. 相关技术概念
 
@@ -309,13 +313,14 @@ export function observedCycleLength(
 export function predictNextCycle(
   instances: readonly CycleInstance[],
   definition: CycleDefinition,
+  window: number = DEFAULT_PREDICTION_WINDOW,   // 默认 3，可调（第 4.11 节）
 ): CyclePrediction | undefined {
   const latest = latestInstance(instances);
   if (!latest) {
     return undefined;
   }
 
-  const observed = observedCycleLength(instances);
+  const observed = observedCycleLength(instances, window);
   if (observed !== undefined) {
     return { nextStart: addDays(latest.startDate, observed.averageDays), lengthDays: observed.averageDays, basis: 'observed', observedGaps: observed.gaps };
   }
@@ -582,7 +587,109 @@ const pickCalendarDate = (date: string) => {
 标记（哪几天有记录、有几天症状）由 `indexEntriesByDate` 在**可见记录**上算：
 软删除的那天不出现在月视图上，与列表、统计口径一致。
 
-## 5. 一次完整数据流：把结束日提前，但那天有记录
+### 4.11 预测窗口：一个「纯偏好」，存在 `app_meta` 里
+
+第 4.2 节的 `observedCycleLength` 一直有个 `window` 参数，但**界面没给入口**——永远是默认的 3。
+这一项把它变成「设置」里的一个选项。
+
+**先定性：这是「怎么读」，不是「存了什么」**。窗口只参与「算下一个开始日」，不改任何历史记录，
+所以它**不该**进业务表：加一张表、加一列都要迁移，而它连一条记录都算不上。
+`app_meta` 是 v1 就有的键值表，写一个键**零迁移**（与 `app.timeline_view` 同一套路，见
+[16 时间轴行与详情](./16-timeline-row-and-detail.md) 3.3 节）：
+
+```ts
+// src/db/schema.ts
+export const META_KEYS = {
+  // …
+  predictionWindow: 'app.prediction_window',
+} as const;
+```
+
+纯计算照例单独成模块，**不含 React、不碰数据库**，所以能被单测直接钉住：
+
+```ts
+// src/features/cycles/predictionWindow.ts
+export const PREDICTION_WINDOW_OPTIONS = [1, 3, 5] as const;
+export const DEFAULT_PREDICTION_WINDOW_SETTING = DEFAULT_PREDICTION_WINDOW; // 3
+
+/** 不认识 / 空值一律回退到默认，脏数据不该把界面卡住。 */
+export function parsePredictionWindow(value: string | null | undefined): number {
+  const parsed = Number(value);
+  return PREDICTION_WINDOW_OPTIONS.includes(parsed as 1 | 3 | 5)
+    ? parsed
+    : DEFAULT_PREDICTION_WINDOW_SETTING;
+}
+
+export function describePredictionWindow(window: number): string {
+  return `最近 ${window} 段`;
+}
+```
+
+**为什么选项是 `1 / 3 / 5`，而不是 `2 / 3 / 5`**：窗口是「拿最近几段**间隔**取平均」，
+而 N 段间隔需要 N+1 段周期实例。真实数据里，2 与 3 的表现几乎分不出来（要至少 4 段间隔、
+也就是 5 段实例才可能差开一天）；而 1 与 3 只要 3 段实例（2 个间隔）就能看出差别。
+选 `1 / 3 / 5` 是为了每个档位都能在「用得下去的数据量」下真的看出效果，
+而不是摆三个按下去没反应的按钮。
+
+**写入只有一处，读取有三处**。「设置」里点胶囊才写库（先改本地状态让界面立刻响应，再落库，
+写失败只提示不回滚——偏好没记住不影响任何数据）；读的地方是周期列表页、定义页、实例页。
+三处都用**聚焦时重读**而不是挂载时读一次：
+
+```ts
+// src/app/(tabs)/cycles.tsx — 每次回到这个标签页都重读一次
+useFocusEffect(
+  useCallback(() => {
+    let cancelled = false;
+    new MetaRepository(db)
+      .get(META_KEYS.predictionWindow)
+      .then((stored) => {
+        if (!cancelled) setWindow(parsePredictionWindow(stored));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [db]),
+);
+```
+
+偏好是在**别的页面**改的，挂载时只读一次的话，改完切回来不会更新（要重启才生效）——
+这个坑在时间轴显示方式那里也踩过一次，两处现在都是聚焦时重读。
+
+定义页上**不再放控件**，只留一句指路：「预测窗口在『设置 → 偏好设置』里统一改」。
+它是**全局**的（对所有周期定义生效），塞进某一个定义的页面会让人以为只改这一个。
+
+### 4.12 边界预演的另一半：会不会压到另一段周期
+
+第 4.8 节只预演了「越界」；「重叠」仍然只在点保存时才由仓储拒绝。重叠和越界是同一个来源的问题：
+数据就在页面上——**同一定义的全部实例**已经在 `definitionInstances` 里，
+所以同样能提前算，同样不用再查库：
+
+```tsx
+// src/app/cycle-instances/[id].tsx
+const overlappingInstance = useMemo(() => {
+  const start = boundaryStart.trim();
+  const end = boundaryEnd.trim();
+  if (!isValidIsoDate(start) || (end !== '' && (!isValidIsoDate(end) || end < start))) {
+    return undefined; // 输入没填完整：不给结论
+  }
+  return findOverlappingInstance(
+    definitionInstances,
+    { startDate: start, endDate: end === '' ? undefined : end },
+    instance?.id,   // 排除自己，不然「不动边界」也会被判成和自己重叠
+  );
+}, [definitionInstances, boundaryStart, boundaryEnd, instance?.id]);
+```
+
+界面上只多一行字，措辞由 `labels.ts` 的 `describeOverlap` 给出，**带上到底和哪一段撞了**——
+只说「重叠了」等于没说：
+
+```
+会和已有的一段周期重叠（2026-09-01 ~ 2026-09-05）
+```
+
+四条原则与第 4.8 节完全一致：**规则只有一份**（界面与仓储共用 `findOverlappingInstance`）、
+**不必再查库**、**不完整的输入不给结论**、**提示不等于校验**（真正的拒绝仍在保存时）。
 
 ```mermaid
 sequenceDiagram
@@ -627,6 +734,14 @@ npx expo export --platform ios   # 通过（js bundle 3.1MB）
 maestro test .maestro/flows      # 9/9 通过（含周期边界预演、周期记录软删除、月视图选日期，见 docs/learning/15）
 ```
 
+「周期增强收尾」（第 4.11、4.12 节）之后重跑：
+
+```bash
+npm test    # 28 个套件 / 421 个用例通过（新增预测窗口的解析与文案、重叠文案）
+npx expo export --platform ios   # 通过（js bundle 3.1MB，没有新增原生依赖）
+maestro test .maestro/flows      # 11/11 通过（新增 10 周期预测窗口与重叠预演）
+```
+
 其中与周期直接相关的用例：
 
 - `src/domain/__tests__/dates-test.ts`：格式、闰年、2 月 31 日、跨月跨年、闭区间、进行中只约束下界；
@@ -638,7 +753,10 @@ maestro test .maestro/flows      # 9/9 通过（含周期边界预演、周期�
   以及 `observedCycleLength`（取最近 N 个间隔、不足两段不猜、乱序不影响结果）与
   `predictNextCycle`（观察值优先于配置值、退回配置值、两者都没有则不预测）。
 - `src/features/cycles/__tests__/labels-test.ts`：`describePrediction` 把「算出来的 / 按配置推的 / 不预测」
-  三种说法分开；列表副标题里的预测也用实际间隔。
+  三种说法分开；列表副标题里的预测也用实际间隔；`describeLatestCycle` 的窗口参数（1 段 vs 3 段措辞不同）；
+  `describeOverlap` 带出撞上的那一段区间。
+- `src/features/cycles/__tests__/predictionWindow-test.ts`：选项是 `1 / 3 / 5`、默认 3、
+  `parsePredictionWindow` 认识三种取值且不认识的一律回退、`describePredictionWindow` 的措辞。
 - `src/db/__tests__/migrations-test.ts`：v4 三表存在、两项 `CHECK`、`UNIQUE(instance_id, date)`、
   外键生效、级联删除、「记录与实例独立」；v1 升级只跑 v2 之后的迁移且旧数据不丢；
   v5 加上 `deleted_at` 列（可空、旧行为 NULL）、从 v4 旧库升级后老记录都在且都视为未删除。
@@ -682,6 +800,9 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
   「点某一天之后那格变成『有记录』」这些交互层结论，只有 Maestro 流程（`05` / `07` / `08`，
   见 [15](./15-maestro-e2e.md)）在真实界面上断言过，没有组件级断言。
   （`buildMonthGrid` / `describeCalendarDay` 这些**纯计算**本身是有单测的，缺的是「组件确实按它渲染」。）
+- **「设置里改窗口 → 预测文案跟着变」也只有端到端覆盖**（Maestro `10`）：窗口的解析与文案是纯函数、
+  有单测，但「在设置里点一下、切回周期页就不一样了」这条**跨页面 + 聚焦时重读**的链路，
+  靠的是真机界面断言，没有组件级验证。
 - **没有并发测试**：`withExclusiveTransactionAsync` 的行为在真实设备上与测试环境可能不同。
 
 ## 7. 常见问题与排查
@@ -698,6 +819,18 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
 
 那是**保存前的预演**（第 4.8 节），不是错误：它告诉你「如果就这么保存，会被拒绝」，
 并列出具体是哪几天。此时记录还在，什么都不会被删。三种处理方式同上。
+
+### 问题：改边界时出现「会和已有的一段周期重叠（…）」
+
+也是**保存前的预演**（第 4.12 节）。它顺手把**是哪一段**也说出来了，所以照着那行区间改回去就行：
+同一周期定义的两段实例不能重叠（第 3.4 节），否则「这是第几天」会有两种算法。
+注意进行中的那一段是**开区间**——只约束下界，改它的开始日时特别容易压到它前面的那一段。
+
+### 问题：想改「按最近几段」算预测，在哪儿改
+
+在「设置 → 偏好设置 → 周期预测窗口」（第 4.11 节），选项是「最近 1 / 3 / 5 段」。
+它是**全局**的（对所有周期定义生效），所以不在某个定义自己的页面上；定义页只显示当前的预测依据，
+并指路到设置。改完切回周期页立刻生效（不必重启）。
 
 ### 问题：「开始新周期」按钮是灰的
 
@@ -777,11 +910,12 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
 
 1. 给 `cycleInstanceRepository` 加一个 `listOngoing(definitionId)`，
    并在周期标签页把「进行中」的那段高亮出来。提示：`end_date IS NULL`。
-2. `predictNextCycle` 的 `window` 是参数（默认 3）。把它做成界面上可调的选项
-   （例如「按最近 2 / 3 / 6 段」），观察不同窗口下预测怎么变；注意价格：
-   窗口越小越贴合最近状态，也越容易被一次异常周期带偏。
-3. 边界预演目前只提示「会有哪几天越界」，不提示「会和哪一段周期重叠」（那要另一条规则
-   `findOverlappingInstance`，数据是同一份 `definitionInstances`）。试着把它也提前到保存之前。
+2. ~~把 `predictNextCycle` 的 `window` 做成界面上可调的选项~~ ——**已做**，见第 4.11 节
+   （选项是「最近 1 / 3 / 5 段」，开关收在「设置 → 偏好设置」里）。再想一步：为什么不是 `2 / 3 / 5`？
+   （提示：N 段**间隔**要 N+1 段实例；2 与 3 在若干年的真实记录里几乎看不出差别。）
+3. ~~把重叠也提前到保存之前~~ ——**已做**，见第 4.12 节（共用 `findOverlappingInstance`，
+   文案点名是哪一段）。再想一步：如果新区间压到的是**进行中**的那一段，提示的措辞应该有什么不同？
+   （提示：`CycleInstance` 的 `endDate` 为 `undefined` 表示进行中，见 3.4 节的开区间。）
 4. 想一想：如果允许「周期实例换定义」（把一段周期从「生理期」改到另一个定义），
    需要额外校验什么？为什么本项选择**不允许**？
 5. `buildMonthGrid` 现在只补白到周一、只按 7 的整数倍收尾。试试写一个
