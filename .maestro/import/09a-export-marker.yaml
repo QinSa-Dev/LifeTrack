@@ -16,7 +16,7 @@ tags:
     stopApp: true
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 5'
+    visible: '时间轴, tab, 1 of 4'
     timeout: 120000
 
 # 1) 造标记：定义「Maestro导入」+ 记一次

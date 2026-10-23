@@ -20,21 +20,24 @@ tags:
     stopApp: true
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 5'
+    visible: '时间轴, tab, 1 of 4'
     timeout: 120000
 
 # —— 准备：一处「Maestro周期」+ 一段进行中的周期（与 05 同一套做法）——
-- tapOn: '.*周期, tab.*'
-- assertVisible: '+ 新建周期定义'
+# 周期是事件的一种类型：在「事件」页新建一个周期型事件
+- tapOn: '.*事件, tab.*'
+- assertVisible: '+ 新建事件'
 - runFlow:
     when:
       notVisible: '.*Maestro周期.*'
     commands:
-      - tapOn: '+ 新建周期定义'
-      - assertVisible: '例如：生理期'
-      - tapOn: '例如：生理期'
+      - tapOn: '+ 新建事件'
+      - assertVisible: '例如：喝水'
+      - tapOn: '例如：喝水'
       - inputText: 'Maestro周期'
       - pressKey: Enter
+      # 类型选「周期」
+      - tapOn: '周期（有开始与结束）'
       - scrollUntilVisible:
           element:
             text: '创建'
@@ -132,7 +135,7 @@ tags:
       text: '返回'
     direction: UP
 - tapOn: '返回'
-- tapOn: '.*周期, tab.*'
+- tapOn: '.*事件, tab.*'
 - scrollUntilVisible:
     element:
       text: '.*Maestro周期.*'

@@ -11,7 +11,7 @@ tags:
     stopApp: true
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 5'
+    visible: '时间轴, tab, 1 of 4'
     timeout: 120000
 - tapOn: '.*事件, tab.*'
 - assertVisible: '+ 新建事件'

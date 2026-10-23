@@ -9,6 +9,11 @@
 它补的是 `HANDOFF.md` 第 8 节里那一串「❌ 写入路径没有真手点过」——
 这些路径原先只有单元测试覆盖。走读版说明见 `docs/learning/15-maestro-e2e.md`。
 
+> **v6 起没有「周期」标签页了**：周期是事件的一种类型，底部只剩四个标签
+> （时间轴 / 统计 / 事件 / 设置）。`05` / `07` / `08` / `10` 造周期数据时都改成：
+> 进「事件」页 →「新建事件」→ 填名字 → 类型点「周期（有开始与结束）」→ 创建，
+> 再从列表点进去（行上带「周期」徽标）。
+
 ## 为什么用 Maestro
 
 - **不需要给终端开 macOS「辅助功能」权限**。Maestro 在模拟器里装自己的 XCTest driver
@@ -87,13 +92,13 @@ maestro studio                              # 交互式：点着看哪个选择�
   `clearState` 会把 Expo Go 容器清空——**包括本项目存在容器里的 SQLite 数据库**。
   想清库请显式删记录，别用敲门砖。
 - 每条流程开头都做同一套归一化：**先杀再开**
-  （`launchApp: {stopApp: true}` → `openLink: exp://127.0.0.1:8081` → 等 `时间轴, tab, 1 of 5`）。
+  （`launchApp: {stopApp: true}` → `openLink: exp://127.0.0.1:8081` → 等 `时间轴, tab, 1 of 4`）。
   因为 Expo Go 里 `openLink` **不重载 JS**，上一次停在二级页面就会一直停在那里；
   `stopApp` 只是杀进程，**不清数据**。
 - **写路径的流程自产自销**：自己先记一条再删，不去动你手工留下的数据
   （唯一例外：永久删除那一步删的是它自己刚建的那条）。
 - 数据是**累加**的：`01` 每跑一次多一条记录、`09` 每跑一次多两条（自己记一条 + 【+1】一条）、
-  `05` 每跑一天多一条每日记录，会多出「Maestro…」开头的事件 / 周期定义。`07` 复用 `05`
+  `05` 每跑一天多一条每日记录，会多出「Maestro…」开头的事件（含周期型）定义。`07` 复用 `05`
   建的那个「Maestro周期」，自己造的那条每日记录在流程末尾被真删，所以不累加。这些都是
   正常的，可以在 App 里删掉（收尾 SQL 见下文）。
 - **纯展示偏好会被流程改掉**：时间轴的「逐条 / 合并」存在 `app_meta`（`app.timeline_view`），
@@ -103,7 +108,7 @@ maestro studio                              # 交互式：点着看哪个选择�
 
 ### 选择器与导航上的几个坑（都是踩过的）
 
-1. **匹配是全文匹配**：底部标签栏的文字是 `事件, tab, 3 of 5`，所以
+1. **匹配是全文匹配**：底部标签栏的文字是 `事件, tab, 3 of 4`，所以
    `tapOn: '事件'` 找不到；要写 `.*事件, tab.*`。部分匹配一律自己写 `.*`。
 2. **可点的列表行会把行内文字并成一个元素**：事件页的行暴露成
    `Maestro喝水, 未分组 · 计数, 计数`，所以要用 `.*Maestro喝水.*`。
@@ -159,7 +164,7 @@ maestro studio                              # 交互式：点着看哪个选择�
   「2026-10-22 18:20」，整串不匹配，所以不会点错），并且`point: 95%, 50%` 点在它右侧、
   让光标落到文本末尾——**`eraseText` 是往回删字符**，光标停在中间就会删成半截
   （踩过：`2026-10-22` 变成 `2026-01-0122`，被仓储的日期校验挡下来）。
-- `number-pad`（如周期定义里的「平均周期长度」）**没有回车键**，所以流程干脆不填那个可选字段。
+- `number-pad`（如周期型事件的「平均周期长度」）**没有回车键**，所以流程干脆不填那个可选字段。
 - 提交按钮常在表单最底部 → 先 `scrollUntilVisible` 再点；
 - 页面顶部的提示条（`已保存…`）在滚下来之后看不见 → 断言前先 `scrollUntilVisible` 方向 `UP` 滚回去。
 - 统计页的对比 `Chip` 紧贴标签栏，**不滚就点会点到标签栏**（于是跳到时间轴）→ 先滚到
@@ -169,19 +174,19 @@ maestro studio                              # 交互式：点着看哪个选择�
 
 | 流程 | 覆盖的路径 | 真实结果 |
 | --- | --- | --- |
-| `00-smoke.yaml` | 打开 App → 五个标签页都能渲染（时间轴 / 统计 / 事件 / 周期 / 设置），设置页能看到「偏好设置」 | ✅ 19s |
-| `01-record-event.yaml` | 事件页 →（必要时新建定义）→ 记录页「记录」→ 时间轴能看到这条记录 | ✅ 17s |
-| `02-timeline-delete-undo.yaml` | 时间轴点行进**记录详情页** → 「更多操作 → 修改这条记录」（改发生日期、保存）→ 「删除这条记录」→「撤销删除」→ 回时间轴那条还在 | ✅ 37s |
+| `00-smoke.yaml` | 打开 App → 四个标签页都能渲染（时间轴 / 统计 / 事件 / 设置），「新建事件」里同时有计数与周期两种类型 | ✅ 21s |
+| `01-record-event.yaml` | 事件页 →（必要时新建定义）→ 记录页「记录」→ 时间轴能看到这条记录 | ✅ 25s |
+| `02-timeline-delete-undo.yaml` | 时间轴点行进**记录详情页** → 「更多操作 → 修改这条记录」（改发生日期、保存）→ 「删除这条记录」→「撤销删除」→ 回时间轴那条还在 | ✅ 39s |
 | `03-trash-restore-perma.yaml` | 进详情页删除 → 回收站「恢复」；再删 →「永久删除」+ 原生二次确认（净值 0） | ✅ 37s |
-| `04-backup-export.yaml` | 设置页「导出 JSON 备份」→ 系统分享面板出现 → 关闭 | ✅ 13s |
-| `05-cycle-boundary-preview.yaml` | 建周期定义 → 开周期 → 记一天 → 把结束日改到那天之前 → **黄色越界预演** → **保存被仓储拒绝** | ✅ 44s |
-| `06-stats-comparison.yaml` | 统计页「较前一段 / 较上年同期」切换 → 对照窗口与结论文案 | ✅ 12s |
+| `04-backup-export.yaml` | 设置页「导出 JSON 备份」→ 系统分享面板出现 → 关闭 | ✅ 14s |
+| `05-cycle-boundary-preview.yaml` | 在事件页新建「周期」型事件 → 开周期 → 记一天 → 把结束日改到那天之前 → **黄色越界预演** → **保存被仓储拒绝** | ✅ 45s |
+| `06-stats-comparison.yaml` | 统计页「较前一段 / 较上年同期」切换 → 对照窗口与结论文案 | ✅ 11s |
 | `07-cycle-entry-trash.yaml` | 周期里记一天 → 删除（软删）→「撤销」找回 → 再删 → 回收站「已删除的周期记录」里恢复 → 三删 →「彻底删除」+ 原生二次确认 | ✅ 1m20s |
-| `08-cycle-calendar.yaml` | 周期实例页月视图 → 点 `2026-10-02`（「当前选中」跟着变）→ 填症状保存 → 那格变成「有记录（2 个症状）」→ 定义页「症状统计」列出头痛 / 乏力 → 收尾把这条彻底删除 | ✅ 1m3s |
+| `08-cycle-calendar.yaml` | 周期实例页月视图 → 点 `2026-10-02`（「当前选中」跟着变）→ 填症状保存 → 那格变成「有记录（2 个症状）」→ 定义页「症状统计」列出头痛 / 乏力 → 收尾把这条彻底删除 | ✅ 1m4s |
 | `09-timeline-repeat-merge.yaml` | 时间轴行内【+1】（点下去就落库，没有确认条）→ 进那条记录的详情页核对来源是「快捷」→ 到设置切「合并」（共 N 次 · 展开逐条）→ 点行就地展开「收起」→ 再切回「逐条」 | ✅ 32s |
-| `10-cycle-prediction-and-overlap.yaml` | 自建「Maestro预测」+ 三段周期 → 定义页断言默认窗口（「按最近 2 段间隔的平均 31 天」）→ 到「设置 → 偏好设置」切「最近 1 段」→ 回定义页文案变成「按最近 1 段间隔的平均 30 天」→ 切回 3 段 → 把进行中那段的开始日压到前一段上 → **重叠预演**点名撞上的那一段 | ✅ 39s |
+| `10-cycle-prediction-and-overlap.yaml` | 自建「Maestro预测」（周期型事件）+ 三段周期 → 定义页断言默认窗口（「按最近 2 段间隔的平均 31 天」）→ 到「设置 → 偏好设置」切「最近 1 段」→ 回定义页文案变成「按最近 1 段间隔的平均 30 天」→ 切回 3 段 → 把进行中那段的开始日压到前一段上 → **重叠预演**点名撞上的那一段 | ✅ 39s |
 
-11/11 通过，合计 6m32s（iPhone 16e / iOS 26.3 / Expo Go 58.0.5）。
+11/11 通过，合计 6m47s（iPhone 16e / iOS 26.3 / Expo Go，2026-10-23 在 v6「周期并入事件类型 + 属性可多条」上整跑一遍）。
 
 `05` / `06` / `07` / `08` / `09` / `10` 分别对应当前最后几项改动（周期边界预演、统计环比同比、
 周期内记录软删除、周期月视图与症状统计、时间轴行改版、周期预测窗口与重叠预演），
@@ -254,12 +259,22 @@ sqlite3 "$DB" "select name from event_definitions where name like 'Maestro%';"  
 sqlite3 "$DB" "select key, value from app_meta;"   # 纯偏好：app.timeline_view / app.prediction_window
 ```
 
-跑完全套后的实测：使用者的 `15 条记录 / 4 条周期记录`（含 1 条软删的 `喝水`、10-18）一条没少；
-回收站里**没有 `Maestro*` 残留**——`03` / `07` / `08` 各自把自己造的那条删干净了；
+跑完全套后的实测（2026-10-23，v6 那次整跑）：使用者的数据一条没少（这次整跑前库是空的，
+所以只剩 Maestro 造的），**没有孤儿行**（`PRAGMA foreign_key_check` 为空）——
+`03` / `07` / `08` 各自把自己造的那条删干净了；
 `05` 留下的 `Maestro周期` 每日记录还在（越界保存被拒，拒绝没有删数据）；
 `10` 留下 `Maestro预测` 定义与三段周期（**没有**每日记录，收尾时一并删）；
 `01` / `02` / `09` 会留下几条 `Maestro喝水` 记录（同名事件累加，收尾一起清）。
-收尾时把 `Maestro*` 的定义与记录删掉，库就回到使用者的 `15 条 / 1 条软删`。
+
+v6 之后顺手核对结构也对得上：`event_definitions.attributes` 是 JSON 数组文本
+（周期型是 `'[]'`，带 `cycle_mode`），`event_records` 的 `attributes` / `snapshot_attributes`
+也都在，`cycle_definitions` 表已经不存在。
+
+> **中途改过的迁移会在设备上「卡住」**：v6 在定稿前改过一次内容
+> （先叫 `unit → attribute`，后改成 `attributes` JSON 数组）。设备上已经按旧内容跑过、
+> `user_version` 记成 6，于是定稿后的 v6 不会再跑，界面就会报
+> `no such column: attributes`。改法只有一条：**删掉设备上的库让它重建**
+> （这就是本次开发中发生的事；迁移一旦提交就不能再改，见 `04-sqlite-and-repository.md`）。
 
 > 时间轴的显示偏好存在 `app_meta.app.timeline_view`，周期预测窗口存在
 > `app_meta.app.prediction_window`。整套跑完：显示方式停在「逐条」（`09` 的最后一步就是切回来），
@@ -270,20 +285,22 @@ sqlite3 "$DB" "select key, value from app_meta;"   # 纯偏好：app.timeline_vi
 > 收尾时注意两件事：
 >
 > 1. **`sqlite3` 命令行默认不开外键**，级联删除不会发生。先 `PRAGMA foreign_keys = ON;`，
->    否则删掉周期定义之后，实例与每日记录会**留下来当孤儿行**（`PRAGMA foreign_key_check` 会报出来）。
+>    否则删掉事件定义之后，周期实例与每日记录会**留下来当孤儿行**（`PRAGMA foreign_key_check` 会报出来）。
 > 2. `event_records` **没有指向 `event_definitions` 的外键**（历史独立于定义，见领域规则第 1 条），
 >    所以删掉 `Maestro喝水` 定义**不会**连带删掉它的记录，要显式删。
 >
+> v6 起周期定义并进了 `event_definitions`（周期就是事件的一种类型），
+> `cycle_instances` / `cycle_entries` 的外键直接指向它，所以一条定义就带走了它的全部周期：
+>
 > ```sql
 > PRAGMA foreign_keys = ON;
-> DELETE FROM cycle_definitions WHERE name LIKE 'Maestro%';     -- 级联：实例 + 每日记录
-> DELETE FROM event_definitions WHERE name LIKE 'Maestro%';     -- 级联：快捷选项（记录不会跟走）
-> DELETE FROM event_records WHERE snapshot_name LIKE 'Maestro%'; -- 必须显式删
+> DELETE FROM event_definitions WHERE name LIKE 'Maestro%';      -- 级联：快捷选项 + 标签关联 + 周期实例 + 每日记录
+> DELETE FROM event_records WHERE snapshot_name LIKE 'Maestro%'; -- 必须显式删（历史无外键）
 > ```
 >
 > 删完再跑一次 `PRAGMA foreign_key_check`（应为空）核对。
 > 万一忘了开外键、留下了孤儿行，按外键方向补一次即可：
-> `DELETE FROM cycle_instances WHERE definition_id NOT IN (SELECT id FROM cycle_definitions);`
+> `DELETE FROM cycle_instances WHERE definition_id NOT IN (SELECT id FROM event_definitions);`
 > 再 `DELETE FROM cycle_entries WHERE instance_id NOT IN (SELECT id FROM cycle_instances);`。
 
 ## 已知限制

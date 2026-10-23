@@ -1,9 +1,12 @@
-# 冒烟：Expo Go 打开本项目，五个标签页都能渲染真实数据。
+# 冒烟：Expo Go 打开本项目，四个标签页都能渲染真实数据。
 #
 # 这条不写任何数据，纯粹用来确认「Maestro + Expo Go + Metro」这条链路是通的。
-# 标签栏的可访问文字长这样：`时间轴, tab, 1 of 5`，所以要用正则匹配。
+# 标签栏的可访问文字长这样：`时间轴, tab, 1 of 4`，所以要用正则匹配。
+#
+# 周期不是独立标签页了（v6 起它是事件的一种类型），所以这里改成：
+# 在「事件」页点「新建事件」，确认类型入口里同时有计数与周期。
 appId: host.exp.Exponent
-name: 00 冒烟 · 打开 App 并走一遍五个标签页
+name: 00 冒烟 · 打开 App 并走一遍四个标签页
 tags:
   - smoke
 ---
@@ -13,31 +16,42 @@ tags:
     stopApp: true
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 5'
+    visible: '时间轴, tab, 1 of 4'
     timeout: 120000
 - tapOn: '.*时间轴, tab.*'
 - assertVisible: '回收站'
-- assertVisible: '.*最近 .* 条.*'
+# 库可能是空的（新装 / 刚清库），所以这里两种都认：有记录时是「最近 N 条…」，空库是空状态标题
+- assertVisible: '(.*最近 .* 条.*|还没有任何记录)'
 - takeScreenshot: 00-timeline
 
 - tapOn: '.*事件, tab.*'
 - assertVisible: '+ 新建事件'
 - takeScreenshot: 00-event
 
-- tapOn: '.*统计, tab.*'
-- assertVisible: '概览'
-- assertVisible: '较前一段' # 对比 Chip（本期/对照期在这张卡片里）
-- takeScreenshot: 00-stats
-- scrollUntilVisible:
-    element:
-      text: '按事件统计'
-    direction: DOWN
-- assertVisible: '.*个事件.*' # 顺带验证正则（部分匹配要自己写 .*）
-- takeScreenshot: 00-stats-definitions
+# 周期是事件的一种类型：新建事件里能选「周期」，看到两种做法
+- tapOn: '+ 新建事件'
+- assertVisible: '计数（点一次记一次）'
+- tapOn: '周期（有开始与结束）'
+- assertVisible: '自动循环'
+- assertVisible: '手动标记'
+- takeScreenshot: 00-event-kinds
+- tapOn: '返回'
 
-- tapOn: '.*周期, tab.*'
-- assertVisible: '+ 新建周期定义'
-- takeScreenshot: 00-cycles
+- tapOn: '.*统计, tab.*'
+# 空库时统计页是空状态（没有「概览」卡片），两种都认
+- assertVisible: '(概览|还没有可统计的数据)'
+- takeScreenshot: 00-stats
+- runFlow:
+    when:
+      visible: '概览'
+    commands:
+      - assertVisible: '较前一段' # 对比 Chip（本期/对照期在这张卡片里）
+      - scrollUntilVisible:
+          element:
+            text: '按事件统计'
+          direction: DOWN
+      - assertVisible: '.*个事件.*' # 顺带验证正则（部分匹配要自己写 .*）
+      - takeScreenshot: 00-stats-definitions
 
 - tapOn: '.*设置, tab.*'
 - assertVisible: '偏好设置'

@@ -21,21 +21,24 @@ tags:
     stopApp: true
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 5'
+    visible: '时间轴, tab, 1 of 4'
     timeout: 120000
 
 # —— 定义「Maestro预测」：只在不存在时新建（不填平均周期长度，逼预测用观察到的间隔）——
-- tapOn: '.*周期, tab.*'
-- assertVisible: '+ 新建周期定义'
+# 周期是事件的一种类型：在「事件」页新建一个周期型事件
+- tapOn: '.*事件, tab.*'
+- assertVisible: '+ 新建事件'
 - runFlow:
     when:
       notVisible: '.*Maestro预测.*'
     commands:
-      - tapOn: '+ 新建周期定义'
-      - assertVisible: '例如：生理期'
-      - tapOn: '例如：生理期'
+      - tapOn: '+ 新建事件'
+      - assertVisible: '例如：喝水'
+      - tapOn: '例如：喝水'
       - inputText: 'Maestro预测'
       - pressKey: Enter
+      # 类型选「周期」
+      - tapOn: '周期（有开始与结束）'
       - scrollUntilVisible:
           element:
             text: '创建'
@@ -131,7 +134,7 @@ tags:
 - takeScreenshot: 10-prediction-window-3
 
 # —— 到「设置 → 偏好设置」把窗口切成「最近 1 段」——
-# 定义页是压栈路由，底部没有标签栏，先返回「周期」标签页
+# 定义页是压栈路由，底部没有标签栏，先返回「事件」标签页
 - scrollUntilVisible:
     element:
       text: '返回'
@@ -145,7 +148,7 @@ tags:
 - tapOn: '最近 1 段'
 - takeScreenshot: 10-settings-window-1
 # 回定义页：预测文案应变成「按最近 1 段间隔的平均 30 天」
-- tapOn: '.*周期, tab.*'
+- tapOn: '.*事件, tab.*'
 - scrollUntilVisible:
     element:
       text: '.*Maestro预测.*'
@@ -170,7 +173,7 @@ tags:
       text: '偏好设置'
     direction: DOWN
 - tapOn: '最近 3 段'
-- tapOn: '.*周期, tab.*'
+- tapOn: '.*事件, tab.*'
 - scrollUntilVisible:
     element:
       text: '.*Maestro预测.*'
