@@ -1,6 +1,6 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { AppText, Card, Chip, EmptyState, ListRow, Screen } from '@/components';
 import { useReadyDatabase } from '@/db';
@@ -128,6 +128,8 @@ export default function StatsScreen() {
   const [basis, setBasis] = useState<ComparisonBasis>('previous');
   // 趋势看哪一条；`null` 表示还没手动选过，用下面算出的默认值。
   const [trend, setTrend] = useState<TrendSelection | null>(null);
+  // 「按天/按周」「较前一段/较上年同期」是低频选择，默认折叠进右上角。
+  const [optionsOpen, setOptionsOpen] = useState(false);
 
   // 每次回到这个标签页都重新读一次，这样刚记录/删除的内容马上反映到统计里。
   useFocusEffect(
@@ -239,6 +241,9 @@ export default function StatsScreen() {
   }, [recentDefinitions, definitionChanges]);
 
   const rangeText = mode === 'day' ? `最近 ${TREND_RANGES.day} 天` : `最近 ${TREND_RANGES.week} 周`;
+  // 折叠开关上要显示当前选择，用和 Chip 一致的说法（「较前一段」而不是「前一段」）。
+  const modeLabel = mode === 'day' ? '按天' : '按周';
+  const basisChipLabel = basis === 'previous' ? '较前一段' : '较上年同期';
   const trendSubtitle = useMemo(() => {
     if (trendSelection.kind === 'active') {
       return `${rangeText}，每天有几个事件被记录过`;
@@ -303,11 +308,56 @@ export default function StatsScreen() {
                 ) : null}
               </Card>
 
-              <Card title="趋势" subtitle={trendSubtitle} style={styles.spaced}>
-                <View style={styles.modeRow}>
-                  <Chip label="按天" selected={mode === 'day'} onPress={() => setMode('day')} />
-                  <Chip label="按周" selected={mode === 'week'} onPress={() => setMode('week')} />
-                </View>
+              <Card
+                title="趋势"
+                subtitle={trendSubtitle}
+                right={
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ expanded: optionsOpen }}
+                    accessibilityLabel={`显示选项，当前${modeLabel}、${basisChipLabel}`}
+                    onPress={() => setOptionsOpen((open) => !open)}
+                    style={({ pressed }) => [
+                      styles.optionsToggle,
+                      pressed ? styles.optionsTogglePressed : null,
+                    ]}
+                  >
+                    <AppText variant="caption" color={palette.primary}>
+                      {modeLabel} · {basisChipLabel}
+                    </AppText>
+                    <AppText variant="caption" color={palette.primary}>
+                      {optionsOpen ? '收起' : '展开'}
+                    </AppText>
+                  </Pressable>
+                }
+                style={styles.spaced}
+              >
+                {optionsOpen ? (
+                  <View style={styles.optionsPanel}>
+                    <AppText variant="label" color={palette.textMuted}>
+                      统计粒度
+                    </AppText>
+                    <View style={styles.optionsRow}>
+                      <Chip label="按天" selected={mode === 'day'} onPress={() => setMode('day')} />
+                      <Chip label="按周" selected={mode === 'week'} onPress={() => setMode('week')} />
+                    </View>
+                    <AppText variant="label" color={palette.textMuted}>
+                      对比基准
+                    </AppText>
+                    <View style={styles.optionsRow}>
+                      <Chip
+                        label="较前一段"
+                        selected={basis === 'previous'}
+                        onPress={() => setBasis('previous')}
+                      />
+                      <Chip
+                        label="较上年同期"
+                        selected={basis === 'lastYear'}
+                        onPress={() => setBasis('lastYear')}
+                      />
+                    </View>
+                  </View>
+                ) : null}
                 <View style={styles.trendChips}>
                   <Chip
                     label={ACTIVE_TREND_LABEL}
@@ -336,18 +386,6 @@ export default function StatsScreen() {
                 <AppText variant="label" color={palette.textMuted} style={styles.compareLabel}>
                   对比（与上图同一窗口）
                 </AppText>
-                <View style={styles.modeRow}>
-                  <Chip
-                    label="较前一段"
-                    selected={basis === 'previous'}
-                    onPress={() => setBasis('previous')}
-                  />
-                  <Chip
-                    label="较上年同期"
-                    selected={basis === 'lastYear'}
-                    onPress={() => setBasis('lastYear')}
-                  />
-                </View>
                 <AppText variant="caption" color={palette.textMuted}>
                   {comparisonText}
                 </AppText>
@@ -423,10 +461,29 @@ const styles = StyleSheet.create({
   range: {
     marginTop: spacing.md,
   },
-  modeRow: {
+  optionsToggle: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.pill,
+    backgroundColor: palette.primarySoft,
+  },
+  optionsTogglePressed: {
+    opacity: 0.7,
+  },
+  optionsPanel: {
+    backgroundColor: palette.surfaceMuted,
+    borderRadius: radius.md,
+    padding: spacing.md,
     gap: spacing.sm,
     marginBottom: spacing.md,
+  },
+  optionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
   trendChips: {
     flexDirection: 'row',
