@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
+import { seedStarterDefinitions } from '@/features/definitions/starterDefinitions';
 import { MetaRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
@@ -17,9 +18,14 @@ import { useDatabase } from '@/db';
  */
 export function DatabaseGate({ children }: { children: ReactNode }) {
   const { status, connection, error, retry } = useDatabase();
-  const [bookkeepingError, setBookkeepingError] = useState<string | null>(null);
+  const [bootWarning, setBootWarning] = useState<string | null>(null);
 
-  // 启动计数：写入 app_meta，作为「跨重启持久化」的可视证据（设置页展示）
+  /*
+    启动时该做的事：① 记账（安装时间 / 启动次数，写 app_meta）；
+    ② **只在数据库刚创建时**内置一个参考模板事件（见 features/definitions/starterDefinitions.ts）。
+
+    两件事都属于「便利」，失败**不阻断启动**，只在顶部挂一条黄色警告横幅。
+  */
   useEffect(() => {
     if (status !== 'ready' || !connection) {
       return;
@@ -29,9 +35,10 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
     repository
       .ensureInstalledAt()
       .then(() => repository.incrementLaunchCount())
+      .then(() => seedStarterDefinitions(connection.db, { freshDatabase: connection.migration.from === 0 }))
       .catch((cause: unknown) => {
         if (!cancelled) {
-          setBookkeepingError(cause instanceof Error ? cause.message : String(cause));
+          setBootWarning(cause instanceof Error ? cause.message : String(cause));
         }
       });
     return () => {
@@ -78,10 +85,10 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
 
   return (
     <>
-      {bookkeepingError ? (
+      {bootWarning ? (
         <View style={styles.warning}>
           <AppText variant="caption" color={palette.warning}>
-            启动计数写入失败（不影响使用）：{bookkeepingError}
+            启动初始化未完成（不影响使用）：{bootWarning}
           </AppText>
         </View>
       ) : null}
