@@ -17,7 +17,7 @@
 | --- | --- |
 | 统计标签页 | 底部标签新增「统计」，含概览 / 趋势 / 按事件统计三块 |
 | 概览 | 记录总数、涉及多少个事件、覆盖的最早~最晚一天 |
-| 趋势 | 按**天**（最近 14 天）或**周**（最近 8 周）看记录条数，空白桶保留 |
+| 趋势 | 先选「看什么」（活跃事件数 / 全部 / 某个事件），再按**天**（最近 14 天）或**周**（最近 8 周）画条数，空白桶保留 |
 | 按事件统计 | 每个事件的记录条数与取值合计，按条数排序 |
 | 对比（环比 / 同比） | 与「紧挨着的前一段」或「上年同期（52 周前）」比条数，给出差值与变化率 |
 | 只算事实数据 | 统计在打开页面时从记录实时聚合，**不落汇总表**；软删除的记录不计入 |
@@ -37,19 +37,23 @@
   与事件记录是两套事实、两个纯函数聚合器，空状态也因此改判。
 - **把时间范围下推给 SQL**（第 3.13 节）：趋势与对比只读窗口内的记录（`list({ from, until })`
   + `statsReadRange`），累计口径的概览与按事件统计仍读全量；聚合规则**没有**搬进 SQL。
+- **趋势改成「先选看什么，再画」**（第 3.14 节）：原来把所有事件的条数混成一个数，用户看不懂；
+  现在趋势卡片带一行选择器（活跃事件数 / 全部 / 每个事件），默认看「本期记录最多的那个事件」。
+  为此 `PeriodTotal` 多了 `definitionCount`（该桶里出现过几个不同事件），并补了 `recordsOfDefinition`
+  与文案 `describeActiveComparison`。
 
 ## 2. 改了哪些文件
 
 | 文件 | 角色 | 本次新增/修改 |
 | --- | --- | --- |
-| `src/features/stats/aggregate.ts` | 统计聚合（纯函数） | **新增**：`aggregateByDefinition` / `aggregateByDay` / `aggregateByWeek` / `summarize`；后来补上 `recentComparisonWindows` / `summarizeWindow` / `compareWindows` / `compareDefinitions`，以及窗口长度的唯一来源 `TREND_RANGES` 与「至少要读到哪一段」的 `statsReadRange`（3.13） |
+| `src/features/stats/aggregate.ts` | 统计聚合（纯函数） | **新增**：`aggregateByDefinition` / `aggregateByDay` / `aggregateByWeek` / `summarize`；后来补上 `recentComparisonWindows` / `summarizeWindow` / `compareWindows` / `compareDefinitions`，以及窗口长度的唯一来源 `TREND_RANGES` 与「至少要读到哪一段」的 `statsReadRange`（3.13）；再后来给 `PeriodTotal` 补 `definitionCount`、新增 `recordsOfDefinition`（3.14） |
 | `src/features/stats/symptoms.ts` | 症状统计（纯函数） | **后来新增**：`aggregateSymptoms` / `summarizeSymptoms`（输入是周期记录，不是事件记录） |
-| `src/features/stats/labels.ts` | 展示文案（纯函数） | **后来新增**：对比的说法（`describeComparison` / `describeDefinitionChange` / `formatDelta` / `formatRate`）与症状说法（`formatSymptomRatio` / `describeSymptomSummary` / `describeSymptomTotal`） |
+| `src/features/stats/labels.ts` | 展示文案（纯函数） | **后来新增**：对比的说法（`describeComparison` / `describeDefinitionChange` / `formatDelta` / `formatRate`）与症状说法（`formatSymptomRatio` / `describeSymptomSummary` / `describeSymptomTotal`）；再后来补「活跃事件数」的对比说法 `describeActiveComparison`（3.14） |
 | `src/features/cycles/SymptomStatsCard.tsx` | 通用卡片 | **后来新增**：症状统计卡片（定义详情页与统计页共用；放 `features/cycles` 是因为数据是周期记录） |
 | `src/repositories/eventRecordRepository.ts` | 仓储 | **后来修改**：`list` 支持 `from` / `until`，把时间范围下推给 SQL（3.13） |
 | `src/features/stats/__tests__/symptoms-test.ts` | 测试 | **后来新增**：9 个症状统计用例 |
-| `src/features/stats/__tests__/aggregate-test.ts` | 测试 | **新增**：14 个用例；后来补 15 个窗口对比用例、4 个 `statsReadRange` 用例与 1 个下推一致性用例 |
-| `src/app/(tabs)/stats.tsx` | 页面 | **新增**：统计标签页；后来改为两段读取（全量给累计卡片、`from`/`until` 给趋势与对比），并把一次加载的 `now` 贯穿到底（4.4） |
+| `src/features/stats/__tests__/aggregate-test.ts` | 测试 | **新增**：14 个用例；后来补 15 个窗口对比用例、4 个 `statsReadRange` 用例与 1 个下推一致性用例；再后来补 `definitionCount` 与 `recordsOfDefinition` 用例 |
+| `src/app/(tabs)/stats.tsx` | 页面 | **新增**：统计标签页；后来改为两段读取（全量给累计卡片、`from`/`until` 给趋势与对比），并把一次加载的 `now` 贯穿到底（4.4）；再后来趋势加「先选看什么」的选择器（3.14） |
 | `src/app/(tabs)/_layout.tsx` | 导航 | 新增「统计」标签（时间轴 / 统计 / 事件 / 周期 / 设置） |
 | `src/components/ListRow.tsx` | 通用 UI | 新增可选 `divider`（默认显示底部分隔线） |
 | `src/features/records/RecordRow.tsx` | 功能组件 | 透传 `divider` |
@@ -276,6 +280,37 @@ await records.list({ from: range.from, until: range.until });
 `statsReadRange` 内的记录，`compareWindows` / `compareDefinitions` / `aggregateByDay` /
 `aggregateByWeek` 的结果必须 `toEqual`。
 
+### 3.14 趋势「先选看什么」：把不同事件的条数加成一个数没有意义
+
+**是什么**：趋势卡片多了一行选择器——「活跃事件数」/「全部」/ 每个近期出现过的事件。
+选中谁就画谁的条数（选「活跃事件数」时画的是不同事件个数）。
+
+**为什么**：原来的趋势只有一种口径，就是把**所有事件混在一起数条数**：
+「喝水 3 条 + 跑步 2 条 + 吃药 1 条」画成一根 6 的条。这个 6 既不是某个事件的情况，
+也说不清在衡量什么——不同事件的记录**不可相加**（同 3.5「不同单位不能相加成一个数」，
+只是那里是同一事件内的不同属性，这里是不同事件之间）。用户看到的第一反应是「我不懂它在表达什么」。
+
+**怎么改**，两种口径都保留，让用户自己选：
+
+- **某个事件**：`recordsOfDefinition(recentRecords, id)` 先过滤，再交给原来的
+  `aggregateByDay` / `aggregateByWeek`。这就是用户说的「过去一周喝水事件每天有多少」。
+- **活跃事件数**：`PeriodTotal.definitionCount`——该桶里出现过几个**不同**事件。
+  「今天记了 2 个事件」是一个说得清、跨事件也成立的指标，衡量的是**覆盖 / 坚持度**
+  （「一共定义了 X 个事件，每天完成了几个」）。同一天同一事件记多条只算一个。
+- **全部**：保留原来的总条数，但它现在只是一个**显式选项**，不再是唯一口径。
+
+为此 `Bucket` 里多存一个 `definitionIds: Set<string>`（去重靠它），`aggregateByDay` /
+`aggregateByWeek` 的一切分桶规则**没变**——只多了统计不同事件数这一步，空桶仍返回
+`definitionCount: 0`。
+
+**默认看谁**：本期记录最多的那个事件（`compareDefinitions` 已按本期条数排序）。
+本期没有记录就退到近来记录最多的事件，再没有才退到「活跃事件数」。默认值只在用户
+手动选过之前生效，选过之后切「按天/按周」不会把选择抢走。
+
+**对比文案也跟着换口径**：选事件时用 `describeDefinitionChange`（该事件本期 vs 对照期），
+选「全部」时用 `describeComparison`（条数），选「活跃事件数」时用新增的
+`describeActiveComparison`（本期/对照期各有几个事件）——单位是「个事件」，不能套用「条」的说法。
+
 ## 4. 关键代码逐段解释
 
 ### 4.1 可见性与分桶（`src/features/stats/aggregate.ts`）
@@ -354,6 +389,8 @@ export function aggregateByDay(records, rangeDays, now = new Date().toISOString(
 
 - **空桶保留**：没有记录的一天也返回 `recordCount: 0`，界面才能画出连续趋势。
 - **从早到晚**：`offset` 从大到小，输出按时间升序。
+- **每个桶多带一个 `definitionCount`**：该桶里出现过几个不同事件（去重靠 `Bucket.definitionIds`），
+  给「活跃事件数」口径用（3.14）；空桶为 0。
 - 按周只多一步：`bucketBy` 的 key 变成 `localWeekStart(...)`，遍历用
   `addDays(currentWeekStart, -7 * offset)`（`addDays` 是 `domain/dates.ts` 的纯日历加法）。
 - `assertRange` / `parseReference` 对非法输入抛 `ValidationError`，而不是算出垃圾。
@@ -377,34 +414,47 @@ Promise.all([
 ```tsx
 const summary = useMemo(() => summarize(records), [records]);
 const definitions = useMemo(() => aggregateByDefinition(records), [records]);
-const periods = useMemo(
-  () =>
-    mode === 'day'
-      ? aggregateByDay(recentRecords, TREND_RANGES.day, now)
-      : aggregateByWeek(recentRecords, TREND_RANGES.week, now),
-  [recentRecords, mode, now],
-);
+
 // 对比窗口与趋势窗口共用同一个 TREND_RANGES，所以「趋势」与「对比」说的是同一段时间
 const windows = useMemo(
   () => recentComparisonWindows(mode, TREND_RANGES[mode], basis, now),
   [mode, basis, now],
 );
 const comparison = useMemo(() => compareWindows(recentRecords, windows), [recentRecords, windows]);
+
+// 趋势选择器：predicate 决定「看谁」，`trendSelection` 未手动选过时用默认值（3.14）
+const recentDefinitions = useMemo(() => aggregateByDefinition(recentRecords), [recentRecords]);
+const defaultTrend = useMemo(() => {
+  const top = definitionChanges.find((change) => change.currentCount > 0) ?? recentDefinitions[0];
+  return top ? { kind: 'definition', definitionId: top.definitionId } : { kind: 'active' };
+}, [definitionChanges, recentDefinitions]);
+const trendSelection = trend ?? defaultTrend;
+
+const trendPeriods = useMemo(() => {
+  const source =
+    trendSelection.kind === 'definition'
+      ? recordsOfDefinition(recentRecords, trendSelection.definitionId)
+      : recentRecords;
+  return mode === 'day'
+    ? aggregateByDay(source, TREND_RANGES.day, now)
+    : aggregateByWeek(source, TREND_RANGES.week, now);
+}, [recentRecords, trendSelection, mode, now]);
 ```
 
 把 `now` 一起存进 state 是为了**一个 `now` 贯穿一次加载**：否则读库时算的是「最近 14 天」、
 分桶时可能已经跨零点算成 15 天，出现「读了却没摆出来」的桶。
 
-趋势条用 `flex` 表达比例，避免依赖字符串百分比宽度：
+趋势条用 `flex` 表达比例，避免依赖字符串百分比宽度。`valueOf` 让同一段渲染既能画条数、
+也能画活跃事件数（3.14）：
 
 ```tsx
 <View style={styles.barTrack}>
-  <View style={[styles.barFill, { flex: period.recordCount }]} />
-  <View style={{ flex: max - period.recordCount }} />
+  <View style={[styles.barFill, { flex: valueOf(period) }]} />
+  <View style={{ flex: max - valueOf(period) }} />
 </View>
 ```
 
-记录数为 0 时前一段 `flex: 0`，长度为 0；最长的一段占满轨道。
+值为 0 时前一段 `flex: 0`，长度为 0；最长的一段占满轨道。
 
 ### 4.5 时间轴换个容器（`src/app/(tabs)/index.tsx`）
 
@@ -660,9 +710,17 @@ npx expo export --platform ios        # 打包验证（不需要模拟器）
 **这不是 bug**：该事件的记录**单位不一致**（例如既有「杯」又有「毫升」），
 合并计量没有意义，所以只显示数值（见 3.5）。
 
+### 问题：趋势到底在算什么，看不懂
+
+**设计已改**（见 3.14）：趋势先选「看什么」。默认是「本期记录最多的那个事件」，
+卡片副标题会写明「<事件名> · 最近 14 天每天的条数」；想看整体就选「活跃事件数」
+（每天有几个不同事件被记录过）或「全部」（所有事件合起来的条数）。
+原来只把所有事件混成一个数的做法已不再是唯一口径。
+
 ### 问题：趋势里有一整排空的桶
 
 **设计如此**：空白桶保留是为了让趋势连续，`0` 表示那天/那周没有记录。
+如果换了事件还是整排是空的，多半是选了一个近期没记录的事件——换回默认或选「活跃事件数」即可。
 
 ### 问题：`ValidationError: 统计范围必须是正整数`
 
