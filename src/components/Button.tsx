@@ -20,8 +20,15 @@ export interface ButtonProps {
 
 const TONES: Record<ButtonTone, { background: string; text: string; border: string }> = {
   primary: { background: palette.primary, text: '#FFFFFF', border: palette.primary },
-  // 浅灰底色：白色卡片上的「次要按钮」若和卡片同色（surface #FFFFFF），看起来就像没有底色
-  secondary: { background: palette.surfaceMuted, text: palette.text, border: palette.border },
+  /**
+   * 浅蓝底 + 蓝字 + 蓝边：默认主题是「白底 + 蓝色组件」，次要按钮也用主色系，
+   * 只是比 `primary` 浅一档——既能和白色卡片区分开（原来的浅灰和卡片太接近），
+   * 又不和主按钮抢注意力。
+   *
+   * 取色一律走 `palette`：以后要换主题色（或加自定义主题）只改 `src/theme`，
+   * 这里不用动。
+   */
+  secondary: { background: palette.primarySoft, text: palette.primary, border: palette.primary },
   danger: { background: palette.dangerSoft, text: palette.danger, border: palette.danger },
 };
 
