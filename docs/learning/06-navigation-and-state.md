@@ -37,7 +37,9 @@
 - **没有页面间的参数传递**。三个阶段的所有页面都是独立页面，没有「从列表点进详情」这种带参数的跳转
   （第二阶段会加，例如 `events/[id]`）。**（现状：已实现，见 `src/app/events/[id].tsx`）**
 - **没有 Stack 内的多级页面**。现在的 `Stack` 里只有一个 `(tabs)`。第二阶段会出现「列表 → 详情 → 编辑」这种栈式导航。
-  **（现状：已实现，`/events/new`、`/events/[id]`、`/groups`、`/tags` 作为 Stack 里的二级页面）**
+  **（现状：已实现，`/events/new`、`/events/[id]`、`/record/[id]`、`/cycles/[id]` 等都是 Stack 里的二级页面。
+  其中 `tags` 与 `groups` 两个页面后来被删掉了——标签成了每个事件自己的字段（见 [17](./17-custom-fields.md)），
+  分组管理收进「事件」页就地展开（见 [08](./08-event-definitions.md) 第 14 节））**
 - **没有深链接（deep link）的实际用途**。`app.json` 里配了 `"scheme": "lifetrack"`，但没有任何业务代码用它。
 - **没有未匹配路由的处理**。没有 `+not-found.tsx`，所以跳到不存在的路径会显示 expo-router 的默认提示页。
   **（现状：已新增 `src/app/+not-found.tsx`）**
