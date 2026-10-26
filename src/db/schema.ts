@@ -20,6 +20,11 @@ export const META_KEYS = {
    */
   timelineView: 'app.timeline_view',
   /**
+   * 时间轴的筛选与排序（一段 JSON，见 `features/records/timelineQuery.ts`）。
+   * 与显示方式同一个理由：只影响「怎么读」，不改库里的事实，所以存在这里（零迁移）。
+   */
+  timelineQuery: 'app.timeline_query',
+  /**
    * 周期预测窗口：预测时回看最近几段「实际间隔」取平均（默认 3）。
    * 只影响预测怎么算，不改库里的事实，同样存在这里（零迁移）。
    */
