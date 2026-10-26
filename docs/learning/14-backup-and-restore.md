@@ -1,12 +1,17 @@
 # 14 备份与恢复（导入导出）：显式格式契约、严格解析与「取并集」的合并
 
-> ⚠️ **v6 起备份格式升到 `formatVersion = 2`**：集合从 7 个变成 6 个（**没有 `cycleDefinitions`**，
-> 周期定义并进了 `eventDefinitions`，周期实例 / 每日记录的外键改指它），定义 / 记录的
-> `unit` → `attributes`（JSON 数组文本）、快捷选项 `label` / `unit` → `attribute`。
-> **v1 备份仍然能导**：legacy 根下的 `cycleDefinitions` 会被折成 `kind = 'cycle'` 的定义
-> （`cycleMode` 兜底 `manual`）、定义里的 `quantity` → `counter`、`unit` 作为 `attributes` 的兜底；
-> **v2 备份里出现 `quantity` 定义会被拒**。本文的格式表请按此理解（走读见
-> [08 事件定义](./08-event-definitions.md) 第 9 节）。
+> ⚠️ **v7 起备份格式升到 `formatVersion = 3`**（v6 起为 2，最初是 1）：
+> - **v7**：集合从 6 个变成 5 个（**没有 `tags`**）；定义多了 `fields`、记录的快照多了
+>   `fields` + `fieldValues`（取代 `tagIds` / `snapshot.tagIds`）。**v2 及以前的备份仍然能导**：
+>   计数型定义里的标签会被折成一条名为「标签」的多选字段、记录的标签值折成字段取值
+>   （走读见 [17 自定义字段](./17-custom-fields.md)）。
+> - **v6**：集合从 7 个变成 6 个（**没有 `cycleDefinitions`**，周期定义并进了 `eventDefinitions`，
+>   周期实例 / 每日记录的外键改指它），定义 / 记录的 `unit` → `attributes`（JSON 数组文本）、
+>   快捷选项 `label` / `unit` → `attribute`。**v1 备份仍然能导**：legacy 根下的 `cycleDefinitions`
+>   折成 `kind = 'cycle'` 的定义（`cycleMode` 兜底 `manual`）、`quantity` → `counter`、
+>   `unit` 作为 `attributes` 的兜底；**v2 备份里出现 `quantity` 定义会被拒**。
+>
+> 本文的格式表请按此理解（v6 走读见 [08 事件定义](./08-event-definitions.md) 第 9 节）。
 
 > 对应功能：**第二阶段（导入导出）——JSON 备份 / CSV 表格导出、按 id 合并的导入**。
 > 本文以仓库真实代码为依据。凡是「没做过」的验证，会明确写出来。
@@ -18,7 +23,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 导出 JSON 备份 | 七张业务表（**v6 起为六张：无 `cycleDefinitions`**；含**归档的定义**与**软删除的记录**）打包成一个带格式声明的 JSON 文件 |
+| 导出 JSON 备份 | 五个业务集合（**v6 去掉了 `cycleDefinitions`、v7 去掉了 `tags`**；含**归档的定义**与**软删除的记录**）打包成一个带格式声明的 JSON 文件 |
 | 导出 CSV 表格 | 只要事件记录的表格视图，方便用 Excel / Numbers 打开核对数字（**只导出、不导入**） |
 | 导入（合并） | 选一个 JSON 备份，**并进**本地数据；本地独有的数据一条都不会被删 |
 | 冲突合并 | 同 id 的一对数据按「较新的 `updatedAt` 胜出」决定谁留下 |
@@ -32,8 +37,8 @@
 
 | 数字 | 含义 | 谁决定 |
 | --- | --- | --- |
-| `formatVersion`（当前 1） | **备份文件结构**的版本：字段怎么摆 | 领域层 `BACKUP_FORMAT_VERSION` |
-| `schemaVersion`（备份时是当前的 schema 版本，如今 6） | 导出那一刻**数据库 schema** 的版本 | `LATEST_SCHEMA_VERSION`，由调用方传入 |
+| `formatVersion`（当前 3） | **备份文件结构**的版本：字段怎么摆 | 领域层 `BACKUP_FORMAT_VERSION` |
+| `schemaVersion`（备份时是当前的 schema 版本，如今 7） | 导出那一刻**数据库 schema** 的版本 | `LATEST_SCHEMA_VERSION`，由调用方传入 |
 
 两者不是一回事：领域层不依赖数据库（见 [03](./03-typescript-domain-model.md) 与
 [04](./04-sqlite-and-repository.md) 的职责边界），所以 `schemaVersion` 是**参数**，
@@ -147,7 +152,7 @@ data.cycleInstances[0].definitionId：指向不存在的周期定义：0199…
 
 | 数据 | 有没有 `updatedAt` | 冲突时怎么办 |
 | --- | --- | --- |
-| 分组 / 标签 / 事件定义 / 周期定义 / 周期实例 / 周期内记录 | 有 | 新的赢；完全相同时**保留本地、不重写** |
+| 分组 / 事件定义 / 周期实例 / 周期内记录 | 有 | 新的赢；完全相同时**保留本地、不重写** |
 | 事件记录 | **没有**（历史不可篡改） | 只合并**软删除标记**：备份标了删除而本地没有 → 采用删除；两边都删 → 取更早的删除时间；其余保留本地 |
 
 **为什么本项目需要**：
@@ -173,7 +178,7 @@ data.cycleInstances[0].definitionId：指向不存在的周期定义：0199…
 
 ```
 BEGIN（独占事务）
-  DELETE 全部九张表（子表在前）
+  DELETE 全部七张表（子表在前）
   INSERT 合并结果（父表在前）
   SELECT COUNT(*) 逐表核对行数
   PRAGMA foreign_key_check（外键体检）
@@ -201,7 +206,7 @@ COMMIT
 
 ### 3.6 「读到内存 → 合并 → 整体重写」这个形状
 
-**是什么**：导入的流程是 `readAll()` → `mergeBackup()` → 一个事务里重写全部九张表。
+**是什么**：导入的流程是 `readAll()` → `mergeBackup()` → 一个事务里重写全部七张表。
 
 **为什么**：合并规则是**纯函数**，输入是两份 `BackupData`、输出是一份。这样一来
 「合并」可以脱离数据库单测（本次 28 个领域用例里有 7 个专测合并），
@@ -216,7 +221,7 @@ COMMIT
 
 ### 3.7 稳定排序：让两次导出可以 diff
 
-**是什么**：`sortBackupData` 给每个集合各自定死排序键（分组按 `sortOrder`、标签按名称、
+**是什么**：`sortBackupData` 给每个集合各自定死排序键（分组按 `sortOrder`、
 记录按 `occurredAt` 正序…），导出与合并结果都过它。
 
 **为什么**：如果不排序，导出的 JSON 顺序取决于数据库的返回顺序，同一份数据两次导出会不一样，
@@ -281,7 +286,7 @@ UUID 的**形状**（8-4-4-4-12 的小写十六进制）。而**生成**新 id �
 
 ```ts
 export const BACKUP_FORMAT = 'lifetrack-backup';
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 3;
 
 export interface BackupFile {
   format: string;
@@ -331,8 +336,9 @@ if (snapshot.kind !== kind) {
 }
 ```
 
-记录表里标签只有一份（`snapshot_tag_ids`），读取时 `record.tagIds` 与 `snapshot.tagIds` 同源，
-所以两边不一致只可能是文件被改坏了——直接拒绝，而不是猜哪边对。
+记录里的字段取值必须能在自己的快照 `fields` 里找到（`assertBackupIntegrity`）；
+v2 及以前的记录里标签只有一份（`tagIds` 与 `snapshot.tagIds`），读取时两者同源，
+所以不一致只可能是文件被改坏了——直接拒绝，而不是猜哪边对。
 
 ### 4.4 合并的核心（`mergeCollection`）
 
@@ -379,7 +385,7 @@ async importAll(file: BackupFile): Promise<ImportSummary> {
     const { data, summary } = await this.planImport(file); // 校验版本 + 完整性 + 读本地 + 合并
 
     await this.db.withExclusiveTransactionAsync(async (txn) => {
-      await this.clearAll(txn);   // DELETE 九张表（子表在前）
+      await this.clearAll(txn);   // DELETE 七张表（子表在前）
       await this.writeAll(txn, data); // INSERT 合并结果（父表在前）
       await assertConsistent(txn, data); // 行数 + PRAGMA foreign_key_check
     });
@@ -404,17 +410,19 @@ export function escapeCsvField(value: string): string {
 
 export const RECORDS_CSV_HEADERS = [
   '发生时间', '录入时间', '来源', '事件', '类型', '取值', '属性',
-  '分组', '标签', '备注', '状态', '删除时间', '记录ID',
+  '分组', '字段值', '备注', '状态', '删除时间', '记录ID',
 ] as const;
 ```
 
 > ⚠️ v6 起第 7 列是「**属性**」（原来是「单位」），多个属性用 ` | ` 连接
-> （`LIST_SEPARATOR`，见 `src/features/backup/csv.ts`）。
+> （`LIST_SEPARATOR`，见 `src/features/backup/csv.ts`）；v7 起第 9 列由「**标签**」变成
+> 「**字段值**」——逐字段拼成 `字段名：展示值`（如 `时段：早晨 · 晚上`），多个字段用 ` | ` 连接，
+> 没有取值就是空串（`fieldValueText`）。
 
 - **RFC 4180**：含逗号 / 引号 / 换行的字段加引号，内部引号翻倍；行尾用 `\r\n`；
   文本开头加 BOM（`\uFEFF`），否则 Excel 打开中文会乱码。
 - **取值列保留原始数字**（不补「+」），这样表格软件能直接求和；
-  计数/数量、来源、状态用中文词，标签与分组优先解析成名称，**解析不到就退回 id**（不丢信息）。
+  计数/数量、来源、状态用中文词，分组优先解析成名称，**解析不到就退回 id**（不丢信息）。
 - 表头用中文是**有意为之**：JSON 给程序看，CSV 给人看。
 
 ### 4.7 界面：预演 → 确认 → 导入（`src/app/(tabs)/settings.tsx`）
@@ -438,7 +446,7 @@ setBackupMessage(`导入完成：${describeSummary(applied)}`);
 
 ```mermaid
 flowchart TD
-  A[设置页点「导出 JSON 备份」] --> B[BackupRepository.exportAll<br/>readAll 读九张表]
+  A[设置页点「导出 JSON 备份」] --> B[BackupRepository.exportAll<br/>readAll 读七张表]
   B --> C[createBackup 排序 + 写格式元信息]
   C --> D[serializeBackup 缩进 JSON]
   D --> E[transfer：写缓存目录 → expo-sharing 分享]
@@ -509,7 +517,7 @@ npx expo export --platform ios   # 新增了原生模块，打包要重新验一
 - **id 的版本不是拒绝理由**：分组 / 定义 / 记录全都换成 v4 的 id 之后，
   `parseBackup` + `assertBackupIntegrity` 照旧通过（这就是 3.9 那条回归；见 `backup-test.ts`）。
 - 宽容项：整个集合缺失按空处理；缺失的引用**按 id 兜底**（事件记录指向已删除的定义不算错）。
-- 归一化：名称去空白、标签去重。
+- 归一化：名称去空白、字段候选值去重。
 - 合并：新增/保留、`updatedAt` 较新者胜、完全相同时不重写、记录的三种删除状态合并、`totals` 汇总。
 - 文件名：`lifetrack-backup-2026-10-22.json` / `lifetrack-records-2026-10-22.csv`。
 
@@ -517,7 +525,7 @@ npx expo export --platform ios   # 新增了原生模块，打包要重新验一
 
 - 空库导出的内容为空但格式齐全；归档定义与软删除记录**都在**；两次导出完全一致。
 - 导出 → 序列化 → 解析 → 导入新库：`sortBackupData(readAll())` 与备份数据**完全相等**（无损往返）。
-- 重复导入同一份备份：第二次「新增 0 / 覆盖 0 / 保留 9」（**幂等**）。
+- 重复导入同一份备份：第二次「新增 0 / 覆盖 0 / 保留 8」（**幂等**）。
 - 导入是合并：导出后本地新记的一条，导入旧备份后**仍在**。
 - 冲突：本地较新时保留本地；备份较新时覆盖，且计数为 `updated: 1`。
 - 预演不写库：`previewImport` 之后数据一字未改。
@@ -526,7 +534,7 @@ npx expo export --platform ios   # 新增了原生模块，打包要重新验一
 - `app_meta` 不受导入影响。
 
 **CSV（`csv-test.ts`）**：BOM + CRLF + 中文表头；13 列逐列断言；计数/数量与来源文案；
-软删除状态与删除时间；标签/分组名称解析与**退回 id**；含逗号 / 引号 / 换行的转义。
+软删除状态与删除时间；字段取值与分组的文本；含逗号 / 引号 / 换行的转义。
 
 ### 没覆盖什么（诚实记录）
 

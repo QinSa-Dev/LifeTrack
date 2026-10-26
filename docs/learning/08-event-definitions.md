@@ -404,3 +404,23 @@ v6 把老 `quantity` 定义折成 `counter`，但**老快捷选项的取值可�
 - 端到端：`.maestro/flows/00`（新建事件里两种类型都在）与 `05` / `07` / `08` / `10`
   （周期改从「事件」页新建）；**而且这一次是在上面那个「迁移过的库」上跑的全套**：
   11/11 通过、7m20s。
+
+## 10. 后续变更（v7）：标签退出，换成每个事件自己的自定义字段
+
+v2 里「标签」是**全局实体**（所有定义从同一张 `tags` 表里挑，多对多）。v7 把它删掉，
+改成**每个事件定义自己的一组带类型字段**——只有计数型定义有字段（周期型记的是「哪一天」）。
+
+- 数据库：新增 `event_definition_fields`（`kind CHECK (kind IN ('single','multi','time','range'))`、
+  `options` JSON、`ON DELETE CASCADE`），`tags` / `event_definition_tags` 删除。
+- 表单：`EventDefinitionForm` 多一块「自定义字段」编辑器（增删字段、改名、选类型、编候选值）；
+  字段类型的文案集中在 `src/features/definitions/fields.ts`。
+- 校验：`normalizeFieldInput`（枚举型必须至少一个候选值）、`normalizeFieldValues`
+  （记录取值；记录路径默认忽略不认识的字段，备份导入传 `false`）。
+- 旧标签不丢：**计数型定义**把标签折成一条名为「标签」的多选字段、历史取值一并搬来
+  （见下与 [17 自定义字段](./17-custom-fields.md)）。
+- 本节 3.4 提到的「一次性查出所有标签关联」已改成「一次性查出所有字段」，思路不变。
+
+**验证**：单测覆盖在 `eventDefinitionRepository-test.ts`（字段整组替换、`sortOrder` 读回、
+周期型恒无字段）与 `db/__tests__/migrations-test.ts`（v7 块：字段表 / CHECK / 级联 /
+从 v6 折标签 / 索引对齐 / 版本号）；备份侧见 `backup-test.ts` 的「v2 备份折成字段」用例。
+端到端**没有为本特性新增 Maestro 流程**（界面层仍只有类型检查与人工确认兜底）。

@@ -29,7 +29,8 @@
 | 第二阶段（周期增强收尾） | 预测窗口（默认 3 段）可在「设置」里调 1 / 3 / 5；改边界时把「会和哪一段周期重叠」也提前预告 | **已完成**（本文档 `11` 的 4.11 / 4.12 节） |
 | 第二阶段（设置项归拢） | 纯展示偏好（时间轴显示方式、周期预测窗口）统一收进「设置 → 偏好设置」并按分组展示；时间轴默认改为「合并」 | **已完成**（本文档 `16` 的 4.9 节） |
 | 第二阶段（周期并入事件类型 + 属性可多条，v6） | `cycle_definitions` 并入事件定义（周期是一种事件类型，去掉「周期」标签页）；「单位」→ 可多条的「属性」；快捷选项合并成「属性 + 取值」 | **已完成**（本文档 `11` 的 4.13 节、`08` 的第 9 节） |
-| 第二阶段剩余项 | 自定义字段（标签字段化）、周期自动循环的「后台懒补齐」 | 未开始（见 `HANDOFF.md` 9.5） |
+| 第二阶段（自定义字段，标签字段化，v7） | 全局「标签」实体换成每个事件自己的**带类型字段**（单选 / 多选 / 时间点 / 时间段）；旧标签折成「标签」多选字段、历史取值一并搬来；导入旧备份同规则折算 | **已完成**（本文档 `17`） |
+| 第二阶段剩余项 | 周期自动循环的「后台懒补齐」 | 未开始（见 `HANDOFF.md` 9.5） |
 
 第一阶段「已完成」的含义是：下面的命令都真实跑过并且通过了。
 
@@ -40,12 +41,12 @@ npm test            # Jest：4 个套件 / 32 个用例
 npm run doctor      # expo-doctor：20/20
 ```
 
-第二阶段各项完成后（目前 `npm test` 为 28 个套件 / 421 个用例），新增命令同样跑过：
+第二阶段各项完成后（目前 `npm test` 为 26 个套件 / 460 个用例），新增命令同样跑过：
 
 ```bash
 npm run typecheck                        # 通过
 npm run lint                             # 通过（0 error / 0 warning）
-npm test                                 # 28 个套件 / 421 个用例
+npm test                                 # 26 个套件 / 460 个用例
 npm run format:check                     # 通过
 npx expo export --platform ios           # 打包通过（js bundle 3.1MB）
 ```
@@ -117,6 +118,7 @@ maestro test .maestro/flows              # 11/11 通过，6m47s（iPhone 16e / i
 | 端到端回归：用 Maestro 在模拟器上真手点写入路径、可访问性文字当接口、断言之外读库核对 | [15-maestro-e2e.md](./15-maestro-e2e.md) 的 3.4 / 3.7 / 3.10 / 4.8 节 |
 | 时间轴行改版与记录详情：行内「取值 + 【+1】」（即时落库不弹确认）、点行进详情、快照不可改而事实可更正、纯展示偏好存 `app_meta`；4.9 节讲「开关挪进设置、默认改合并、聚焦时重读」 | [16-timeline-row-and-detail.md](./16-timeline-row-and-detail.md) |
 | 周期并入事件类型 + 属性可多条（v6）：`cycle_definitions` 并进事件定义、去掉「周期」标签页、自动循环 / 手动标记、「单位」变可多条的属性、快捷选项「属性 + 取值」 | [11-cycle-tracking.md](./11-cycle-tracking.md) 的 4.13 节、[08-event-definitions.md](./08-event-definitions.md) 的第 9 节 |
+| 自定义字段（标签字段化，v7）：四种字段类型与各自的校验、字段随记录快照固化、旧标签折叠迁移、备份格式 v3 与旧备份折算 | [17-custom-fields.md](./17-custom-fields.md) |
 
 ### 为什么还缺几篇编号
 
@@ -164,9 +166,12 @@ maestro test .maestro/flows              # 11/11 通过，6m47s（iPhone 16e / i
     「快照不可改而事实可更正」的仓储 `update`、合并视图的纯函数分组与就地展开，
     以及纯展示偏好为什么存 `app_meta` 而不新建表；4.9 节是后续调整：
     开关从页头收进「设置」、默认改成「合并」、偏好必须**聚焦时重读**（否则改完切回来不生效）。
+17. **[17 自定义字段](./17-custom-fields.md)** —— 第二阶段剩余项之一：把全局「标签」换成每个事件自己的
+    带类型字段。讲清「引用 vs 内嵌」「枚举 / 时间 / 区间三类校验」「字段定义随快照固化」，
+    以及最麻烦的一块：**迁移里搬数据**（旧标签折成字段、`event_records` 重建、备份格式升到 v3 并对旧备份折算）。
 
 如果只想快速走读一遍项目，读 **01 → 05 → 06** 这三篇就够；03、04 是用来建立类型与数据层认知的，
-08–16 用来了解业务功能是怎么一步步搭起来的（15 讲的是「怎么证明它真的能点」）。
+08–17 用来了解业务功能是怎么一步步搭起来的（15 讲的是「怎么证明它真的能点」）。
 
 ## 四、已经接触过的技术概念
 
@@ -249,6 +254,11 @@ maestro test .maestro/flows              # 11/11 通过，6m47s（iPhone 16e / i
 | `launchApp: stopApp` + `openLink` 归一化；为什么 Expo Go 里 `clearState` 会连数据库一起清掉 | 测试 / Expo | 15 |
 | `hideKeyboard` vs `pressKey: Enter`：单行输入回车即失焦；`number-pad` 没有回车键 | React Native / 测试 | 15 |
 | 断言之外**直接读 `lifetrack.db`** 核对：界面证据 + 落盘证据才完整 | 测试 / SQLite | 15 |
+| 「引用 vs 内嵌」：全局标签实体 → 每个事件自带的字段，记录历史内嵌字段快照而不是引用 | 领域设计 | 17 |
+| 一套输入校验拼装成一条写库规则：枚举 / 时间点 / 时间段各一个 `require*`，统一进 `normalizeFieldValues` | 领域设计 / TypeScript | 17 |
+| `HH:mm` 的定长校验与「字典序即时间序」（区间比较 `end < start` 直接用字符串） | JavaScript / 领域设计 | 17 |
+| 迁移里搬数据的三板斧：逐行读改写、重建表换列名、删表清场；迁移**不依赖会演进的业务代码** | SQLite / 架构 | 17 |
+| 备份格式版本与「旧备份折算」：和数据库迁移是同一件事的两个入口，规则要对得上 | 数据交换 / 领域设计 | 17 |
 
 ## 五、还没有学到的内容
 
@@ -289,7 +299,7 @@ maestro test .maestro/flows              # 11/11 通过，6m47s（iPhone 16e / i
                       │  records/[id].tsx（记录详情）/ deleted.tsx（回收站）│
                       │  cycles/[id].tsx（周期型事件：开一段 / 生成下一段）│
                       │  cycle-instances/[id].tsx（一段周期 + 每日记录）│
-                      │  groups.tsx / tags.tsx / +not-found           │
+                      │  groups.tsx / +not-found                   │
                       └───────────────┬─────────────────────────────┘
                                       │ 通用组件 + 功能组件 + Hook
                       ┌───────────────▼─────────────────────────────┐
@@ -298,8 +308,8 @@ maestro test .maestro/flows              # 11/11 通过，6m47s（iPhone 16e / i
                       │ 表单与导航：TextField / Chip / Header          │
                       │ ListRow / DatabaseGate（数据库门禁）           │
                       ├─────────────────────────────────────────────┤
-   src/features/      │ definitions/：EventDefinitionForm（类型 / 属性多行 / 周期字段）│
-                      │ records/：format / RecordRow / UndoBar        │
+   src/features/      │ definitions/：EventDefinitionForm（类型 / 属性多行 / 周期字段 / 自定义字段）│
+                      │ records/：format / FieldValuePicker / RecordRow / UndoBar │
                       │ cycles/：labels（含做法说明与预测依据）/ calendar / │
                       │         MonthCalendar / SymptomStatsCard       │
                       │ stats/：aggregate（从事实数据聚合，纯函数）    │
@@ -313,14 +323,13 @@ maestro test .maestro/flows              # 11/11 通过，6m47s（iPhone 16e / i
    src/db/            │ DatabaseProvider（Context：状态机）            │
                       │ client.ts（唯一连接入口 + PRAGMA）             │
                       │ migrations.ts（user_version + 事务）           │
-                      │ schema.ts（迁移清单 v1 / v2 / v3 / v4 / v5 / v6）│
+                      │ schema.ts（迁移清单 v1 / v2 / v3 / v4 / v5 / v6 / v7）│
                       │ types.ts（SqlExecutor 抽象）                   │
                       └───────────────┬─────────────────────────────┘
                                       │ 仓储是唯一写 SQL 的地方
                       ┌───────────────▼─────────────────────────────┐
    src/repositories/  │ MetaRepository（app_meta 读写）                │
                       │ EventGroupRepository（分组）                    │
-                      │ TagRepository（标签）                           │
                       │ EventDefinitionRepository（计数 / 周期共用的定义聚合）│
                       │ EventRecordRepository（历史 + 快照 + 更正）     │
                       │ CycleInstanceRepository（周期实例 + 边界规则）   │

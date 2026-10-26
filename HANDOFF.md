@@ -125,6 +125,7 @@ src/theme/         设计令牌
 | v4 | `cycle_definitions` / `cycle_instances` / `cycle_entries` | 定义→实例→记录**均 CASCADE**；`UNIQUE(instance_id, date)` 保「一天一条」；边界规则在仓储层，SQL 只加 `CHECK (end_date IS NULL OR end_date >= start_date)` |
 | v5 | `cycle_entries.deleted_at`（`ALTER TABLE ADD COLUMN`） | 周期内记录也能软删除；**追加而不改 v4**（已发布迁移是历史）；旧行自动为 NULL = 未删除，不需要回填；恢复时重新校验「日期在实例区间内」 |
 | v6 | `cycle_definitions` 并入 `event_definitions`；`attribute`/`unit` → `attributes`（JSON 数组文本） | **周期是事件类型的一种**：重建 `event_definitions`（加 `cycle_mode` + 两个平均长度列，CHECK `(kind = 'cycle') = (cycle_mode IS NOT NULL)`、`kind IN ('counter','cycle')`），把老周期定义按原 id 折成 `kind = 'cycle'`、`cycle_mode` 兜底 `'manual'`，`quantity` 折成 `counter`、`unit` 包成 `attributes`；`quick_options.label`/`unit` 合成 `attribute`；记录的 `unit`/`snapshot_unit` → `attributes`/`snapshot_attributes`；周期实例 / 记录的外键改指 `event_definitions`；最后 `DROP TABLE cycle_definitions`。属性 JSON 一律用 SQLite `json_array()` 生成（不手拼字符串） |
+| v7 | 新增 `event_definition_fields`；删 `tags` / `event_definition_tags`；重建 `event_records`（`snapshot_tag_ids` → `snapshot_fields` + `field_values`） | **「标签」退出，换成每个事件自己的带类型字段**：`event_definition_fields` 有 `kind CHECK (kind IN ('single','multi','time','range'))`、`options` JSON、`ON DELETE CASCADE`；**只有计数型定义**才把旧的标签折成一条名为「标签」的多选字段，候选值 = 挂着的标签 ∪ 记录快照里出现过的标签（兜住历史值）；`up()` 里逐行读改写重建 `event_records`（`CREATE event_records_new` → `INSERT ... SELECT` → `DROP` → `RENAME` → 重建索引），把每条记录的 `snapshot_tag_ids` 算成字段取值；最后先 `DROP event_definition_tags` 再 `DROP tags`（顺序反了会被外键挡住）。id 用 `migrationUuid()`，`up()` 不依赖会演进的业务代码 |
 
 `MIGRATIONS` 在 `src/db/schema.ts`，`LATEST_SCHEMA_VERSION` 自动推导。新增结构 = 追加一个新 `Migration`，
 然后同步更新 `src/db/__tests__/migrations-test.ts` 里对版本号与 `applied` 的断言。
@@ -132,7 +133,7 @@ src/theme/         设计令牌
 ## 5. 已实现的领域规则（代码中已体现）
 
 1. 事件定义与历史记录分离：改定义不影响历史（v3 无外键 + 快照）。
-2. 历史快照：记录时固化名称/属性/分组/标签。
+2. 历史快照：记录时固化名称/属性/分组/字段定义与取值。
 3. 归档只改 `is_archived`，不影响历史，只禁止新增记录。
 4. 补录只能回到过去：`occurredAt` ≤ `recordedAt`（`requireNotFuture`，按时间比较而非字符串）。
 5. 软删除用 `deleted_at`，`softDelete` / `restore` **幂等**，`list` 默认排除；**永久删除**才需二次确认。
@@ -164,7 +165,8 @@ src/theme/         设计令牌
     完全相同则保留本地不重写；事件记录不可篡改，**只合并软删除标记**（本地已删除不会被旧备份复活）——
     记录本身现在可以在详情页更正（规则 15），但**备份合并仍只看软删除标记**：编辑只在本地生效、
     不会通过备份传到另一份库（记录没有 `updated_at`，见第 10 节）。
-    导入在单个独占事务里重写九张表，并在事务内核对行数 + `PRAGMA foreign_key_check`，
+    导入在单个独占事务里重写七张表（分组 / 定义 / 字段 / 快捷选项 / 记录 / 实例 / 周期记录），
+    并在事务内核对行数 + `PRAGMA foreign_key_check`，
     **失败整体回滚，不留半截数据**（`src/domain/backup.ts` / `src/repositories/backupRepository.ts`）。
 12. **外部输入（备份 JSON）严格解析**：逐字段守卫、错误带路径（`data.eventRecords[0].value`）、
     写库前校验引用完整性（含 SQL 约束没覆盖的「周期记录日期必须在实例区间内」）；
@@ -203,16 +205,25 @@ src/theme/         设计令牌
     `EventRecord.attributes: string[]`。**记录时属性默认不选**（用户明确选择），
     但展示会**回退**：`recordAttributes(record)` 在记录自己没标时用快照里的属性，
     免得丢掉「一次是什么」；`attributeText(list)` 用 ` · ` 连接、空则 `undefined`。
+20. **「标签」不再是全局实体，换成每个事件自己的带类型字段**（v7）：`FieldKind = 'single' | 'multi' | 'time' | 'range'`，
+    `DefinitionField = { id, name, kind, options, sortOrder }`（枚举型有候选值，时间点 / 时间段恒为 `[]`；
+    枚举型**必须至少一个候选值**）。**只有计数型定义有字段**（周期型恒为 `[]`，记的是「哪一天」）。
+    `EventRecord.fieldValues: FieldValue[]`（`{ fieldId, values }`：单选 1 / 多选 N / 时间点 1 / 时间段 2，
+    空数组 = 这次没选），取值随记录**快照**固化（`snapshot.fields: FieldSnapshot[]`，无 `sortOrder`），
+    定义改了 / 删了，历史照旧自证。`describeFieldValue(field, value)` 是展示用纯函数
+    （多选 ` · `、区间 `–`、空则 `undefined`）。校验：`normalizeFieldValues(fields, inputs, { dropUnknownFields })`
+    ——**记录路径默认忽略不认识的字段**（高频动作别拦人），**备份导入传 `false`**（数据必须自洽）。
+    与「属性」是两个概念：属性是自由文本、无类型（见规则 19）；字段有类型、要选值。
 
 ## 6. 关键文件索引
 
 - 迁移与 schema：`src/db/schema.ts`、`src/db/migrations.ts`
 - 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`
 - 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `recordAttributes` / `attributeText` / `toRecordKind` / `isVisibleRecord` / `isVisibleEntry` / `DeletedCycleEntry`）、`src/domain/validation.ts`（含 `requireNotFuture`、`readTextList`（宽松解析属性 JSON）、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `observedCycleLength` / `predictNextCycle`）、`src/domain/backup.ts`（备份格式契约 `BACKUP_FORMAT` / `parseAttributes` / 严格解析 `parseBackup` / 引用完整性 `assertBackupIntegrity` / 合并 `mergeBackup` / 稳定排序 `sortBackupData` / 文件名 `backupFileName`）
-- 仓储：`src/repositories/eventDefinitionRepository.ts`（计数型与周期型共用；`normalizeDraft` 保证「周期 ⟺ `cycleMode`」且周期型属性恒为 `[]`）、`eventRecordRepository.ts`（记录 / 补录 / **`update` 更正事实** / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until`）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`eventGroupRepository.ts`、`tagRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`）、`metaRepository.ts`（键值偏好，时间轴显示方式用它）
-- 功能组件：`src/features/definitions/`（定义表单 `EventDefinitionForm`：**类型（计数 / 周期）+ 属性多行 + 周期字段 + 快捷选项「属性 + 取值」**）、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime` / `describeRecord`）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `timelineView.ts`（显示方式偏好）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `describeLatestCycle` / `describeOverlap` / `describeCycleDefinition` / `CYCLE_MODE_LABELS` / `CYCLE_MODE_HINTS` / `predictionWindow.ts`（预测窗口这个纯偏好的选项 / 解析 / 文案）/ `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」，`DefinitionTotal.attributeText`）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV，多个属性用 ` | ` 连接）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
-- 界面：`src/app/(tabs)/definitions.tsx`（**事件页：计数 / 周期同一张列表**，计数进记录页、周期进 `/cycles/[id]`）、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 合并 + 行内【+1】，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/settings.tsx`（诊断 + **偏好设置（时间轴显示 / 周期预测窗口）** + 备份与恢复）、`src/app/events/new.tsx`、`src/app/events/[id].tsx`（编辑定义）、`src/app/record/[id].tsx`（记录 / 补录，**属性多选 chips**）、`src/app/records/[id].tsx`（**单条记录详情：快照 + 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/cycles/[id].tsx`（周期型事件详情：开一段 / 生成下一段 / 归档 / 删除；非周期型定义会提示并给「去记录页」）、`src/app/cycle-instances/[id].tsx`
-- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`
+- 仓储：`src/repositories/eventDefinitionRepository.ts`（计数型与周期型共用；`normalizeDraft` 保证「周期 ⟺ `cycleMode`」且周期型属性 / 字段恒为 `[]`；计数的字段整组替换并按 `sortOrder` 读回）、`eventRecordRepository.ts`（记录 / 补录 / **`update` 更正事实** / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until`；记录时把定义字段固化成快照并用 `normalizeFieldValues` 校验取值）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`eventGroupRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`；`DELETE_ORDER` 含 `event_definition_fields`）、`metaRepository.ts`（键值偏好，时间轴显示方式用它）
+- 功能组件：`src/features/definitions/`（定义表单 `EventDefinitionForm`：**类型（计数 / 周期）+ 属性多行 + 周期字段 + 自定义字段 + 快捷选项「属性 + 取值」**；`fields.ts` 汇总字段类型标签与提示）、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime` / `describeRecord`）/ `FieldValuePicker`（按字段类型渲染取值控件）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `timelineView.ts`（显示方式偏好）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `describeLatestCycle` / `describeOverlap` / `describeCycleDefinition` / `CYCLE_MODE_LABELS` / `CYCLE_MODE_HINTS` / `predictionWindow.ts`（预测窗口这个纯偏好的选项 / 解析 / 文案）/ `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」，`DefinitionTotal.attributeText`）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV，多个属性用 ` | ` 连接，字段取值汇总成「字段值」列）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
+- 界面：`src/app/(tabs)/definitions.tsx`（**事件页：计数 / 周期同一张列表**，计数进记录页、周期进 `/cycles/[id]`）、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 合并 + 行内【+1】，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/settings.tsx`（诊断 + **偏好设置（时间轴显示 / 周期预测窗口）** + 备份与恢复）、`src/app/events/new.tsx`、`src/app/events/[id].tsx`（编辑定义）、`src/app/record/[id].tsx`（记录 / 补录，**属性多选 chips + 自定义字段取值**）、`src/app/records/[id].tsx`（**单条记录详情：快照（含字段定义与取值）+ 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/cycles/[id].tsx`（周期型事件详情：开一段 / 生成下一段 / 归档 / 删除；非周期型定义会提示并给「去记录页」）、`src/app/cycle-instances/[id].tsx`
+- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`、`17-custom-fields.md`
 - 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`10`（11 条流程）、`.maestro/subflows/record-once.yaml`（记一次）、`.maestro/subflows/use-expanded-view.yaml`（把时间轴钉成「逐条」）
 
 ## 7. 必须遵守的工作约定
@@ -230,7 +241,7 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ 静态检查、458 个单元用例（真实内存 SQLite）、iOS 打包。
+- ✅ 静态检查、460 个单元用例（真实内存 SQLite）、iOS 打包。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go）：**4 个标签页** + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
@@ -320,20 +331,30 @@ src/theme/         设计令牌
 
 走读：`docs/learning/16-timeline-row-and-detail.md`；端到端：`.maestro/flows/02`、`03`、`09`。
 
-### 9.5 后面两项
+### 9.5 自定义字段（标签字段化）（✅ 已完成，v7）
 
-1. **自定义字段（标签字段化）**（**未开始**）：事件的「标签」从全局实体改成每个事件自己的自定义字段
-   （枚举单选 / 多选、时间点、时间段），全局标签入口与标签管理页退化，改在编辑事件 / 分组时内联建；
-   记录时把字段值写进快照，CSV 加「字段值」列，schema 预计 v7。
-   ⚠️ 注意：本轮已经把「属性」做成**自由文本、可多条**并占了 `formatVersion = 2`
-   （见规则 19），这一步要在此基础上追加「带类型的字段」——别把它和「属性」混成一个概念。
-2. **周期并入事件**（✅ 已完成，v6）：周期是事件类型的一种，不再有单独菜单——新建事件时可选「周期事件」
-   并切到周期字段；周期分「自动循环」与「手动标记」两种做法。
-   实际落地：`cycle_definitions` 并入 `event_definitions`（kind 收敛为 `counter` / `cycle`），
-   底部去掉「周期」标签页（事件页一张列表并列两种类型），旧周期定义按原 id 折成 `kind = 'cycle'`
-   且历史实例 / 每日记录全部保留。走读见 `11-cycle-tracking.md` 4.13 节。
-   **未做（有意）**：自动循环「打开 App 时懒补齐后续段落」——本轮只做「配置 + 生成下一段」，
-   后台自动写库留待以后（要动的话得先想清楚「补到哪一天为止」与重复生成的幂等）。
+把全局「标签」实体换成每个事件定义自己的带类型字段（枚举单选 / 多选、时间点、时间段），
+记录时给字段选值并随快照固化。旧的标签数据不丢：**只有计数型定义**把标签折成一条名为「标签」
+的多选字段，候选值 = 挂着的标签 ∪ 记录快照里出现过的标签，历史取值一并搬过来；
+`tags` / `event_definition_tags` 随之删除。导入 v2 及以前的备份也照同一规则折算（备份格式升到 v3）。
+
+- 迁移：`MIGRATION_V7_CUSTOM_FIELDS`（建 `event_definition_fields`、重建 `event_records`、删两张标签表）。
+- 领域：`FieldKind` / `DefinitionField` / `FieldSnapshot` / `FieldValue` / `describeFieldValue`；
+  校验 `normalizeFieldInput` / `normalizeFieldValues`（记录路径默认忽略未知字段，导入传 `false`）。
+- 界面：`EventDefinitionForm` 多一块「自定义字段」编辑器；`FieldValuePicker` 按类型渲染取值控件；
+  记录详情 / 时间轴 / CSV 都用 `describeFieldValue` 展示。
+
+走读：`docs/learning/17-custom-fields.md`。
+⚠️ 注意：别把「字段」和「属性」混成一个概念——属性是自由文本、无类型（规则 19），
+字段有类型、要选值。
+
+**未做（有意，记在案）**：旧的全局标签**管理页与 `src/app/tags.tsx` 已删除**，标签只能在
+「编辑事件」里以字段形式管理；没有做「字段跨事件复用 / 全局字段库」——这一版就是每个事件各管各的。
+
+### 9.6 后面一项
+
+1. **周期自动循环的「后台懒补齐」**（未做）：打开 App 时按规律补齐后续段落。要动的话得先想清楚
+   「补到哪一天为止」与重复生成的幂等（见 9.5 之前那条周期说明）。
 
 ### 提交与验证习惯
 
@@ -399,6 +420,16 @@ src/theme/         设计令牌
   因为属性只是展示信息，坏一个不值得让整页打不开；但这也意味着**手改坏的 JSON 会静默丢属性**。
 - **记录上的属性不可在编辑页改**：`EventRecordEditInput` 只改取值 / 时间 / 备注——
   属性是「这一次标了哪些」，属于事实；要改只能删了重记（本轮有意不做「改属性」）。
+  自定义字段的**取值同样不在编辑页改**（`EventRecordEditInput` 不含 `fieldValues`），
+  理由相同：它是记录当时的事实，展示按当时的快照来。
+- **自定义字段只在计数型事件上**：周期型事件（`kind = 'cycle'`）恒无字段（记的是「哪一天」，
+  不是「一次是什么」）。如果以后周期也想挂带类型的字段，要同时改定义表校验、备份格式与界面。
+- **v7 折出来的「标签」字段，候选值可能比用户记忆里的多几个**：为了兜住历史取值，
+  迁移把「记录快照里出现过、但定义已不再挂」的标签名也算进候选值。这是**故意的**——
+  否则老记录会指向一个候选值里没有的名字。记在案，若嫌候选值杂，用户可以自己删掉多余的。
+- **字段没有「全局字段库 / 跨事件复用」**：每个事件的字段各管各的，同名不共享、改名不联动。
+  这是 v7 有意的取舍（全局标签正是被这一版否掉的）；要复用就得再引入一层引用，
+  会与「快照要自证」的设计打架。
 - **属性没有「定义侧」与「记录侧」的一致性校验**：记录可以标定义列表以外的属性文本
   （现在不会发生，因为界面只给列表里的；但备份导入或将来别的入口可以）。目前靠界面约束，领域层不拦。
 - **`app_meta` 不参与备份**：这是有意的（安装时间/启动次数是本机信息），但意味着「换机恢复」后
