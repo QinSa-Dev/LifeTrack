@@ -202,9 +202,12 @@ export default function DefinitionsScreen() {
             {isCycle ? <Badge label={`${own.length} 段`} tone="neutral" /> : null}
             {canQuickRecord ? (
               /*
-                标签就叫「+1」，与时间轴那颗一致。一屏多颗同名按钮对读屏不算友好，
-                但具体到「+1 喝水」这种名字会和 Maestro 的 `.*Maestro喝水.*` 选择器撞车
-                （同一屏里两个元素都能匹配，`tapOn` 会报多匹配）——详见 `.maestro/README.md`。
+                「+1」是**通用标识**（README 领域规则 19）：它在时间轴、记录页「最近记录」、
+                这里都只写 `+1`，不跟事件名——用户看一眼就知道是「记一条」这个动作，
+                不需要读一遍事件名。
+                所以「+1 喝水」这种更具体的名字是**有意不写**的：一屏多颗同名按钮对读屏不友好，
+                这一代价记在 `HANDOFF.md` 技术债；而且它还会和 `.maestro` 里 `.*Maestro喝水.*`
+                这类行选择器撞车（同一屏两个元素都匹配，`tapOn` 报多匹配）。
               */
               <Button
                 label={recordingIds.includes(definition.id) ? '+1…' : '+1'}
