@@ -4,7 +4,6 @@ import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAd
 import { ConflictError, NotFoundError, ValidationError } from '@/domain/errors';
 import { EventDefinitionRepository } from '@/repositories/eventDefinitionRepository';
 import { EventRecordRepository } from '@/repositories/eventRecordRepository';
-import { TagRepository } from '@/repositories/tagRepository';
 
 const T1 = '2026-10-19T08:00:00.000Z';
 const T2 = '2026-10-19T09:00:00.000Z';
@@ -14,14 +13,12 @@ describe('EventRecordRepository', () => {
   let db: TestDatabase;
   let definitions: EventDefinitionRepository;
   let records: EventRecordRepository;
-  let tags: TagRepository;
 
   beforeEach(async () => {
     db = createTestDatabase();
     await runMigrations(db, MIGRATIONS);
     definitions = new EventDefinitionRepository(db);
     records = new EventRecordRepository(db);
-    tags = new TagRepository(db);
   });
 
   afterEach(() => {
@@ -33,7 +30,6 @@ describe('EventRecordRepository', () => {
       name: overrides.name ?? '喝水',
       kind: 'counter',
       attributes: overrides.attributes,
-      tagIds: [],
       quickOptions: [],
     });
   }
@@ -46,7 +42,9 @@ describe('EventRecordRepository', () => {
     expect(record.kind).toBe('counter');
     expect(record.value).toBe(1);
     expect(record.attributes).toEqual([]); // 一个都没标
+    expect(record.fieldValues).toEqual([]); // 也没选字段值
     expect(record.snapshot.attributes).toEqual(['杯']); // 定义当时的属性留在快照里
+    expect(record.snapshot.fields).toEqual([]);
     expect(record.occurredAt).toBe(T1);
     expect(record.recordedAt).toBe(T1);
     expect(record.source).toBe('manual');
@@ -62,7 +60,6 @@ describe('EventRecordRepository', () => {
       name: '饮水',
       kind: 'counter',
       attributes: ['升'],
-      tagIds: [],
       quickOptions: [],
     });
     const record = await records.record(
@@ -234,7 +231,6 @@ describe('EventRecordRepository', () => {
       name: '喝水（含茶）',
       kind: 'counter',
       attributes: ['毫升'],
-      tagIds: [],
       quickOptions: [],
     });
 
@@ -243,22 +239,76 @@ describe('EventRecordRepository', () => {
     expect(after?.snapshot.attributes).toEqual(['杯']);
   });
 
-  it('记录时把定义的标签固化为快照', async () => {
-    const tag = await tags.create({ name: '早晨' });
+  it('记录时把定义的字段固化为快照，取值一并保存', async () => {
     const definition = await definitions.create({
       name: '喝水',
       kind: 'counter',
-      tagIds: [tag.id],
+      fields: [{ name: '时段', kind: 'single', options: ['早晨', '晚上'] }],
       quickOptions: [],
     });
+    const field = definition.fields[0]!;
 
-    const record = await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
-    expect(record.tagIds).toEqual([tag.id]);
-    expect(record.snapshot.tagIds).toEqual([tag.id]);
+    const record = await records.record(
+      {
+        definitionId: definition.id,
+        value: 1,
+        fieldValues: [{ fieldId: field.id, values: ['早晨'] }],
+        source: 'manual',
+      },
+      T1,
+    );
+    expect(record.fieldValues).toEqual([{ fieldId: field.id, values: ['早晨'] }]);
+    expect(record.snapshot.fields).toEqual([
+      { id: field.id, name: '时段', kind: 'single', options: ['早晨', '晚上'] },
+    ]);
 
-    // 之后删除标签，历史快照里的 tagId 仍在
-    await tags.remove(tag.id);
-    expect((await records.getById(record.id))?.snapshot.tagIds).toEqual([tag.id]);
+    // 之后把字段换掉，历史快照里的字段定义与取值仍在
+    await definitions.update(definition.id, {
+      name: '喝水',
+      kind: 'counter',
+      fields: [{ name: '心情', kind: 'multi', options: ['好'] }],
+      quickOptions: [],
+    });
+    const after = await records.getById(record.id);
+    expect(after?.snapshot.fields[0]?.name).toBe('时段');
+    expect(after?.fieldValues[0]?.values).toEqual(['早晨']);
+  });
+
+  it('记录时的字段取值按定义校验：候选之外的枚举值 / 非法时间点都被拒绝', async () => {
+    const definition = await definitions.create({
+      name: '喝水',
+      kind: 'counter',
+      fields: [
+        { name: '时段', kind: 'single', options: ['早晨'] },
+        { name: '起床', kind: 'time' },
+      ],
+      quickOptions: [],
+    });
+    const [shift, wake] = definition.fields;
+
+    await expect(
+      records.record(
+        {
+          definitionId: definition.id,
+          value: 1,
+          fieldValues: [{ fieldId: shift!.id, values: ['中午'] }],
+          source: 'manual',
+        },
+        T1,
+      ),
+    ).rejects.toThrow(ValidationError);
+    await expect(
+      records.record(
+        {
+          definitionId: definition.id,
+          value: 1,
+          fieldValues: [{ fieldId: wake!.id, values: ['25:00'] }],
+          source: 'manual',
+        },
+        T1,
+      ),
+    ).rejects.toThrow(ValidationError);
+    expect(await records.list()).toEqual([]);
   });
 
   it('永久删除定义后，历史记录仍然存在且可读', async () => {
@@ -403,7 +453,6 @@ describe('EventRecordRepository.update', () => {
       name: overrides.name ?? '喝水',
       kind: 'counter',
       attributes: overrides.attributes,
-      tagIds: [],
       quickOptions: [],
     });
   }
@@ -413,7 +462,6 @@ describe('EventRecordRepository.update', () => {
       name: '喝水',
       kind: 'counter',
       attributes: ['毫升'],
-      tagIds: [],
       quickOptions: [],
     });
     const record = await records.record(
@@ -425,7 +473,6 @@ describe('EventRecordRepository.update', () => {
       name: '饮水',
       kind: 'counter',
       attributes: ['升'],
-      tagIds: [],
       quickOptions: [],
     });
 

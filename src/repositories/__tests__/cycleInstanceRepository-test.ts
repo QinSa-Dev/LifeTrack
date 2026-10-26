@@ -24,10 +24,7 @@ describe('CycleInstanceRepository', () => {
     entries = new CycleEntryRepository(db);
     // v6 起周期是事件的一种类型：定义走 EventDefinitionRepository，写法标 cycle
     definitionId = (
-      await definitions.create(
-        { name: '生理期', kind: 'cycle', cycleMode: 'manual', tagIds: [], quickOptions: [] },
-        T1,
-      )
+      await definitions.create({ name: '生理期', kind: 'cycle', cycleMode: 'manual', quickOptions: [] }, T1)
     ).id;
   });
 

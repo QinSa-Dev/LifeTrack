@@ -69,6 +69,83 @@ export function isRecordSource(value: unknown): value is RecordSource {
   return value === 'manual' || value === 'quick' || value === 'backfill';
 }
 
+/**
+ * 自定义字段的类型。
+ *
+ * - `single`：枚举单选，从候选值里挑一个；
+ * - `multi`：枚举多选，从候选值里挑若干；
+ * - `time`：时间点，例如 `08:30`；
+ * - `range`：时间段，例如 `08:30` ~ `09:15`。
+ *
+ * 这是「事件定义自己的一组带类型的字段」—— 取代了 v7 之前那个全局共享的「标签」实体。
+ * 与「属性」（自由文本、可多条、只描述「一次是什么」）是**两个概念**：属性不做类型约束，
+ * 字段有类型、要选值，记录时按字段收集。
+ */
+export type FieldKind = 'single' | 'multi' | 'time' | 'range';
+
+export const FIELD_KINDS: readonly FieldKind[] = ['single', 'multi', 'time', 'range'];
+
+export function isFieldKind(value: unknown): value is FieldKind {
+  return value === 'single' || value === 'multi' || value === 'time' || value === 'range';
+}
+
+/** 枚举型字段（有候选值可挑）；时间点 / 时间段则没有候选值。 */
+export function isEnumFieldKind(kind: FieldKind): boolean {
+  return kind === 'single' || kind === 'multi';
+}
+
+/** 事件定义上的一个自定义字段 */
+export interface DefinitionField {
+  id: string;
+  name: string;
+  kind: FieldKind;
+  /** 枚举型（single / multi）的候选值；时间点 / 时间段恒为空数组 */
+  options: string[];
+  sortOrder: number;
+}
+
+/**
+ * 字段在「记录那一刻」的快照：记下名字、类型与候选值。
+ *
+ * 与 `EventDefinitionSnapshot` 同一套思路——定义后来改了字段名、换了候选值甚至删了字段，
+ * 历史记录仍然按记录当时的样子展示。
+ */
+export interface FieldSnapshot {
+  id: string;
+  name: string;
+  kind: FieldKind;
+  options: string[];
+}
+
+/** 一条记录上某个字段的取值（事实：这一次选了什么） */
+export interface FieldValue {
+  fieldId: string;
+  /**
+   * 选中的值：单选 1 个、多选若干、时间点 1 个（`HH:mm`）、时间段 2 个（开始、结束）。
+   * 空数组表示这个字段这次没选。
+   */
+  values: string[];
+}
+
+/** 把字段定义折成快照（拷贝候选值，避免快照跟着定义一起变）。 */
+export function toFieldSnapshot(field: DefinitionField): FieldSnapshot {
+  return { id: field.id, name: field.name, kind: field.kind, options: [...field.options] };
+}
+
+/**
+ * 把一个字段的取值渲染成展示文本；没有取值时返回 `undefined`。
+ * 多选用 ` · ` 连接；时间段用 `–` 连接起止。
+ */
+export function describeFieldValue(field: FieldSnapshot, value: FieldValue): string | undefined {
+  if (value.values.length === 0) {
+    return undefined;
+  }
+  if (field.kind === 'range') {
+    return value.values.length >= 2 ? `${value.values[0]}–${value.values[1]}` : value.values[0];
+  }
+  return value.values.join(' · ');
+}
+
 /** 快捷选项：一键记录一组「属性 + 取值」 */
 export interface QuickOption {
   id: string;
@@ -89,15 +166,6 @@ export interface EventGroup {
   updatedAt: IsoDateTime;
 }
 
-/** 标签，例如「早晨」「运动后」 */
-export interface Tag {
-  id: string;
-  name: string;
-  color?: string;
-  createdAt: IsoDateTime;
-  updatedAt: IsoDateTime;
-}
-
 /** 事件定义：用户「可以记录什么」 */
 export interface EventDefinition {
   id: string;
@@ -109,12 +177,17 @@ export interface EventDefinition {
    * 周期型不使用属性（周期记的是「哪一天」，不是「一次是什么」），恒为空数组。
    */
   attributes: string[];
+  /**
+   * 自定义字段：一组**带类型**的输入项（枚举单选 / 多选、时间点、时间段），
+   * 记录时逐个选值。只有计数型使用（周期型恒为空数组）。
+   * 与上面的「属性」是两回事：属性是自由文本、只讲「一次是什么」；字段有类型、要选值。
+   */
+  fields: DefinitionField[];
   groupId?: string;
   color?: string;
   /** 图标标识（前端映射），不存字形本身 */
   icon?: string;
   quickOptions: QuickOption[];
-  tagIds: string[];
   /** 归档后不再出现在记录入口，但历史保留 */
   isArchived: boolean;
   sortOrder: number;
@@ -145,7 +218,8 @@ export interface EventDefinitionSnapshot {
   /** 记录时刻定义上的属性列表（可能为空） */
   attributes: string[];
   groupId?: string;
-  tagIds: string[];
+  /** 记录时刻定义上的字段定义（可能为空），供历史记录自证字段的名字与类型 */
+  fields: FieldSnapshot[];
 }
 
 /** 历史记录：一次事实发生的记录 */
@@ -160,14 +234,14 @@ export interface EventRecord {
    * 展示时若为空会回落到快照里的属性列表，见 `recordAttributes`。
    */
   attributes: string[];
+  /** 这一次为各字段选的值（事实）。展示时与快照里的字段定义对照 */
+  fieldValues: FieldValue[];
   /** 事实发生时间（补录时可能早于 recordedAt） */
   occurredAt: IsoDateTime;
   /** 录入时间 */
   recordedAt: IsoDateTime;
   note?: string;
   source: RecordSource;
-  /** 记录时生效的标签，快照保存 */
-  tagIds: string[];
   snapshot: EventDefinitionSnapshot;
   /** 软删除标记：设置后视为已删除，可撤销恢复 */
   deletedAt?: IsoDateTime;
@@ -274,6 +348,6 @@ export function toDefinitionSnapshot(definition: EventDefinition): EventDefiniti
     kind: toRecordKind(definition.kind),
     attributes: [...definition.attributes],
     groupId: definition.groupId,
-    tagIds: [...definition.tagIds],
+    fields: definition.fields.map(toFieldSnapshot),
   };
 }

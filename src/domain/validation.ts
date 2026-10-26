@@ -11,11 +11,16 @@ import { isValidIsoDate } from './dates';
 import { ValidationError } from './errors';
 import {
   isCycleMode,
+  isEnumFieldKind,
   isEventDefinitionKind,
+  isFieldKind,
   isRecordKind,
   isRecordSource,
   type CycleMode,
   type EventDefinitionKind,
+  type FieldKind,
+  type FieldSnapshot,
+  type FieldValue,
   type IsoDate,
   type RecordKind,
   type RecordSource,
@@ -28,12 +33,6 @@ export interface EventGroupInput {
   sortOrder?: number;
 }
 
-/** 标签的输入 */
-export interface TagInput {
-  name: string;
-  color?: string;
-}
-
 /** 快捷选项的输入；id 省略表示新建 */
 export interface QuickOptionInput {
   id?: string;
@@ -43,20 +42,37 @@ export interface QuickOptionInput {
   sortOrder?: number;
 }
 
+/** 自定义字段的输入；id 省略表示新建 */
+export interface FieldInput {
+  id?: string;
+  name: string;
+  kind: FieldKind;
+  /** 枚举型的候选值（single / multi）；其它类型忽略 */
+  options?: string[];
+  sortOrder?: number;
+}
+
+/** 记录时对某个字段的取值；枚举型从候选值里挑，时间点 / 时间段填 `HH:mm` */
+export interface FieldValueInput {
+  fieldId: string;
+  values: string[];
+}
+
 /**
- * 事件定义的草稿：一次提交里包含定义本身、快捷选项与标签关联。
- * 更新语义是**整体替换**——草稿里没有的快捷选项/标签会被移除。
+ * 事件定义的草稿：一次提交里包含定义本身、属性、自定义字段与快捷选项。
+ * 更新语义是**整体替换**——草稿里没有的字段/快捷选项会被移除。
  */
 export interface EventDefinitionDraft {
   name: string;
   kind: EventDefinitionKind;
   /** 属性：自由文本列表（例如「200ml」「温水」），可以一条都不写 */
   attributes?: string[];
+  /** 自定义字段（只有计数型用得上） */
+  fields?: FieldInput[];
   groupId?: string;
   color?: string;
   icon?: string;
   sortOrder?: number;
-  tagIds: string[];
   quickOptions: QuickOptionInput[];
   /** 周期型的做法；计数型忽略 */
   cycleMode?: CycleMode;
@@ -75,6 +91,8 @@ export interface EventRecordInput {
   value: number;
   /** 这一次标上的属性（可多选，也可以不标）；省略即空 */
   attributes?: string[];
+  /** 这一次为各字段选的值；省略即空 */
+  fieldValues?: FieldValueInput[];
   occurredAt?: string;
   note?: string;
   source: RecordSource;
@@ -311,6 +329,187 @@ export function readTextList(json: string): string[] {
     return [];
   }
   return parsed.filter((item): item is string => typeof item === 'string');
+}
+
+/** 字段类型：只接受 single / multi / time / range。 */
+export function requireFieldKind(value: unknown): FieldKind {
+  if (!isFieldKind(value)) {
+    throw new ValidationError(`字段类型不合法：${String(value)}`);
+  }
+  return value;
+}
+
+/** 24 小时制时间点：`HH:mm`（补零）。 */
+const TIME_OF_DAY_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function requireTimeOfDay(value: string, field = '时间'): string {
+  const trimmed = value.trim();
+  if (!TIME_OF_DAY_PATTERN.test(trimmed)) {
+    throw new ValidationError(`${field}要填 24 小时制的「时:分」（例如 08:30）：${value}`);
+  }
+  return trimmed;
+}
+
+/** 自定义字段输入 → 可直接落库的规整结果（枚举型必须至少有一个候选值）。 */
+export function normalizeFieldInput(input: FieldInput): FieldInput {
+  const name = requireName(input.name, '字段名称');
+  const kind = requireFieldKind(input.kind);
+  const options = isEnumFieldKind(kind) ? normalizeTextList(input.options ?? []) : [];
+  if (isEnumFieldKind(kind) && options.length === 0) {
+    throw new ValidationError(`枚举字段「${name}」至少要有一个候选值`);
+  }
+  return { id: input.id, name, kind, options, sortOrder: requireSortOrder(input.sortOrder ?? 0) };
+}
+
+/** 校验规则能用得上的字段信息：定义上的字段与快照里的字段都满足。 */
+export interface FieldLike {
+  id: string;
+  name: string;
+  kind: FieldKind;
+  /** 候选值（枚举型）；只读 */
+  options: readonly string[];
+}
+
+/** 一组取值是否符合某个字段：合规返回值，不合规抛 `ValidationError`。 */
+function requireFieldAssignment(field: FieldLike, raw: readonly string[]): string[] {
+  const values = raw.map((value) => value.trim()).filter((value) => value.length > 0);
+  if (values.length === 0) {
+    return [];
+  }
+  switch (field.kind) {
+    case 'single': {
+      if (values.length > 1) {
+        throw new ValidationError(`字段「${field.name}」只能选一个值`);
+      }
+      if (!field.options.includes(values[0]!)) {
+        throw new ValidationError(`字段「${field.name}」的取值不在候选里：${values[0]}`);
+      }
+      return [values[0]!];
+    }
+    case 'multi': {
+      const picked: string[] = [];
+      for (const value of values) {
+        if (!field.options.includes(value)) {
+          throw new ValidationError(`字段「${field.name}」的取值不在候选里：${value}`);
+        }
+        if (!picked.includes(value)) {
+          picked.push(value);
+        }
+      }
+      return picked;
+    }
+    case 'time':
+      return [requireTimeOfDay(values[0]!, `字段「${field.name}」`)];
+    case 'range': {
+      if (values.length < 2) {
+        throw new ValidationError(`字段「${field.name}」的时间段要填开始与结束两处`);
+      }
+      const start = requireTimeOfDay(values[0]!, `字段「${field.name}」的开始时间`);
+      const end = requireTimeOfDay(values[1]!, `字段「${field.name}」的结束时间`);
+      if (end < start) {
+        throw new ValidationError(`字段「${field.name}」的结束时间不能早于开始时间`);
+      }
+      return [start, end];
+    }
+  }
+}
+
+/**
+ * 把「记录时输入的字段取值」规整成可落库的 `FieldValue[]`。
+ *
+ * - 取值全部落空（没选）的字段会被丢掉，不落一条空记录；
+ * - `dropUnknownFields`（默认 true，记录路径）对**不认识的字段 id 一律忽略**——定义改了、
+ *   字段被删了之后，旧记录里的值再想「照着记一条」时不至于报错；
+ * - 导入外部备份时传 false：备份里出现不认识的字段 id 属于数据坏了，必须拒绝而不是悄悄丢。
+ */
+export function normalizeFieldValues(
+  fields: readonly FieldLike[],
+  inputs: readonly FieldValueInput[],
+  options: { dropUnknownFields?: boolean } = {},
+): FieldValue[] {
+  const dropUnknown = options.dropUnknownFields ?? true;
+  const byId = new Map<string, FieldLike>();
+  for (const field of fields) {
+    byId.set(field.id, field);
+  }
+  const result: FieldValue[] = [];
+  const seen = new Set<string>();
+  for (const input of inputs) {
+    const field = byId.get(input.fieldId);
+    if (!field) {
+      if (dropUnknown) {
+        continue;
+      }
+      throw new ValidationError(`字段取值指向不存在的字段：${input.fieldId}`);
+    }
+    if (seen.has(field.id)) {
+      throw new ValidationError(`字段「${field.name}」出现了重复取值`);
+    }
+    const values = requireFieldAssignment(field, input.values);
+    if (values.length === 0) {
+      continue;
+    }
+    seen.add(field.id);
+    result.push({ fieldId: field.id, values });
+  }
+  return result;
+}
+
+/**
+ * 宽松解析库里存的「字段取值」JSON 文本；坏一行不该让整条记录读不出来。
+ * 解析失败或结构不对时退化为空数组。
+ */
+export function readFieldValues(json: string): FieldValue[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  const result: FieldValue[] = [];
+  for (const item of parsed) {
+    if (typeof item !== 'object' || item === null) {
+      continue;
+    }
+    const row = item as { fieldId?: unknown; values?: unknown };
+    if (typeof row.fieldId !== 'string' || !Array.isArray(row.values)) {
+      continue;
+    }
+    const values = row.values.filter((value): value is string => typeof value === 'string');
+    result.push({ fieldId: row.fieldId, values });
+  }
+  return result;
+}
+
+/** 宽松解析库里存的「字段快照」JSON 文本；同上，坏一行只丢那一行。 */
+export function readFieldSnapshots(json: string): FieldSnapshot[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  const result: FieldSnapshot[] = [];
+  for (const item of parsed) {
+    if (typeof item !== 'object' || item === null) {
+      continue;
+    }
+    const row = item as { id?: unknown; name?: unknown; kind?: unknown; options?: unknown };
+    if (typeof row.id !== 'string' || typeof row.name !== 'string' || !isFieldKind(row.kind)) {
+      continue;
+    }
+    const options = Array.isArray(row.options)
+      ? row.options.filter((value): value is string => typeof value === 'string')
+      : [];
+    result.push({ id: row.id, name: row.name, kind: row.kind, options });
+  }
+  return result;
 }
 
 /** 日历日期：必须是真实存在的 `YYYY-MM-DD`（2 月 31 日这类不算）。 */

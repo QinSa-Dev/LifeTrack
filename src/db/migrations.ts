@@ -15,7 +15,10 @@ export type SqlValue = string | number | null;
 /** 迁移所需的最小数据库能力，便于用内存 SQLite 做单元测试。 */
 export interface MigrationDatabase {
   execAsync(source: string): Promise<void>;
+  /** 带参数写入；需要搬运数据（读出旧行、逐行改写）的迁移用得上 */
+  runAsync(source: string, ...params: SqlValue[]): Promise<{ changes: number }>;
   getFirstAsync<T>(source: string, ...params: SqlValue[]): Promise<T | null>;
+  getAllAsync<T>(source: string, ...params: SqlValue[]): Promise<T[]>;
   withExclusiveTransactionAsync(task: (txn: MigrationDatabase) => Promise<void>): Promise<void>;
 }
 

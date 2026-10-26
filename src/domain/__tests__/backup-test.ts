@@ -17,10 +17,11 @@ import { ImportError } from '@/domain/errors';
 import type {
   CycleEntry,
   CycleInstance,
+  DefinitionField,
   EventDefinition,
   EventGroup,
   EventRecord,
-  Tag,
+  FieldSnapshot,
 } from '@/domain/models';
 
 const T1 = '2026-10-19T08:00:00.000Z';
@@ -28,7 +29,9 @@ const T2 = '2026-10-19T09:00:00.000Z';
 const T3 = '2026-10-20T09:00:00.000Z';
 
 const GROUP_BASE = 100;
+/** 只在「旧备份折算」用例里用：v2 还有全局标签 */
 const TAG_BASE = 200;
+const FIELD_BASE = 250;
 const DEFINITION_BASE = 300;
 const RECORD_BASE = 400;
 const CYCLE_DEFINITION_BASE = 500;
@@ -56,12 +59,24 @@ function makeGroup(index: number, overrides: Partial<EventGroup> = {}): EventGro
   };
 }
 
-function makeTag(index: number, overrides: Partial<Tag> = {}): Tag {
+function makeField(index: number, overrides: Partial<DefinitionField> = {}): DefinitionField {
   return {
-    id: id(TAG_BASE + index),
-    name: `标签${index}`,
-    createdAt: T1,
-    updatedAt: T1,
+    id: id(FIELD_BASE + index),
+    name: `字段${index}`,
+    kind: 'multi',
+    options: [`选项${index}`],
+    sortOrder: index,
+    ...overrides,
+  };
+}
+
+/** 快照里的字段定义：没有 sortOrder（快照只保留展示与校验需要的信息） */
+function makeFieldSnapshot(index: number, overrides: Partial<FieldSnapshot> = {}): FieldSnapshot {
+  return {
+    id: id(FIELD_BASE + index),
+    name: `字段${index}`,
+    kind: 'multi',
+    options: [`选项${index}`],
     ...overrides,
   };
 }
@@ -74,7 +89,7 @@ function makeDefinition(index: number, overrides: Partial<EventDefinition> = {})
     attributes: ['杯'],
     groupId: id(GROUP_BASE + 1),
     quickOptions: [{ id: id(900 + index), attribute: '杯', value: 1, sortOrder: 0 }],
-    tagIds: [id(TAG_BASE + 1)],
+    fields: [makeField(1)],
     isArchived: false,
     sortOrder: index,
     createdAt: T1,
@@ -94,14 +109,14 @@ function makeRecord(index: number, overrides: Partial<EventRecord> = {}): EventR
     occurredAt: T1,
     recordedAt: T1,
     source: 'manual',
-    tagIds: [id(TAG_BASE + 1)],
+    fieldValues: [{ fieldId: id(FIELD_BASE + 1), values: [`选项1`] }],
     snapshot: {
       definitionId,
       name: '事件1',
       kind: 'counter',
       attributes: ['杯'],
       groupId: id(GROUP_BASE + 1),
-      tagIds: [id(TAG_BASE + 1)],
+      fields: [makeFieldSnapshot(1)],
     },
     ...overrides,
   };
@@ -116,10 +131,10 @@ function makeCycleDefinition(index: number, overrides: Partial<EventDefinition> 
     cycleMode: 'manual',
     averageCycleLengthDays: 28,
     averagePeriodLengthDays: 5,
-    // 周期型不使用属性
+    // 周期型不使用属性与自定义字段
     attributes: [],
     quickOptions: [],
-    tagIds: [],
+    fields: [],
     isArchived: false,
     sortOrder: index,
     createdAt: T1,
@@ -152,11 +167,10 @@ function makeCycleEntry(index: number, overrides: Partial<CycleEntry> = {}): Cyc
   };
 }
 
-/** 一份自洽的最小数据：1 分组 / 1 标签 / 1 计数定义 + 1 周期定义 / 1 记录 / 1 实例 / 1 每日记录 */
+/** 一份自洽的最小数据：1 分组 / 1 计数定义（带一个字段）+ 1 周期定义 / 1 记录 / 1 实例 / 1 每日记录 */
 function fixtureData(overrides: Partial<BackupData> = {}): BackupData {
   return {
     eventGroups: [makeGroup(1)],
-    tags: [makeTag(1)],
     eventDefinitions: [makeDefinition(1), makeCycleDefinition(1)],
     eventRecords: [makeRecord(1)],
     cycleInstances: [makeCycleInstance(1)],
@@ -288,7 +302,7 @@ describe('parseBackup', () => {
               kind: 'counter',
               attributes: ['杯'],
               groupId: group,
-              tagIds: [id(TAG_BASE + 1)],
+              fields: [makeFieldSnapshot(1)],
             },
           }),
         ],
@@ -347,9 +361,24 @@ describe('parseBackup', () => {
     expect(() => parseBackup(rawFile({ eventGroups: [{ ...jsonOf(makeGroup(1)), name: '  ' }] }))).toThrow(
       /data\.eventGroups\[0\]\.name/,
     );
-    expect(() => parseBackup(rawFile({ tags: [{ ...jsonOf(makeTag(1)), color: 42 }] }))).toThrow(
-      /data\.tags\[0\]\.color/,
-    );
+    expect(() =>
+      parseBackup(
+        rawFile({
+          eventDefinitions: [
+            { ...jsonOf(makeDefinition(1)), fields: [{ ...jsonOf(makeField(1)), kind: 'when' }] },
+          ],
+        }),
+      ),
+    ).toThrow(/data\.eventDefinitions\[0\]\.fields\[0\]/);
+    expect(() =>
+      parseBackup(
+        rawFile({
+          eventDefinitions: [
+            { ...jsonOf(makeDefinition(1)), fields: [{ ...jsonOf(makeField(1)), options: [] }] },
+          ],
+        }),
+      ),
+    ).toThrow(/至少要有一个候选值/);
   });
 
   it('领域规则照旧生效：补录不能晚于录入时间', () => {
@@ -358,7 +387,7 @@ describe('parseBackup', () => {
     expect(() => parseBackup(rawFile({ eventRecords: [record] }))).toThrow(/occurredAt/);
   });
 
-  it('快照必须自洽：definitionId / kind / tagIds 与记录本体一致', () => {
+  it('快照必须自洽：definitionId / kind 与记录本体一致，字段取值也要对得上快照', () => {
     const record = jsonOf(makeRecord(1));
 
     expect(() =>
@@ -377,23 +406,22 @@ describe('parseBackup', () => {
         }),
       ),
     ).toThrow(/snapshot\.kind/);
-    expect(() => parseBackup(rawFile({ eventRecords: [{ ...record, tagIds: [] }] }))).toThrow(
-      /data\.eventRecords\[0\]\.tagIds/,
-    );
+    // 字段取值指向快照里没有的字段 → 拒绝
+    expect(() =>
+      parseBackup(
+        rawFile({
+          eventRecords: [{ ...record, fieldValues: [{ fieldId: id(999), values: ['选项1'] }] }],
+        }),
+      ),
+    ).toThrow(/data\.eventRecords\[0\]\.fieldValues/);
   });
 
   it('引用完整性：指向不存在的父实体一律拒绝', () => {
     const definition = jsonOf(makeDefinition(1));
-    const group = jsonOf(makeGroup(1));
 
     expect(() => parseBackup(rawFile({ eventDefinitions: [{ ...definition, groupId: id(999) }] }))).toThrow(
       /指向不存在的分组/,
     );
-    expect(() =>
-      parseBackup(
-        rawFile({ eventGroups: [group], eventDefinitions: [{ ...definition, tagIds: [id(999)] }] }),
-      ),
-    ).toThrow(/指向不存在的标签/);
     expect(() =>
       parseBackup(rawFile({ cycleInstances: [jsonOf(makeCycleInstance(1, { definitionId: id(999) }))] })),
     ).toThrow(/指向不存在的周期型事件/);
@@ -480,17 +508,16 @@ describe('parseBackup', () => {
     expect(() => parseBackup(rawFile({ eventRecords: [record] }))).not.toThrow();
   });
 
-  it('归一化：名称去空白、标签去重，周期结束日不得早于开始日', () => {
+  it('归一化：名称去空白、字段候选值去重，周期结束日不得早于开始日', () => {
     const group = jsonOf(makeGroup(1, { name: '  健康  ' }));
-    const tag = jsonOf(makeTag(1));
-    const definition = jsonOf(makeDefinition(1, { tagIds: [id(TAG_BASE + 1), id(TAG_BASE + 1)] }));
-
-    const parsed = parseBackup(
-      rawFile({ eventGroups: [group], tags: [tag], eventDefinitions: [definition] }),
+    const definition = jsonOf(
+      makeDefinition(1, { fields: [makeField(1, { options: ['早晨', '早晨', '  ', '晚上'] })] }),
     );
 
+    const parsed = parseBackup(rawFile({ eventGroups: [group], eventDefinitions: [definition] }));
+
     expect(parsed.data.eventGroups[0]?.name).toBe('健康');
-    expect(parsed.data.eventDefinitions[0]?.tagIds).toEqual([id(TAG_BASE + 1)]);
+    expect(parsed.data.eventDefinitions[0]?.fields[0]?.options).toEqual(['早晨', '晚上']);
 
     expect(() =>
       parseBackup(
@@ -534,8 +561,8 @@ describe('parseBackup', () => {
         averageCycleLengthDays: 28,
         averagePeriodLengthDays: 5,
         quickOptions: [],
-        tagIds: [],
         attributes: [],
+        fields: [],
         isArchived: false,
         sortOrder: 0,
         createdAt: T1,
@@ -589,7 +616,6 @@ describe('parseBackup', () => {
     const definition = {
       ...jsonOf(makeDefinition(1)),
       groupId: undefined,
-      tagIds: [],
       attributes: ['温水', '200ml'],
     };
     const parsed = parseBackup(rawFile({ eventDefinitions: [definition] }));
@@ -601,7 +627,6 @@ describe('parseBackup', () => {
     const definition = {
       ...jsonOf(makeDefinition(1)),
       groupId: undefined,
-      tagIds: [],
       attributes: ['温水', 200],
     };
     expect(() => parseBackup(rawFile({ eventDefinitions: [definition] }))).toThrow(
@@ -628,6 +653,50 @@ describe('parseBackup', () => {
 
     expect(parsed.data.eventRecords[0]).toMatchObject({ kind: 'quantity', attributes: ['公里'] });
     expect(parsed.data.eventRecords[0]?.snapshot.attributes).toEqual(['公里']);
+  });
+
+  it('v2 备份：全局标签折成「标签」多选字段，记录的标签值搬成字段取值', () => {
+    const tag = { id: id(TAG_BASE + 1), name: '早晨', createdAt: T1, updatedAt: T1 };
+    const definition = {
+      ...jsonOf(makeDefinition(1)),
+      fields: [],
+      tagIds: [id(TAG_BASE + 1)],
+    };
+    const record: Record<string, unknown> = {
+      ...jsonOf(makeRecord(1)),
+      // v2 的记录没有 fieldValues，标签值在 tagIds / snapshot.tagIds 里
+      fieldValues: undefined,
+      tagIds: [id(TAG_BASE + 1)],
+      snapshot: {
+        ...(jsonOf(makeRecord(1)).snapshot as Record<string, unknown>),
+        fields: undefined,
+        tagIds: [id(TAG_BASE + 1)],
+      },
+    };
+
+    const parsed = parseBackup(
+      rawFile(
+        {
+          eventGroups: [jsonOf(makeGroup(1))],
+          tags: [tag],
+          eventDefinitions: [definition],
+          eventRecords: [record],
+        },
+        { formatVersion: 2 },
+      ),
+    );
+
+    const folded = parsed.data.eventDefinitions[0]!;
+    expect(folded.fields).toHaveLength(1);
+    expect(folded.fields[0]?.name).toBe('标签');
+    expect(folded.fields[0]?.kind).toBe('multi');
+    expect(folded.fields[0]?.options).toEqual(['早晨']);
+
+    const parsedRecord = parsed.data.eventRecords[0]!;
+    expect(parsedRecord.snapshot.fields).toEqual([
+      { id: folded.fields[0]!.id, name: '标签', kind: 'multi', options: ['早晨'] },
+    ]);
+    expect(parsedRecord.fieldValues).toEqual([{ fieldId: folded.fields[0]!.id, values: ['早晨'] }]);
   });
 });
 
@@ -682,16 +751,25 @@ describe('mergeBackup', () => {
   });
 
   it('同 id 冲突：updatedAt 较新的胜出；完全相同则保留本地不重写', () => {
-    const local = fixtureData({ tags: [makeTag(1, { name: '早上', updatedAt: T2 })] });
-    const older = mergeBackup(local, fixtureData({ tags: [makeTag(1, { name: '旧名', updatedAt: T1 })] }));
-    const same = mergeBackup(local, fixtureData({ tags: [makeTag(1, { name: '早上', updatedAt: T2 })] }));
-    const newer = mergeBackup(local, fixtureData({ tags: [makeTag(1, { name: '新名', updatedAt: T3 })] }));
+    const local = fixtureData({ eventGroups: [makeGroup(1, { name: '早上', updatedAt: T2 })] });
+    const older = mergeBackup(
+      local,
+      fixtureData({ eventGroups: [makeGroup(1, { name: '旧名', updatedAt: T1 })] }),
+    );
+    const same = mergeBackup(
+      local,
+      fixtureData({ eventGroups: [makeGroup(1, { name: '早上', updatedAt: T2 })] }),
+    );
+    const newer = mergeBackup(
+      local,
+      fixtureData({ eventGroups: [makeGroup(1, { name: '新名', updatedAt: T3 })] }),
+    );
 
-    expect(older.data.tags[0]?.name).toBe('早上');
-    expect(older.summary.collections.tags).toEqual({ added: 0, updated: 0, kept: 1 });
-    expect(same.summary.collections.tags.updated).toBe(0);
-    expect(newer.data.tags[0]?.name).toBe('新名');
-    expect(newer.summary.collections.tags).toEqual({ added: 0, updated: 1, kept: 0 });
+    expect(older.data.eventGroups[0]?.name).toBe('早上');
+    expect(older.summary.collections.eventGroups).toEqual({ added: 0, updated: 0, kept: 1 });
+    expect(same.summary.collections.eventGroups.updated).toBe(0);
+    expect(newer.data.eventGroups[0]?.name).toBe('新名');
+    expect(newer.summary.collections.eventGroups).toEqual({ added: 0, updated: 1, kept: 0 });
   });
 
   it('事件记录：备份里已删除的标记会合进来（删除是后发生的状态）', () => {
@@ -756,7 +834,7 @@ describe('mergeBackup', () => {
     const local = emptyBackupData();
     const { summary } = mergeBackup(local, fixtureData());
 
-    expect(summary.totals).toEqual({ added: 7, updated: 0, kept: 0 });
+    expect(summary.totals).toEqual({ added: 6, updated: 0, kept: 0 });
     expect(summary.collections.cycleEntries).toEqual({ added: 1, updated: 0, kept: 0 });
   });
 });

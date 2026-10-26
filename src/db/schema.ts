@@ -390,6 +390,202 @@ export const MIGRATION_V6_CYCLE_AS_EVENT_KIND: Migration = {
   ],
 };
 
+/**
+ * 迁移里用到的极小 JSON 解析：**故意不依赖 `domain/validation` 的 `readTextList`**。
+ *
+ * 迁移是历史的一部分——它一旦在别人的库上跑过就固定了。若它调用会随版本演进变化的
+ * 业务函数，同一个迁移在「今天」和「明年」就可能跑出不同结果。所以这里自带一份最小实现。
+ */
+function parseStringArray(json: string): string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return parsed.filter((item): item is string => typeof item === 'string');
+}
+
+/** 仅迁移内部使用：生成一个 UUID 形状的字段主键（与运行时 `newId` 同形，但不依赖它）。 */
+function migrationUuid(): string {
+  // 版本位固定 7、变体位固定 8：形状上就是 UUID v7，`assertEntityId` 认它。
+  const hex = '0123456789abcdef';
+  let out = '';
+  for (let i = 0; i < 32; i += 1) {
+    out += hex[Math.floor(Math.random() * 16)];
+  }
+  return `${out.slice(0, 8)}-${out.slice(8, 12)}-7${out.slice(13, 16)}-8${out.slice(17, 20)}-${out.slice(20, 32)}`;
+}
+
+/**
+ * v7：**自定义字段替换全局标签**（第二阶段·自定义字段）。
+ *
+ * 产品模型又变了一次：事件定义上的「标签」不再是一个全局共享的实体，而是**每个事件
+ * 自己的一组带类型的字段**（枚举单选 / 多选、时间点、时间段）。记录时给这些字段选值，
+ * 值随记录一起存下来（快照里带上字段定义，历史照样能自证）。
+ *
+ * 现有标签数据怎么搬（**不丢**）：
+ * - 给每个「本来挂着标签」的定义造**一条多选字段**（名字就叫「标签」，选项 = 这些标签名）；
+ * - 该定义下每条记录原本的快照标签值，一并搬成这条字段的取值；
+ * - 选项取「定义当前挂的标签」∪「它记录里出现过的标签」的并集，避免历史值落在选项之外。
+ *
+ * 为什么 `event_records` 要重建：要把 `snapshot_tag_ids` 换成 `snapshot_fields` 并新增
+ * `field_values`，SQLite 改不了列名/删列，只能重建。好在这张表**没有外键、也没有谁引用它**
+ * （历史独立于定义），重建不会牵连别人。
+ *
+ * 为什么 `tags` / `event_definition_tags` 直接删掉：标签已被字段取代，且数据都已经折算完；
+ * 留着一张没人用的表只会让后来的人猜它还要不要维护。
+ */
+export const MIGRATION_V7_CUSTOM_FIELDS: Migration = {
+  version: 7,
+  name: 'custom_fields_replace_tags',
+  statements: [
+    `CREATE TABLE event_definition_fields (
+       id            TEXT    PRIMARY KEY NOT NULL,
+       definition_id TEXT    NOT NULL REFERENCES event_definitions(id) ON DELETE CASCADE,
+       name          TEXT    NOT NULL,
+       kind          TEXT    NOT NULL CHECK (kind IN ('single', 'multi', 'time', 'range')),
+       options       TEXT    NOT NULL DEFAULT '[]',
+       sort_order    INTEGER NOT NULL DEFAULT 0,
+       created_at    TEXT    NOT NULL,
+       updated_at    TEXT    NOT NULL
+     );`,
+    `CREATE INDEX idx_event_definition_fields_definition_id ON event_definition_fields(definition_id);`,
+  ],
+  up: async (db) => {
+    const now = new Date().toISOString();
+
+    // --- 1. 读出现有标签：id → 名称，以及「定义 → 挂着的标签 id」---
+    const tagNameById = new Map<string, string>();
+    for (const row of await db.getAllAsync<{ id: string; name: string }>('SELECT id, name FROM tags')) {
+      tagNameById.set(row.id, row.name);
+    }
+    const tagIdsByDefinition = new Map<string, string[]>();
+    for (const row of await db.getAllAsync<{ definition_id: string; tag_id: string }>(
+      'SELECT definition_id, tag_id FROM event_definition_tags',
+    )) {
+      const list = tagIdsByDefinition.get(row.definition_id) ?? [];
+      list.push(row.tag_id);
+      tagIdsByDefinition.set(row.definition_id, list);
+    }
+
+    // 自定义字段只有计数型使用（周期型记的是「哪一天」），所以只有计数型定义才折标签。
+    const definitionKindById = new Map<string, string>();
+    for (const row of await db.getAllAsync<{ id: string; kind: string }>(
+      'SELECT id, kind FROM event_definitions',
+    )) {
+      definitionKindById.set(row.id, row.kind);
+    }
+
+    // --- 2. 读出全部记录，收集「记录里出现过」的标签 id（补全字段选项用）---
+    const recordRows = await db.getAllAsync<{ id: string; definition_id: string; snapshot_tag_ids: string }>(
+      'SELECT id, definition_id, snapshot_tag_ids FROM event_records',
+    );
+    const snapshotTagIdsByRecord = new Map<string, string[]>();
+    const observedByDefinition = new Map<string, Set<string>>();
+    for (const row of recordRows) {
+      const ids = parseStringArray(row.snapshot_tag_ids);
+      snapshotTagIdsByRecord.set(row.id, ids);
+      const observed = observedByDefinition.get(row.definition_id) ?? new Set<string>();
+      for (const id of ids) {
+        observed.add(id);
+      }
+      observedByDefinition.set(row.definition_id, observed);
+    }
+
+    // --- 3. 给「本来有标签」的定义各造一条「标签」多选字段 ---
+    const fieldByDefinition = new Map<string, { id: string; options: string[] }>();
+    const definitionIds = new Set<string>([...tagIdsByDefinition.keys(), ...observedByDefinition.keys()]);
+    for (const definitionId of definitionIds) {
+      if (definitionKindById.get(definitionId) !== 'counter') {
+        continue;
+      }
+      const names = new Set<string>();
+      for (const tagId of tagIdsByDefinition.get(definitionId) ?? []) {
+        const name = tagNameById.get(tagId);
+        if (name !== undefined) {
+          names.add(name);
+        }
+      }
+      for (const tagId of observedByDefinition.get(definitionId) ?? []) {
+        const name = tagNameById.get(tagId);
+        if (name !== undefined) {
+          names.add(name);
+        }
+      }
+      if (names.size === 0) {
+        continue;
+      }
+      const options = [...names].sort();
+      const fieldId = migrationUuid();
+      await db.runAsync(
+        `INSERT INTO event_definition_fields
+           (id, definition_id, name, kind, options, sort_order, created_at, updated_at)
+         VALUES (?, ?, '标签', 'multi', ?, 0, ?, ?)`,
+        fieldId,
+        definitionId,
+        JSON.stringify(options),
+        now,
+        now,
+      );
+      fieldByDefinition.set(definitionId, { id: fieldId, options });
+    }
+
+    // --- 4. 重建 event_records：snapshot_tag_ids → snapshot_fields + field_values ---
+    await db.execAsync(
+      `CREATE TABLE event_records_new (
+         id                  TEXT    PRIMARY KEY NOT NULL,
+         definition_id       TEXT    NOT NULL,
+         kind                TEXT    NOT NULL CHECK (kind IN ('counter', 'quantity')),
+         value               REAL    NOT NULL,
+         attributes          TEXT    NOT NULL DEFAULT '[]',
+         occurred_at         TEXT    NOT NULL,
+         recorded_at         TEXT    NOT NULL,
+         note                TEXT,
+         source              TEXT    NOT NULL CHECK (source IN ('manual', 'quick', 'backfill')),
+         deleted_at          TEXT,
+         snapshot_name       TEXT    NOT NULL,
+         snapshot_attributes TEXT    NOT NULL DEFAULT '[]',
+         snapshot_group_id   TEXT,
+         snapshot_fields     TEXT    NOT NULL DEFAULT '[]',
+         field_values        TEXT    NOT NULL DEFAULT '[]'
+       );`,
+    );
+    for (const row of recordRows) {
+      const field = fieldByDefinition.get(row.definition_id);
+      const values = (snapshotTagIdsByRecord.get(row.id) ?? [])
+        .map((tagId) => tagNameById.get(tagId))
+        .filter((name): name is string => name !== undefined);
+      const fieldValues = field && values.length > 0 ? [{ fieldId: field.id, values }] : [];
+      const snapshotFields = field
+        ? [{ id: field.id, name: '标签', kind: 'multi', options: field.options }]
+        : [];
+      await db.runAsync(
+        `INSERT INTO event_records_new
+           (id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at,
+            snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_fields, field_values)
+         SELECT id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at,
+                snapshot_name, snapshot_attributes, snapshot_group_id, ?, ?
+           FROM event_records WHERE id = ?`,
+        JSON.stringify(snapshotFields),
+        JSON.stringify(fieldValues),
+        row.id,
+      );
+    }
+    await db.execAsync('DROP TABLE event_records;');
+    await db.execAsync('ALTER TABLE event_records_new RENAME TO event_records;');
+    await db.execAsync('CREATE INDEX idx_event_records_occurred_at ON event_records(occurred_at DESC);');
+    await db.execAsync('CREATE INDEX idx_event_records_definition_id ON event_records(definition_id);');
+
+    // --- 5. 卸磨杀驴：标签表不再需要（先删子表，避免外键挡住 DROP）---
+    await db.execAsync('DROP TABLE event_definition_tags;');
+    await db.execAsync('DROP TABLE tags;');
+  },
+};
+
 /** 全部迁移，顺序即执行顺序。 */
 export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V1_BASELINE,
@@ -398,6 +594,7 @@ export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V4_CYCLE,
   MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE,
   MIGRATION_V6_CYCLE_AS_EVENT_KIND,
+  MIGRATION_V7_CUSTOM_FIELDS,
 ];
 
 /** 当前应用支持的 schema 版本。 */

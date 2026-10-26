@@ -10,7 +10,6 @@ import { EventDefinitionRepository } from '@/repositories/eventDefinitionReposit
 import { EventGroupRepository } from '@/repositories/eventGroupRepository';
 import { EventRecordRepository } from '@/repositories/eventRecordRepository';
 import { MetaRepository } from '@/repositories/metaRepository';
-import { TagRepository } from '@/repositories/tagRepository';
 
 const T1 = '2026-10-19T08:00:00.000Z';
 const T2 = '2026-10-19T09:00:00.000Z';
@@ -21,7 +20,6 @@ interface Context {
   db: TestDatabase;
   backup: BackupRepository;
   groups: EventGroupRepository;
-  tags: TagRepository;
   definitions: EventDefinitionRepository;
   records: EventRecordRepository;
   instances: CycleInstanceRepository;
@@ -36,7 +34,6 @@ async function setup(): Promise<Context> {
     db,
     backup: new BackupRepository(db),
     groups: new EventGroupRepository(db),
-    tags: new TagRepository(db),
     definitions: new EventDefinitionRepository(db),
     records: new EventRecordRepository(db),
     instances: new CycleInstanceRepository(db),
@@ -46,36 +43,37 @@ async function setup(): Promise<Context> {
 }
 
 /**
- * 一份有代表性的数据：分组 / 标签 / 带快捷选项的定义 / 归档的定义 /
- * 有效记录 / 软删除记录 / 周期型事件 + 实例 + 每日记录。
+ * 一份有代表性的数据：分组 / 带自定义字段与快捷选项的定义 / 归档的定义 /
+ * 带字段取值的有效记录 / 软删除记录 / 周期型事件 + 实例 + 每日记录。
  */
 async function seed(context: Context): Promise<void> {
   const group = await context.groups.create({ name: '健康', color: '#0af' }, T1);
-  const tag = await context.tags.create({ name: '早晨' }, T1);
 
-  await context.definitions.create(
+  const definition = await context.definitions.create(
     {
       name: '喝水',
       kind: 'counter',
       attributes: ['杯', '温水'],
       groupId: group.id,
-      tagIds: [tag.id],
+      fields: [{ name: '时段', kind: 'multi', options: ['早晨', '晚上'] }],
       quickOptions: [{ attribute: '杯', value: 1, sortOrder: 0 }],
     },
     T1,
   );
   const archived = await context.definitions.create(
-    { name: '咖啡', kind: 'counter', attributes: ['杯'], tagIds: [], quickOptions: [] },
+    { name: '咖啡', kind: 'counter', attributes: ['杯'], quickOptions: [] },
     T1,
   );
   await context.definitions.setArchived(archived.id, true, T1);
 
-  const definition = (await context.definitions.list()).find((item) => item.name === '喝水');
-  if (!definition) {
-    throw new Error('夹具数据缺失：喝水');
-  }
   await context.records.record(
-    { definitionId: definition.id, value: 1, attributes: ['温水'], source: 'manual' },
+    {
+      definitionId: definition.id,
+      value: 1,
+      attributes: ['温水'],
+      fieldValues: [{ fieldId: definition.fields[0]!.id, values: ['早晨'] }],
+      source: 'manual',
+    },
     T1,
   );
   const dropped = await context.records.record(
@@ -90,7 +88,6 @@ async function seed(context: Context): Promise<void> {
       kind: 'cycle',
       cycleMode: 'manual',
       averageCycleLengthDays: 28,
-      tagIds: [],
       quickOptions: [],
     },
     T1,
@@ -145,6 +142,7 @@ describe('BackupRepository.exportAll', () => {
     expect(names).toEqual(['喝水', '咖啡', '生理期']);
     expect(findDefinition(file, '咖啡').isArchived).toBe(true);
     expect(findDefinition(file, '喝水').attributes).toEqual(['杯', '温水']);
+    expect(findDefinition(file, '喝水').fields.map((field) => field.name)).toEqual(['时段']);
     expect(findDefinition(file, '喝水').quickOptions).toHaveLength(1);
     expect(findDefinition(file, '生理期').cycleMode).toBe('manual');
     expect(file.data.eventRecords).toHaveLength(2);
@@ -207,7 +205,7 @@ describe('BackupRepository.importAll', () => {
     try {
       const summary = await target.backup.importAll(file);
 
-      expect(summary.totals.added).toBe(9); // 1 分组 + 1 标签 + 2 定义 + 2 记录 + 1 周期定义 + 1 实例 + 1 记录
+      expect(summary.totals.added).toBe(8); // 1 分组 + 3 定义 + 2 记录 + 1 周期实例 + 1 周期记录
       expect(summary.totals.updated).toBe(0);
       expect(summary.totals.kept).toBe(0);
       expect(sortBackupData(await target.backup.readAll())).toEqual(file.data);
@@ -224,7 +222,7 @@ describe('BackupRepository.importAll', () => {
     const second = await context.backup.importAll(file);
 
     expect(first.totals.added).toBe(0);
-    expect(second.totals).toEqual({ added: 0, updated: 0, kept: 9 });
+    expect(second.totals).toEqual({ added: 0, updated: 0, kept: 8 });
   });
 
   it('导入是合并：本地独有的数据一定保留', async () => {
@@ -251,7 +249,7 @@ describe('BackupRepository.importAll', () => {
     // 本地改一次名（updatedAt = T3）
     await context.definitions.update(
       id,
-      { name: '喝水（本地）', kind: 'counter', attributes: ['杯'], tagIds: [], quickOptions: [] },
+      { name: '喝水（本地）', kind: 'counter', attributes: ['杯'], quickOptions: [] },
       T3,
     );
 
@@ -345,7 +343,7 @@ describe('BackupRepository.importAll', () => {
     const summary = await context.backup.previewImport(file);
 
     expect(summary.totals.added).toBe(0);
-    expect(summary.totals.kept).toBe(9);
+    expect(summary.totals.kept).toBe(8);
     expect(sortBackupData(await context.backup.readAll())).toEqual(before);
   });
 

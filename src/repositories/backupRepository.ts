@@ -3,7 +3,7 @@
  *
  * 这一层只做三件事，规则本身在 `domain/backup.ts`（纯函数，可单测）：
  *
- * 1. **导出**：把六张业务表读成领域对象，交给 `createBackup` 打包。
+ * 1. **导出**：把五张业务表读成领域对象，交给 `createBackup` 打包。
  *    归档的定义、软删除的记录**都要导出**——否则「备份」就不是无损的。
  *    `app_meta`（安装时间 / 启动次数）是本机诊断信息，不进备份。
  * 2. **导入 = 合并**：先读本地现有数据，用纯函数算出「本地 ∪ 备份」的结果，
@@ -36,22 +36,20 @@ import { CycleInstanceRepository } from './cycleInstanceRepository';
 import { EventDefinitionRepository } from './eventDefinitionRepository';
 import { EventGroupRepository } from './eventGroupRepository';
 import { EventRecordRepository } from './eventRecordRepository';
-import { TagRepository } from './tagRepository';
 
 /** 清空顺序：先子表后父表（外键 + CASCADE 之下顺序并不严格，但这样最直白）。 */
 const DELETE_ORDER = [
   'cycle_entries',
   'cycle_instances',
   'event_records',
-  'event_definition_tags',
+  'event_definition_fields',
   'quick_options',
   'event_definitions',
-  'tags',
   'event_groups',
 ] as const;
 
-// 写入顺序是上面清空顺序的逆序：父表（分组 / 标签 / 事件定义）先写，
-// 子表（快捷选项 / 关联 / 记录 / 实例 / 周期记录）后写，`writeAll` 里逐表照着来。
+// 写入顺序是上面清空顺序的逆序：父表（分组 / 事件定义）先写，
+// 子表（自定义字段 / 快捷选项 / 记录 / 实例 / 周期记录）后写，`writeAll` 里逐表照着来。
 // 周期型事件就在 `event_definitions` 里（kind = 'cycle'），不再是单独一张表。
 
 export class BackupRepository {
@@ -68,15 +66,13 @@ export class BackupRepository {
   async readAll(): Promise<BackupData> {
     return guard('读取备份数据', async () => {
       const eventGroups = new EventGroupRepository(this.db);
-      const tags = new TagRepository(this.db);
       const definitions = new EventDefinitionRepository(this.db);
       const records = new EventRecordRepository(this.db);
       const cycleInstances = new CycleInstanceRepository(this.db);
       const cycleEntries = new CycleEntryRepository(this.db);
 
-      const [groupList, tagList, definitionList, recordList, instanceList, entryList] = await Promise.all([
+      const [groupList, definitionList, recordList, instanceList, entryList] = await Promise.all([
         eventGroups.list(),
-        tags.list(),
         // 周期型事件也在 event_definitions 里，所以这一个列表就是全部定义
         definitions.list({ includeArchived: true }),
         records.list({ includeDeleted: true }),
@@ -86,7 +82,6 @@ export class BackupRepository {
 
       return {
         eventGroups: groupList,
-        tags: tagList,
         eventDefinitions: definitionList,
         eventRecords: recordList,
         cycleInstances: instanceList,
@@ -144,7 +139,7 @@ export class BackupRepository {
   }
 
   private async writeAll(txn: SqlExecutor, data: BackupData): Promise<void> {
-    // 依赖顺序：分组 → 标签 → 事件定义（含快捷选项 / 标签关联）→ 事件记录
+    // 依赖顺序：分组 → 事件定义（含自定义字段 / 快捷选项）→ 事件记录
     //          → 周期定义 → 周期实例 → 周期记录
     for (const group of data.eventGroups) {
       await txn.runAsync(
@@ -156,17 +151,6 @@ export class BackupRepository {
         group.sortOrder,
         group.createdAt,
         group.updatedAt,
-      );
-    }
-
-    for (const tag of data.tags) {
-      await txn.runAsync(
-        `INSERT INTO tags (id, name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-        tag.id,
-        tag.name,
-        tag.color ?? null,
-        tag.createdAt,
-        tag.updatedAt,
       );
     }
 
@@ -202,11 +186,19 @@ export class BackupRepository {
           option.sortOrder,
         );
       }
-      for (const tagId of definition.tagIds) {
+      for (const field of definition.fields) {
         await txn.runAsync(
-          'INSERT INTO event_definition_tags (definition_id, tag_id) VALUES (?, ?)',
+          `INSERT INTO event_definition_fields
+             (id, definition_id, name, kind, options, sort_order, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          field.id,
           definition.id,
-          tagId,
+          field.name,
+          field.kind,
+          JSON.stringify(field.options),
+          field.sortOrder,
+          definition.createdAt,
+          definition.updatedAt,
         );
       }
     }
@@ -215,8 +207,8 @@ export class BackupRepository {
       await txn.runAsync(
         `INSERT INTO event_records
            (id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at,
-            snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_tag_ids)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_fields, field_values)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         record.id,
         record.definitionId,
         record.kind,
@@ -230,7 +222,8 @@ export class BackupRepository {
         record.snapshot.name,
         JSON.stringify(record.snapshot.attributes),
         record.snapshot.groupId ?? null,
-        JSON.stringify(record.snapshot.tagIds),
+        JSON.stringify(record.snapshot.fields),
+        JSON.stringify(record.fieldValues),
       );
     }
 
@@ -272,10 +265,9 @@ function expectedCounts(data: BackupData): readonly { table: string; expected: n
   const sum = (values: readonly number[]): number => values.reduce((total, value) => total + value, 0);
   return [
     { table: 'event_groups', expected: data.eventGroups.length },
-    { table: 'tags', expected: data.tags.length },
     { table: 'event_definitions', expected: data.eventDefinitions.length },
     { table: 'quick_options', expected: sum(data.eventDefinitions.map((d) => d.quickOptions.length)) },
-    { table: 'event_definition_tags', expected: sum(data.eventDefinitions.map((d) => d.tagIds.length)) },
+    { table: 'event_definition_fields', expected: sum(data.eventDefinitions.map((d) => d.fields.length)) },
     { table: 'event_records', expected: data.eventRecords.length },
     { table: 'cycle_instances', expected: data.cycleInstances.length },
     { table: 'cycle_entries', expected: data.cycleEntries.length },

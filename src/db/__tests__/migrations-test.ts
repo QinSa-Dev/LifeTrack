@@ -8,6 +8,7 @@ import {
   MIGRATION_V4_CYCLE,
   MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE,
   MIGRATION_V6_CYCLE_AS_EVENT_KIND,
+  MIGRATION_V7_CUSTOM_FIELDS,
 } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { MigrationError } from '@/domain/errors';
@@ -45,7 +46,7 @@ describe('迁移清单校验', () => {
 
   it('当前仓库的迁移清单是合法的', () => {
     expect(() => validateMigrations(MIGRATIONS)).not.toThrow();
-    expect(LATEST_SCHEMA_VERSION).toBe(6);
+    expect(LATEST_SCHEMA_VERSION).toBe(7);
   });
 });
 
@@ -63,8 +64,8 @@ describe('runMigrations', () => {
   it('全新数据库：建表并提升 user_version', async () => {
     const result = await runMigrations(db, MIGRATIONS);
 
-    expect(result).toEqual({ from: 0, to: 6, applied: [1, 2, 3, 4, 5, 6] });
-    expect(await readSchemaVersion(db)).toBe(6);
+    expect(result).toEqual({ from: 0, to: 7, applied: [1, 2, 3, 4, 5, 6, 7] });
+    expect(await readSchemaVersion(db)).toBe(7);
     expect(tableExists(db, 'app_meta')).toBe(true);
     expect(tableExists(db, 'event_definitions')).toBe(true);
     expect(tableExists(db, 'event_records')).toBe(true);
@@ -91,7 +92,7 @@ describe('runMigrations', () => {
     await runMigrations(db, MIGRATIONS);
     const second = await runMigrations(db, MIGRATIONS);
 
-    expect(second).toEqual({ from: 6, to: 6, applied: [] });
+    expect(second).toEqual({ from: 7, to: 7, applied: [] });
   });
 
   it('数据库版本高于应用支持版本时拒绝启动，且不破坏数据', async () => {
@@ -167,7 +168,8 @@ describe('v2 事件定义结构', () => {
 
   beforeEach(async () => {
     db = createTestDatabase();
-    await runMigrations(db, MIGRATIONS);
+    // 只跑到 v6：v7 会把 tags / event_definition_tags 删掉，那之后这套结构就不存在了
+    await runMigrations(db, upTo(6));
   });
 
   afterEach(() => {
@@ -283,8 +285,8 @@ describe('v2 事件定义结构', () => {
 
       const result = await runMigrations(legacy, MIGRATIONS);
 
-      expect(result).toEqual({ from: 1, to: 6, applied: [2, 3, 4, 5, 6] });
-      expect(await readSchemaVersion(legacy)).toBe(6);
+      expect(result).toEqual({ from: 1, to: 7, applied: [2, 3, 4, 5, 6, 7] });
+      expect(await readSchemaVersion(legacy)).toBe(7);
       expect(legacy.rawGet("SELECT value FROM app_meta WHERE key = 'keep'")).toEqual({ value: 'me' });
       expect(tableExists(legacy, 'event_definitions')).toBe(true);
       expect(tableExists(legacy, 'event_records')).toBe(true);
@@ -312,7 +314,8 @@ describe('v3 事件历史结构', () => {
 
   beforeEach(async () => {
     db = createTestDatabase();
-    await runMigrations(db, MIGRATIONS);
+    // 只跑到 v6：v7 会把 snapshot_tag_ids 换成 snapshot_fields / field_values
+    await runMigrations(db, upTo(6));
   });
 
   afterEach(() => {
@@ -741,7 +744,7 @@ describe('v6 周期并入事件定义、单位改为属性', () => {
 
       const result = await runMigrations(legacy, MIGRATIONS);
 
-      expect(result).toEqual({ from: 5, to: 6, applied: [6] });
+      expect(result).toEqual({ from: 5, to: 7, applied: [6, 7] });
 
       const definitions = legacy.rawAll<{
         id: string;
@@ -796,7 +799,7 @@ describe('v6 周期并入事件定义、单位改为属性', () => {
     }
   });
 
-  it('重建表之后 8 个索引都还在', () => {
+  it('重建表之后索引都还在（v7 之后标签索引换成字段索引）', () => {
     const indexes = db
       .rawAll<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%'")
       .map((row) => row.name)
@@ -806,7 +809,7 @@ describe('v6 周期并入事件定义、单位改为属性', () => {
       'idx_cycle_entries_instance_date',
       'idx_cycle_instances_definition_id',
       'idx_cycle_instances_start_date',
-      'idx_event_definition_tags_tag_id',
+      'idx_event_definition_fields_definition_id',
       'idx_event_definitions_group_id',
       'idx_event_records_definition_id',
       'idx_event_records_occurred_at',
@@ -817,5 +820,136 @@ describe('v6 周期并入事件定义、单位改为属性', () => {
   it('v6 迁移对象自带版本号与可执行语句', () => {
     expect(MIGRATION_V6_CYCLE_AS_EVENT_KIND.version).toBe(6);
     expect(MIGRATION_V6_CYCLE_AS_EVENT_KIND.statements?.length).toBeGreaterThan(0);
+  });
+});
+
+describe('v7 自定义字段替换标签', () => {
+  let db: TestDatabase;
+
+  beforeEach(async () => {
+    db = createTestDatabase();
+    await runMigrations(db, MIGRATIONS);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('标签表没了，换来自定义字段表；记录表带上 snapshot_fields / field_values', () => {
+    expect(tableExists(db, 'tags')).toBe(false);
+    expect(tableExists(db, 'event_definition_tags')).toBe(false);
+    expect(tableExists(db, 'event_definition_fields')).toBe(true);
+
+    const columns = db.rawAll<{ name: string }>('PRAGMA table_info(event_records)').map((row) => row.name);
+    expect(columns).toEqual(expect.arrayContaining(['snapshot_fields', 'field_values']));
+    expect(columns).not.toContain('snapshot_tag_ids');
+  });
+
+  it('字段 kind 受 CHECK 约束，删除定义级联清理字段', () => {
+    db.rawExec(
+      `INSERT INTO event_definitions (id, name, kind, created_at, updated_at)
+       VALUES ('d1', '喝水', 'counter', 'now', 'now')`,
+    );
+    expect(() =>
+      db.rawExec(
+        `INSERT INTO event_definition_fields (id, definition_id, name, kind, created_at, updated_at)
+         VALUES ('f1', 'd1', '时段', 'select', 'now', 'now')`,
+      ),
+    ).toThrow();
+
+    db.rawExec(
+      `INSERT INTO event_definition_fields (id, definition_id, name, kind, options, created_at, updated_at)
+       VALUES ('f2', 'd1', '时段', 'multi', '["早晨"]', 'now', 'now')`,
+    );
+    db.rawExec("DELETE FROM event_definitions WHERE id = 'd1'");
+    expect(db.rawAll('SELECT id FROM event_definition_fields')).toEqual([]);
+  });
+
+  it('从 v6 库升级：标签折成「标签」多选字段，历史取值一并搬过来', async () => {
+    const legacy = createTestDatabase();
+    try {
+      await runMigrations(legacy, upTo(6));
+      legacy.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, created_at, updated_at)
+         VALUES ('d1', '喝水', 'counter', 'now', 'now')`,
+      );
+      // 周期型定义也挂着标签：字段只给计数型，周期型的标签随之丢弃
+      legacy.rawExec(
+        `INSERT INTO event_definitions (id, name, kind, cycle_mode, created_at, updated_at)
+         VALUES ('c1', '生理期', 'cycle', 'manual', 'now', 'now')`,
+      );
+      legacy.rawExec(
+        "INSERT INTO tags (id, name, created_at, updated_at) VALUES ('t1', '早晨', 'now', 'now')",
+      );
+      legacy.rawExec(
+        "INSERT INTO tags (id, name, created_at, updated_at) VALUES ('t2', '运动后', 'now', 'now')",
+      );
+      legacy.rawExec(
+        "INSERT INTO tags (id, name, created_at, updated_at) VALUES ('t3', '已删标签', 'now', 'now')",
+      );
+      legacy.rawExec(
+        `INSERT INTO event_definition_tags (definition_id, tag_id)
+         VALUES ('d1', 't1'), ('d1', 't2'), ('c1', 't1')`,
+      );
+      // r1 的快照里带上一个「定义已不再挂」的标签（t3）：选项要兜住历史值
+      legacy.rawExec(
+        `INSERT INTO event_records
+           (id, definition_id, kind, value, occurred_at, recorded_at, source, snapshot_name, snapshot_tag_ids)
+         VALUES ('r1', 'd1', 'counter', 1, 'now', 'now', 'manual', '喝水', '["t1","t3"]')`,
+      );
+      legacy.rawExec(
+        `INSERT INTO event_records
+           (id, definition_id, kind, value, occurred_at, recorded_at, source, snapshot_name, snapshot_tag_ids)
+         VALUES ('r2', 'd1', 'counter', 2, 'now', 'now', 'quick', '喝水', '[]')`,
+      );
+
+      const result = await runMigrations(legacy, MIGRATIONS);
+
+      expect(result).toEqual({ from: 6, to: 7, applied: [7] });
+
+      const fields = legacy.rawAll<{
+        definition_id: string;
+        name: string;
+        kind: string;
+        options: string;
+      }>('SELECT definition_id, name, kind, options FROM event_definition_fields');
+      expect(fields).toHaveLength(1);
+      expect(fields[0]?.definition_id).toBe('d1');
+      expect(fields[0]?.name).toBe('标签');
+      expect(fields[0]?.kind).toBe('multi');
+      const options = JSON.parse(fields[0]!.options) as string[];
+      expect([...options].sort()).toEqual(['已删标签', '早晨', '运动后']);
+      const fieldId = legacy.rawGet<{ id: string }>(
+        "SELECT id FROM event_definition_fields WHERE definition_id = 'd1'",
+      )!.id;
+
+      const r1 = legacy.rawGet<{ snapshot_fields: string; field_values: string }>(
+        "SELECT snapshot_fields, field_values FROM event_records WHERE id = 'r1'",
+      )!;
+      expect(JSON.parse(r1.snapshot_fields)).toEqual([{ id: fieldId, name: '标签', kind: 'multi', options }]);
+      expect(JSON.parse(r1.field_values)).toEqual([{ fieldId, values: ['早晨', '已删标签'] }]);
+      const r2 = legacy.rawGet<{ field_values: string }>(
+        "SELECT field_values FROM event_records WHERE id = 'r2'",
+      )!;
+      expect(JSON.parse(r2.field_values)).toEqual([]);
+
+      // 标签表清干净、外键一致、没有 _old/_new 残留
+      expect(tableExists(legacy, 'tags')).toBe(false);
+      expect(tableExists(legacy, 'event_definition_tags')).toBe(false);
+      expect(legacy.rawAll('PRAGMA foreign_key_check')).toEqual([]);
+      expect(
+        legacy.rawAll(
+          "SELECT name FROM sqlite_master WHERE name LIKE '%\\_old' ESCAPE '\\' OR name LIKE '%\\_new' ESCAPE '\\'",
+        ),
+      ).toEqual([]);
+    } finally {
+      legacy.close();
+    }
+  });
+
+  it('v7 迁移对象自带版本号，且至少有一段可执行内容', () => {
+    expect(MIGRATION_V7_CUSTOM_FIELDS.version).toBe(7);
+    expect(MIGRATION_V7_CUSTOM_FIELDS.statements?.length).toBeGreaterThan(0);
+    expect(MIGRATION_V7_CUSTOM_FIELDS.up).toBeDefined();
   });
 });

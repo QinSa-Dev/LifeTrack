@@ -8,7 +8,7 @@
  * 2. **严格解析，不做猜测**：外部 JSON 逐个字段过守卫（复用 validation.ts 的规则），
  *    出错就抛 `ImportError` 并带上路径（例如 `data.eventRecords[3].value`）。
  *    缺失的**集合**按空数组处理（兼容旧版本导出的文件），但「存在却写错」的条目一律拒绝。
- * 3. **引用完整性在写库之前就查**：分组 / 标签 / 周期实例的指向必须存在。
+ * 3. **引用完整性在写库之前就查**：分组 / 周期实例的指向必须存在。
  *    例外是事件记录——它的 `definitionId` 本来就可能指向已被永久删除的定义
  *    （v3 表故意没有外键，靠快照自证），所以不校验。
  * 4. **合并 = 取并集，永不删除本地数据**：导入是「把备份里的东西合进来」，
@@ -20,24 +20,29 @@
 
 import { isEntryWithinRange } from './cycles';
 import { ImportError, ValidationError } from './errors';
-import { assertEntityId } from './id';
+import { assertEntityId, newId } from './id';
 import {
   type CycleEntry,
   type CycleInstance,
   type CycleMode,
+  type DefinitionField,
   type EventDefinition,
   type EventGroup,
   type EventRecord,
+  type FieldSnapshot,
+  type FieldValue,
   type IsoDateTime,
   type QuickOption,
-  type Tag,
 } from './models';
 import {
+  normalizeFieldInput,
+  normalizeFieldValues,
   normalizeIdList,
   normalizeTextList,
   optionalCycleMode,
   optionalPositiveInteger,
   optionalText,
+  requireFieldKind,
   requireIsoDate,
   requireIsoDateTime,
   requireKind,
@@ -54,12 +59,11 @@ import {
 export const BACKUP_FORMAT = 'lifetrack-backup';
 
 /** 备份**格式**版本（数据结构本身的版本，与数据库 schema 版本是两件事） */
-export const BACKUP_FORMAT_VERSION = 2;
+export const BACKUP_FORMAT_VERSION = 3;
 
-/** 备份里包含的六个集合，顺序即写入顺序（父表在前） */
+/** 备份里包含的五个集合，顺序即写入顺序（父表在前） */
 export const BACKUP_COLLECTIONS = [
   'eventGroups',
-  'tags',
   'eventDefinitions',
   'eventRecords',
   'cycleInstances',
@@ -71,7 +75,6 @@ export type BackupCollection = (typeof BACKUP_COLLECTIONS)[number];
 /** 备份的正文：与仓储层的领域模型一一对应（不含 app_meta 这类本机元信息） */
 export interface BackupData {
   eventGroups: EventGroup[];
-  tags: Tag[];
   /** 事件定义：计数型与周期型都在这里（周期型就是多几个周期字段） */
   eventDefinitions: EventDefinition[];
   eventRecords: EventRecord[];
@@ -112,7 +115,6 @@ export interface ImportSummary {
 export function emptyBackupData(): BackupData {
   return {
     eventGroups: [],
-    tags: [],
     eventDefinitions: [],
     eventRecords: [],
     cycleInstances: [],
@@ -235,28 +237,107 @@ function parseGroup(value: unknown, path: string): EventGroup {
   };
 }
 
-function parseTag(value: unknown, path: string): Tag {
+/**
+ * v2 及以前备份里的标签：现在只用于**折算**（标签 → 定义上的「标签」多选字段），
+ * 不再作为独立的领域实体存在，所以这里只取 id 与名称。
+ */
+function parseLegacyTag(value: unknown, path: string): { id: string; name: string } {
   const row = asObject(value, path);
-  return {
-    id: entityId(row.id, `${path}.id`),
-    name: name(row.name, `${path}.name`),
-    color: textOrUndefined(row.color, `${path}.color`),
-    createdAt: dateTime(row.createdAt, `${path}.createdAt`),
-    updatedAt: dateTime(row.updatedAt, `${path}.updatedAt`),
-  };
+  return { id: entityId(row.id, `${path}.id`), name: name(row.name, `${path}.name`) };
 }
 
 /**
- * 解析上下文：**v1 备份的折算规则**。
+ * 解析上下文：**旧备份的折算规则**。
  *
- * 格式 v1 里「数量」还是一种事件类型、字段叫 `unit`，周期定义也还单独放在
- * `cycleDefinitions` 里；v2 起类型只有计数/周期、属性叫 `attributes`（可多条）、
- * 周期定义并进 `eventDefinitions`。导入老备份时按这些规则折成新模型，
- * 而不是让用户「备份来自旧版本，请重新导出」——那等于让人丢掉历史。
+ * - 格式 v1：里「数量」还是一种事件类型、字段叫 `unit`，周期定义也还单独放在
+ *   `cycleDefinitions` 里；v2 起类型只有计数/周期、属性叫 `attributes`（可多条）、
+ *   周期定义并进 `eventDefinitions`。
+ * - 格式 v2：里「标签」还是全局实体（`tags` + `tagIds`）；v3 起没有标签，
+ *   每个定义自己的「字段」取而代之。导入 v2 备份时按下面的规则折成字段。
+ *
+ * 一律折算、不拒绝——「备份来自旧版本，请重新导出」等于让人丢掉历史。
  */
 interface ParseContext {
   /** 备份格式版本 < 2：需要折算 `quantity` 与 `unit` */
   legacy: boolean;
+  /** 备份格式版本 < 3：需要把标签折成字段 */
+  foldTags: boolean;
+  /** 标签 id → 名称（仅 v2 及以前有） */
+  legacyTagNames: Map<string, string>;
+  /**
+   * 定义 id → 折出来的「标签」字段。
+   * 定义先于记录解析，记录据此把自己的快照标签值挂到同一条字段上。
+   */
+  legacyTagFields: Map<string, { id: string; options: string[] }>;
+}
+
+/** 把标签 id 列表按名称去重地解析出来（丢弃已经不存在的标签）。 */
+function resolveTagNames(tagIds: readonly string[], nameById: Map<string, string>): string[] {
+  const names: string[] = [];
+  for (const tagId of tagIds) {
+    const tagName = nameById.get(tagId);
+    if (tagName !== undefined && !names.includes(tagName)) {
+      names.push(tagName);
+    }
+  }
+  return names;
+}
+
+/** v2 及以前：把某个定义的标签折成一条「标签」多选字段，并登记到上下文里。 */
+function foldTagField(
+  definitionId: string,
+  tagIds: readonly string[],
+  context: ParseContext,
+): DefinitionField | undefined {
+  const names = resolveTagNames(tagIds, context.legacyTagNames);
+  if (names.length === 0) {
+    return undefined;
+  }
+  const options = [...names].sort();
+  const id = newId();
+  context.legacyTagFields.set(definitionId, { id, options });
+  return { id, name: '标签', kind: 'multi', options, sortOrder: 0 };
+}
+
+/** 定义上的自定义字段（外部 JSON → 领域对象）。 */
+function parseField(value: unknown, path: string): DefinitionField {
+  const row = asObject(value, path);
+  const normalized = check(path, () =>
+    normalizeFieldInput({
+      id: entityId(row.id, `${path}.id`),
+      name: text(row.name, `${path}.name`),
+      kind: row.kind as ReturnType<typeof requireFieldKind>,
+      options: textList(row.options, `${path}.options`),
+      sortOrder: numberValue(row.sortOrder, `${path}.sortOrder`),
+    }),
+  );
+  return {
+    id: normalized.id!,
+    name: normalized.name,
+    kind: normalized.kind,
+    options: normalized.options ?? [],
+    sortOrder: normalized.sortOrder ?? 0,
+  };
+}
+
+/** 记录快照里的字段定义。 */
+function parseFieldSnapshot(value: unknown, path: string): FieldSnapshot {
+  const row = asObject(value, path);
+  return {
+    id: entityId(row.id, `${path}.id`),
+    name: name(row.name, `${path}.name`),
+    kind: check(`${path}.kind`, () => requireFieldKind(row.kind)),
+    options: normalizeTextList(textList(row.options, `${path}.options`)),
+  };
+}
+
+/** 记录上某个字段的取值。 */
+function parseFieldValue(value: unknown, path: string): FieldValue {
+  const row = asObject(value, path);
+  return {
+    fieldId: entityId(row.fieldId, `${path}.fieldId`),
+    values: textList(row.values, `${path}.values`),
+  };
 }
 
 /**
@@ -306,6 +387,7 @@ function optionalInteger(value: unknown, path: string): number | undefined {
 
 function parseDefinition(value: unknown, path: string, context: ParseContext): EventDefinition {
   const row = asObject(value, path);
+  const id = entityId(row.id, `${path}.id`);
   const rawKind = text(row.kind, `${path}.kind`);
   const kind: EventDefinition['kind'] =
     context.legacy && rawKind === 'quantity' ? 'counter' : check(`${path}.kind`, () => requireKind(rawKind));
@@ -314,11 +396,23 @@ function parseDefinition(value: unknown, path: string, context: ParseContext): E
       ? (check(`${path}.cycleMode`, () => optionalCycleMode(row.cycleMode)) ?? 'manual')
       : undefined;
 
+  // 自定义字段只有计数型使用；周期型恒为空数组（周期记的是「哪一天」，不是「一次是什么」）。
+  const fields: DefinitionField[] =
+    kind === 'counter' ? parseArray(row.fields, `${path}.fields`, parseField) : [];
+  // v2 及以前的标签：折成一条「标签」多选字段（周期型不带字段，标签随之丢弃）。
+  if (kind === 'counter' && context.foldTags) {
+    const folded = foldTagField(id, normalizeIdList(textList(row.tagIds, `${path}.tagIds`)), context);
+    if (folded) {
+      fields.push({ ...folded, sortOrder: fields.length });
+    }
+  }
+
   return {
-    id: entityId(row.id, `${path}.id`),
+    id,
     name: name(row.name, `${path}.name`),
     kind,
     attributes: parseAttributes(row, path, ['unit']),
+    fields,
     groupId: textOrUndefined(row.groupId, `${path}.groupId`),
     color: textOrUndefined(row.color, `${path}.color`),
     icon: textOrUndefined(row.icon, `${path}.icon`),
@@ -331,7 +425,6 @@ function parseDefinition(value: unknown, path: string, context: ParseContext): E
     quickOptions: parseArray(row.quickOptions, `${path}.quickOptions`, (item, itemPath) =>
       parseQuickOption(item, itemPath, kind),
     ),
-    tagIds: normalizeIdList(textList(row.tagIds, `${path}.tagIds`)),
     cycleMode,
     averageCycleLengthDays:
       kind === 'cycle'
@@ -357,15 +450,15 @@ function parseLegacyCycleDefinition(value: unknown, path: string): EventDefiniti
     name: name(row.name, `${path}.name`),
     kind: 'cycle',
     cycleMode: 'manual',
-    // 周期型不使用属性
+    // 周期型不使用属性与自定义字段
     attributes: [],
+    fields: [],
     groupId: undefined,
     color: undefined,
     icon: undefined,
     isArchived: booleanValue(row.isArchived, `${path}.isArchived`),
     sortOrder: 0,
     quickOptions: [],
-    tagIds: [],
     createdAt: dateTime(row.createdAt, `${path}.createdAt`),
     updatedAt: dateTime(row.updatedAt, `${path}.updatedAt`),
     averageCycleLengthDays: optionalInteger(row.averageCycleLengthDays, `${path}.averageCycleLengthDays`),
@@ -373,7 +466,7 @@ function parseLegacyCycleDefinition(value: unknown, path: string): EventDefiniti
   };
 }
 
-function parseRecord(value: unknown, path: string): EventRecord {
+function parseRecord(value: unknown, path: string, context: ParseContext): EventRecord {
   const row = asObject(value, path);
   const kind = check(`${path}.kind`, () => requireRecordKind(row.kind));
   const definitionId = entityId(row.definitionId, `${path}.definitionId`);
@@ -383,25 +476,46 @@ function parseRecord(value: unknown, path: string): EventRecord {
   check(`${path}.occurredAt`, () => requireNotFuture(occurredAt, recordedAt, `${path}.occurredAt`));
 
   const snapshotRow = asObject(row.snapshot, `${path}.snapshot`);
+
+  let snapshotFields: FieldSnapshot[] = parseArray(
+    snapshotRow.fields,
+    `${path}.snapshot.fields`,
+    parseFieldSnapshot,
+  );
+  let fieldValues: FieldValue[] = parseArray(row.fieldValues, `${path}.fieldValues`, parseFieldValue);
+
+  // v2 及以前：标签只有一份（snapshot_tag_ids），导出时 row.tagIds 与 snapshot.tagIds 本就同源；
+  // 不一致说明文件被改坏了。折成「标签」字段的取值。
+  const legacyTagIds = normalizeIdList(textList(row.tagIds, `${path}.tagIds`));
+  const legacySnapshotTagIds = normalizeIdList(textList(snapshotRow.tagIds, `${path}.snapshot.tagIds`));
+  if (legacyTagIds.join('\u0000') !== legacySnapshotTagIds.join('\u0000')) {
+    fail(`${path}.tagIds`, '必须与 snapshot.tagIds 一致');
+  }
+  if (context.foldTags) {
+    const tagField = context.legacyTagFields.get(definitionId);
+    const names = resolveTagNames(legacyTagIds, context.legacyTagNames);
+    if (tagField && names.length > 0) {
+      snapshotFields = [{ id: tagField.id, name: '标签', kind: 'multi', options: tagField.options }];
+      fieldValues = [{ fieldId: tagField.id, values: names }];
+    } else {
+      snapshotFields = [];
+      fieldValues = [];
+    }
+  }
+
   const snapshot = {
     definitionId: entityId(snapshotRow.definitionId, `${path}.snapshot.definitionId`),
     name: name(snapshotRow.name, `${path}.snapshot.name`),
     kind: check(`${path}.snapshot.kind`, () => requireRecordKind(snapshotRow.kind)),
     attributes: parseAttributes(snapshotRow, `${path}.snapshot`, ['unit']),
     groupId: textOrUndefined(snapshotRow.groupId, `${path}.snapshot.groupId`),
-    tagIds: normalizeIdList(textList(snapshotRow.tagIds, `${path}.snapshot.tagIds`)),
+    fields: snapshotFields,
   };
   if (snapshot.definitionId !== definitionId) {
     fail(`${path}.snapshot.definitionId`, `必须与 definitionId（${definitionId}）一致`);
   }
   if (snapshot.kind !== kind) {
     fail(`${path}.snapshot.kind`, `必须与 kind（${kind}）一致`);
-  }
-
-  const tagIds = normalizeIdList(textList(row.tagIds, `${path}.tagIds`));
-  // 记录表里标签只有一份（snapshot_tag_ids），读取时两者本就同源；不一致说明文件被改坏了
-  if (tagIds.join('\u0000') !== snapshot.tagIds.join('\u0000')) {
-    fail(`${path}.tagIds`, '必须与 snapshot.tagIds 一致');
   }
 
   return {
@@ -412,11 +526,11 @@ function parseRecord(value: unknown, path: string): EventRecord {
       requireRecordValue(kind, numberValue(row.value, `${path}.value`), `${path}.value`),
     ),
     attributes: parseAttributes(row, path, ['unit']),
+    fieldValues,
     occurredAt,
     recordedAt,
     note: textOrUndefined(row.note, `${path}.note`),
     source: check(`${path}.source`, () => requireRecordSource(row.source)),
-    tagIds,
     snapshot,
     deletedAt:
       row.deletedAt === undefined || row.deletedAt === null
@@ -481,24 +595,18 @@ function assertUniqueIds(items: readonly { id: string }[], path: string): void {
  */
 export function assertBackupIntegrity(data: BackupData): void {
   assertUniqueIds(data.eventGroups, 'data.eventGroups');
-  assertUniqueIds(data.tags, 'data.tags');
   assertUniqueIds(data.eventDefinitions, 'data.eventDefinitions');
   assertUniqueIds(data.eventRecords, 'data.eventRecords');
   assertUniqueIds(data.cycleInstances, 'data.cycleInstances');
   assertUniqueIds(data.cycleEntries, 'data.cycleEntries');
 
   const groupIds = new Set(data.eventGroups.map((group) => group.id));
-  const tagIds = new Set(data.tags.map((tag) => tag.id));
   data.eventDefinitions.forEach((definition, index) => {
     const path = `data.eventDefinitions[${index}]`;
     if (definition.groupId !== undefined && !groupIds.has(definition.groupId)) {
       fail(`${path}.groupId`, `指向不存在的分组：${definition.groupId}`);
     }
-    for (const tagId of definition.tagIds) {
-      if (!tagIds.has(tagId)) {
-        fail(`${path}.tagIds`, `指向不存在的标签：${tagId}`);
-      }
-    }
+    assertUniqueIds(definition.fields, `${path}.fields`);
     // 周期型定义必须有做法，计数型不能带周期字段（与 v6 的结构约束一致）
     if (definition.kind === 'cycle' && definition.cycleMode === undefined) {
       fail(`${path}.cycleMode`, '周期型事件必须说明是自动循环还是手动标记');
@@ -506,6 +614,24 @@ export function assertBackupIntegrity(data: BackupData): void {
     if (definition.kind === 'counter' && definition.cycleMode !== undefined) {
       fail(`${path}.cycleMode`, '计数型事件不该带周期方式');
     }
+    // 自定义字段只有计数型使用
+    if (definition.kind === 'cycle' && definition.fields.length > 0) {
+      fail(`${path}.fields`, '周期型事件不使用自定义字段');
+    }
+  });
+
+  // 事件记录：字段取值必须都能在快照的字段定义里对上，且不为空（值要么不写，要么至少一个）。
+  data.eventRecords.forEach((record, index) => {
+    const path = `data.eventRecords[${index}]`;
+    assertUniqueIds(record.snapshot.fields, `${path}.snapshot.fields`);
+    check(`${path}.fieldValues`, () => {
+      const normalized = normalizeFieldValues(record.snapshot.fields, record.fieldValues, {
+        dropUnknownFields: false,
+      });
+      if (normalized.length !== record.fieldValues.length) {
+        throw new ValidationError('字段取值不能为空（要么不写这一条，要么至少给一个值）');
+      }
+    });
   });
 
   const cycleDefinitionIds = new Set(
@@ -566,7 +692,18 @@ function parseBackupRoot(value: unknown): BackupFile {
   }
 
   const data = asObject(root.data, 'data');
-  const context: ParseContext = { legacy: formatVersion < BACKUP_FORMAT_VERSION };
+  const context: ParseContext = {
+    legacy: formatVersion < 2,
+    foldTags: formatVersion < 3,
+    legacyTagNames: new Map(),
+    legacyTagFields: new Map(),
+  };
+  // v2 及以前才有独立的 `tags` 集合；先读出来，供定义 / 记录把标签折成字段时查名字。
+  if (context.foldTags) {
+    for (const tag of parseArray(data.tags, 'data.tags', parseLegacyTag)) {
+      context.legacyTagNames.set(tag.id, tag.name);
+    }
+  }
   const definitions = parseArray(data.eventDefinitions, 'data.eventDefinitions', (item, itemPath) =>
     parseDefinition(item, itemPath, context),
   );
@@ -575,9 +712,10 @@ function parseBackupRoot(value: unknown): BackupFile {
   const legacyCycles = parseArray(data.cycleDefinitions, 'data.cycleDefinitions', parseLegacyCycleDefinition);
   const parsed: BackupData = {
     eventGroups: parseArray(data.eventGroups, 'data.eventGroups', parseGroup),
-    tags: parseArray(data.tags, 'data.tags', parseTag),
     eventDefinitions: [...definitions, ...legacyCycles],
-    eventRecords: parseArray(data.eventRecords, 'data.eventRecords', parseRecord),
+    eventRecords: parseArray(data.eventRecords, 'data.eventRecords', (item, itemPath) =>
+      parseRecord(item, itemPath, context),
+    ),
     cycleInstances: parseArray(data.cycleInstances, 'data.cycleInstances', parseCycleInstance),
     cycleEntries: parseArray(data.cycleEntries, 'data.cycleEntries', parseCycleEntry),
   };
@@ -610,7 +748,6 @@ export function sortBackupData(data: BackupData): BackupData {
     eventGroups: [...data.eventGroups].sort(
       (a, b) => a.sortOrder - b.sortOrder || compareText(a.name, b.name) || compareText(a.id, b.id),
     ),
-    tags: [...data.tags].sort((a, b) => compareText(a.name, b.name) || compareText(a.id, b.id)),
     eventDefinitions: [...data.eventDefinitions].sort(
       (a, b) => a.sortOrder - b.sortOrder || compareText(a.createdAt, b.createdAt) || compareText(a.id, b.id),
     ),
@@ -776,7 +913,6 @@ export function mergeBackup(
   incoming: BackupData,
 ): { data: BackupData; summary: ImportSummary } {
   const groups = mergeCollection(current.eventGroups, incoming.eventGroups, byUpdatedAt);
-  const tags = mergeCollection(current.tags, incoming.tags, byUpdatedAt);
   const definitions = mergeCollection(current.eventDefinitions, incoming.eventDefinitions, byUpdatedAt);
   const records = mergeCollection(current.eventRecords, incoming.eventRecords, preferIncomingRecord);
   const cycleInstances = mergeCollection(current.cycleInstances, incoming.cycleInstances, byUpdatedAt);
@@ -784,7 +920,6 @@ export function mergeBackup(
 
   const collections: Record<BackupCollection, MergeCounts> = {
     eventGroups: groups.counts,
-    tags: tags.counts,
     eventDefinitions: definitions.counts,
     eventRecords: records.counts,
     cycleInstances: cycleInstances.counts,
@@ -794,7 +929,6 @@ export function mergeBackup(
   return {
     data: sortBackupData({
       eventGroups: groups.items,
-      tags: tags.items,
       eventDefinitions: definitions.items,
       eventRecords: records.items,
       cycleInstances: cycleInstances.items,

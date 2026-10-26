@@ -21,7 +21,7 @@ function makeDefinition(overrides: Partial<EventDefinition> = {}): EventDefiniti
     kind: 'counter',
     attributes: ['杯'],
     quickOptions: [],
-    tagIds: [],
+    fields: [],
     isArchived: false,
     sortOrder: 0,
     createdAt: NOW,
@@ -40,8 +40,8 @@ function makeRecord(overrides: Partial<EventRecord> = {}): EventRecord {
     occurredAt: NOW,
     recordedAt: NOW,
     source: 'manual',
-    tagIds: [],
-    snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: [], tagIds: [] },
+    fieldValues: [],
+    snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: [], fields: [] },
     ...overrides,
   };
 }
@@ -78,7 +78,7 @@ describe('属性展示：recordAttributes / attributeText', () => {
   it('记录标了属性就用标上的', () => {
     const record = makeRecord({
       attributes: ['温水'],
-      snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: ['200ml'], tagIds: [] },
+      snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: ['200ml'], fields: [] },
     });
     expect(recordAttributes(record)).toEqual(['温水']);
   });
@@ -86,7 +86,7 @@ describe('属性展示：recordAttributes / attributeText', () => {
   it('一个都没标时回落到定义当时的属性，别把「一次是什么」在历史里丢掉', () => {
     const record = makeRecord({
       attributes: [],
-      snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: ['200ml'], tagIds: [] },
+      snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: ['200ml'], fields: [] },
     });
     expect(recordAttributes(record)).toEqual(['200ml']);
   });
@@ -118,13 +118,13 @@ describe('isRecordable', () => {
 });
 
 describe('toDefinitionSnapshot', () => {
-  it('固化名称 / 类型 / 属性列表 / 分组 / 标签', () => {
+  it('固化名称 / 类型 / 属性列表 / 分组 / 字段定义', () => {
     const definition = makeDefinition({
       name: '饮水',
       kind: 'counter',
       attributes: ['温水', '200ml'],
       groupId: 'g1',
-      tagIds: ['t1', 't2'],
+      fields: [{ id: 'f1', name: '时段', kind: 'single', options: ['早晨', '晚上'], sortOrder: 0 }],
     });
 
     expect(toDefinitionSnapshot(definition)).toEqual({
@@ -133,7 +133,7 @@ describe('toDefinitionSnapshot', () => {
       kind: 'counter',
       attributes: ['温水', '200ml'],
       groupId: 'g1',
-      tagIds: ['t1', 't2'],
+      fields: [{ id: 'f1', name: '时段', kind: 'single', options: ['早晨', '晚上'] }],
     });
   });
 
@@ -143,12 +143,14 @@ describe('toDefinitionSnapshot', () => {
     );
   });
 
-  it('标签数组是复制：之后改动定义不会污染已生成的快照', () => {
-    const definition = makeDefinition({ tagIds: ['t1'] });
+  it('字段候选值是复制：之后改动定义不会污染已生成的快照', () => {
+    const definition = makeDefinition({
+      fields: [{ id: 'f1', name: '时段', kind: 'single', options: ['早晨'], sortOrder: 0 }],
+    });
     const snapshot = toDefinitionSnapshot(definition);
 
-    definition.tagIds.push('t2');
+    definition.fields[0]?.options.push('晚上');
 
-    expect(snapshot.tagIds).toEqual(['t1']);
+    expect(snapshot.fields[0]?.options).toEqual(['早晨']);
   });
 });

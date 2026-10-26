@@ -36,10 +36,7 @@ describe('CycleEntryRepository', () => {
 
   /** 建一个周期型事件定义：v6 起周期就是事件的一种类型，走同一个仓储。 */
   async function createCycle(cycleName: string) {
-    return definitions.create(
-      { name: cycleName, kind: 'cycle', cycleMode: 'manual', tagIds: [], quickOptions: [] },
-      T1,
-    );
+    return definitions.create({ name: cycleName, kind: 'cycle', cycleMode: 'manual', quickOptions: [] }, T1);
   }
 
   it('保存某一天的记录并读回（症状存 JSON、顺手去空去重）', async () => {

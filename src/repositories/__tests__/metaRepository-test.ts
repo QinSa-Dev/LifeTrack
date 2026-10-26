@@ -90,7 +90,7 @@ describe('持久化（同一文件重新打开）', () => {
       const secondMigration = await runMigrations(second, MIGRATIONS);
       const secondRepo = new MetaRepository(second);
 
-      expect(firstMigration.applied).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(firstMigration.applied).toEqual([1, 2, 3, 4, 5, 6, 7]);
       expect(secondMigration.applied).toEqual([]); // 已是最新，不重复迁移
       expect(await secondRepo.get('probe')).toBe('persisted');
       expect(await secondRepo.get(META_KEYS.launchCount)).toBe('1');

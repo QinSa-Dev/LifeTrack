@@ -3,8 +3,8 @@
  *
  * 职责：把「用户记录了一次事实」落库。核心领域规则在这里被强制执行：
  *
- * 1. **记录时生成快照**：从当前的事件定义取出名称、属性、分组、标签，固化进记录。
- *    之后定义改名/换属性/归档/删除，历史都保持原样（见 domain/models.ts 的 snapshot）。
+ * 1. **记录时生成快照**：从当前的事件定义取出名称、属性、分组、字段定义，固化进记录。
+ *    之后定义改名/换属性/改字段/归档/删除，历史都保持原样（见 domain/models.ts 的 snapshot）。
  * 2. **归档不可新增记录**：`isRecordable` 为假时抛 ConflictError，历史不受影响。
  * 3. **读用 `occurred_at` 排序**（事实发生时间），而不是 `recorded_at`（录入时间）——
  *    这样补录的旧记录会落在时间轴的正确位置。
@@ -13,7 +13,7 @@
  * 5. **删除分两级**：`softDelete` 只写 `deleted_at`（可 `restore` 撤销），真删是 `remove`，
  *    不可撤销、需要界面二次确认。两者划分清楚，避免「以为能撤销，其实是真删」。
  * 6. **记录可以更正**：`update` 只改事实本身（取值、发生时间、备注），
- *    快照（名称、属性、分组、标签）永不更新——「快照不可改，事实可更正」。
+ *    快照（名称、属性、分组、字段）永不更新——「快照不可改，事实可更正」。
  *    已软删除的记录不能改（先撤销删除），避免改了又留在回收站里对不上账。
  *
  * 读取时 `kind` / `source` 都会再过一次守卫（泛型运行时不校验）。
@@ -26,6 +26,8 @@ import { newId } from '@/domain/id';
 import {
   isRecordKind,
   isRecordSource,
+  toFieldSnapshot,
+  type DefinitionField,
   type EventDefinitionSnapshot,
   type EventRecord,
   type IsoDateTime,
@@ -33,9 +35,13 @@ import {
   type RecordSource,
 } from '@/domain/models';
 import {
+  normalizeFieldValues,
   normalizeTextList,
   optionalText,
+  readFieldSnapshots,
+  readFieldValues,
   readTextList,
+  requireFieldKind,
   requireId,
   requireIsoDateTime,
   requireNotFuture,
@@ -59,7 +65,8 @@ interface RecordRow {
   snapshot_name: string;
   snapshot_attributes: string;
   snapshot_group_id: string | null;
-  snapshot_tag_ids: string;
+  snapshot_fields: string;
+  field_values: string;
 }
 
 interface DefinitionRow {
@@ -71,13 +78,17 @@ interface DefinitionRow {
   is_archived: number;
 }
 
-interface TagIdRow {
-  tag_id: string;
+interface FieldRow {
+  id: string;
+  name: string;
+  kind: string;
+  options: string;
+  sort_order: number;
 }
 
 const SELECT_COLUMNS =
   'id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at, ' +
-  'snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_tag_ids';
+  'snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_fields, field_values';
 
 /**
  * 读库得到的记录类型必须再过一次守卫：它比定义的类型多一个历史遗留的 `quantity`，
@@ -98,19 +109,18 @@ function toSource(value: unknown): RecordSource {
 }
 
 /**
- * 列表类字段（`snapshot_tag_ids` 等）是 JSON 数组文本；解析失败时退化为空数组，
+ * 列表类字段（字段快照、字段取值）是 JSON 文本；解析失败时退化为空数组，
  * 而不是让整行读不出来。
  */
 function toRecord(row: RecordRow): EventRecord {
   const kind = toRecordKind(row.kind);
-  const tagIds = readTextList(row.snapshot_tag_ids);
   const snapshot: EventDefinitionSnapshot = {
     definitionId: row.definition_id,
     name: row.snapshot_name,
     kind,
     attributes: readTextList(row.snapshot_attributes),
     groupId: row.snapshot_group_id ?? undefined,
-    tagIds,
+    fields: readFieldSnapshots(row.snapshot_fields),
   };
   return {
     id: row.id,
@@ -118,11 +128,11 @@ function toRecord(row: RecordRow): EventRecord {
     kind,
     value: row.value,
     attributes: readTextList(row.attributes),
+    fieldValues: readFieldValues(row.field_values),
     occurredAt: row.occurred_at,
     recordedAt: row.recorded_at,
     note: row.note ?? undefined,
     source: toSource(row.source),
-    tagIds,
     snapshot,
     deletedAt: row.deleted_at ?? undefined,
   };
@@ -189,17 +199,29 @@ export class EventRecordRepository {
         // （展示时 `recordAttributes` 会回落到快照里的定义属性）。
         const attributes = normalizeTextList(input.attributes ?? []);
 
-        const tagRows = await txn.getAllAsync<TagIdRow>(
-          'SELECT tag_id FROM event_definition_tags WHERE definition_id = ? ORDER BY tag_id ASC',
+        // 快照要固化「记录这一刻的字段定义」，字段取值则按定义逐个校验。
+        const fieldRows = await txn.getAllAsync<FieldRow>(
+          `SELECT id, name, kind, options, sort_order
+             FROM event_definition_fields
+            WHERE definition_id = ?
+            ORDER BY sort_order ASC, id ASC`,
           definitionId,
         );
-        const tagIds = tagRows.map((row) => row.tag_id);
+        const fields: DefinitionField[] = fieldRows.map((row) => ({
+          id: row.id,
+          name: row.name,
+          kind: requireFieldKind(row.kind),
+          options: readTextList(row.options),
+          sortOrder: row.sort_order,
+        }));
+        const fieldValues = normalizeFieldValues(fields, input.fieldValues ?? []);
+        const snapshotFields = fields.map(toFieldSnapshot);
 
         await txn.runAsync(
           `INSERT INTO event_records
              (id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at,
-              snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_tag_ids)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+              snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_fields, field_values)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
           id,
           definitionId,
           kind,
@@ -212,7 +234,8 @@ export class EventRecordRepository {
           definition.name,
           definition.attributes,
           definition.group_id ?? null,
-          JSON.stringify(tagIds),
+          JSON.stringify(snapshotFields),
+          JSON.stringify(fieldValues),
         );
       });
 
@@ -223,7 +246,7 @@ export class EventRecordRepository {
   /**
    * 更正一条已存在的记录：取值、发生时间、备注。
    *
-   * 动的是「事实」，不是「快照」：记录时的名称、属性、分组、标签保持原样，
+   * 动的是「事实」，不是「快照」：记录时的名称、属性、分组、字段定义与取值保持原样，
    * 所以改完之后历史仍然自洽（比如定义后来改了名，这条记录还是原名）。
    *
    * 校验与新增记录同一套：取值按类型（counter 是正整数、历史 quantity 是数字）、
