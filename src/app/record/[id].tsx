@@ -12,9 +12,11 @@ import {
   type RecordSource,
 } from '@/domain/models';
 import { localDateText, localTimeText, parseLocalDateTime, shiftLocalDays } from '@/features/common/datetime';
+import { FieldValuePicker } from '@/features/records/FieldValuePicker';
 import { describeRecord, formatOccurredAt, sourceLabel } from '@/features/records/format';
 import { RecordRow } from '@/features/records/RecordRow';
 import { EventDefinitionRepository, EventRecordRepository } from '@/repositories';
+import type { FieldValueInput } from '@/domain/validation';
 import { palette, spacing } from '@/theme';
 
 const RECENT_LIMIT = 5;
@@ -30,6 +32,8 @@ export default function RecordScreen() {
   const [manualValue, setManualValue] = useState('1');
   // 这一次要标上的属性（可多选）。默认一个都不选：用户明确说了「默认不选」。
   const [attributes, setAttributes] = useState<string[]>([]);
+  // 这一次各自定义字段的取值；按字段 id 存，没选到的字段自然缺省为空。
+  const [fieldValues, setFieldValues] = useState<Record<string, string[]>>({});
   const [note, setNote] = useState('');
   // 补录：开启后填写过去的日期与时间
   const [backfill, setBackfill] = useState(false);
@@ -73,11 +77,24 @@ export default function RecordScreen() {
    * `note` 默认取输入框里的备注；行内的【+1】显式传空串——它不该顺手带上
    * 你刚敲进「手动记录」输入框、还没提交的备注。
    */
+  /** 当前表单里非空的字段取值；仓储会再按定义逐条校验（空值直接不提交）。 */
+  const selectedFieldValues = (): FieldValueInput[] =>
+    (definition?.fields ?? [])
+      .map((field) => ({ fieldId: field.id, values: fieldValues[field.id] ?? [] }))
+      .filter((entry) => entry.values.some((value) => value.trim().length > 0));
+
+  /**
+   * 记一条。
+   *
+   * `note` 默认取输入框里的备注；行内的【+1】显式传空串——它不该顺手带上
+   * 你刚敲进「手动记录」输入框、还没提交的备注。
+   * `fieldValues` 同理：手动记录用当前选择，快捷记录与【+1】各自显式传值。
+   */
   const save = (
     value: number,
     usedAttributes: string[],
     source: RecordSource,
-    options: { occurredAt?: string; note?: string } = {},
+    options: { occurredAt?: string; note?: string; fieldValues?: FieldValueInput[] } = {},
   ): Promise<void> => {
     if (!definition || busy) {
       return Promise.resolve();
@@ -91,6 +108,7 @@ export default function RecordScreen() {
         definitionId: definition.id,
         value,
         attributes: usedAttributes,
+        fieldValues: options.fieldValues ?? selectedFieldValues(),
         note: usedNote,
         source,
         occurredAt: options.occurredAt,
@@ -116,15 +134,20 @@ export default function RecordScreen() {
       return;
     }
     setRepeatingId(record.id);
-    void save(record.value, recordAttributes(record), 'quick', { note: '' }).finally(() =>
-      setRepeatingId(null),
-    );
+    void save(record.value, recordAttributes(record), 'quick', {
+      note: '',
+      fieldValues: record.fieldValues,
+    }).finally(() => setRepeatingId(null));
   };
 
   const toggleAttribute = (attribute: string) => {
     setAttributes((current) =>
       current.includes(attribute) ? current.filter((item) => item !== attribute) : [...current, attribute],
     );
+  };
+
+  const setFieldValue = (fieldId: string, values: string[]) => {
+    setFieldValues((current) => ({ ...current, [fieldId]: values }));
   };
 
   const submitManual = () => {
@@ -221,7 +244,11 @@ export default function RecordScreen() {
               <Chip
                 key={option.id}
                 label={option.attribute ? `${option.attribute}（+${option.value}）` : `+${option.value}`}
-                onPress={() => void save(option.value, option.attribute ? [option.attribute] : [], 'quick')}
+                onPress={() =>
+                  void save(option.value, option.attribute ? [option.attribute] : [], 'quick', {
+                    fieldValues: [],
+                  })
+                }
               />
             ))}
           </View>
@@ -230,6 +257,21 @@ export default function RecordScreen() {
 
       {!archived && definition.kind === 'counter' ? (
         <Card title="手动记录" subtitle="记录本次的增量（正整数）" style={styles.spaced}>
+          {definition.fields.length > 0 ? (
+            <>
+              <AppText variant="label" color={palette.textMuted} style={styles.fieldLabel}>
+                字段（记录本次选的值）
+              </AppText>
+              {definition.fields.map((field) => (
+                <FieldValuePicker
+                  key={field.id}
+                  field={field}
+                  values={fieldValues[field.id] ?? []}
+                  onChange={(values) => setFieldValue(field.id, values)}
+                />
+              ))}
+            </>
+          ) : null}
           {definition.attributes.length > 0 ? (
             <>
               <AppText variant="label" color={palette.textMuted} style={styles.fieldLabel}>

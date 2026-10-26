@@ -14,7 +14,13 @@
  *    行尾用 CRLF，并在开头加 BOM——否则 Excel 打开中文会乱码。
  */
 
-import { recordAttributes, type EventRecord, type RecordKind, type RecordSource } from '@/domain/models';
+import {
+  describeFieldValue,
+  recordAttributes,
+  type EventRecord,
+  type RecordKind,
+  type RecordSource,
+} from '@/domain/models';
 
 const SOURCE_LABELS: Record<RecordSource, string> = {
   manual: '手动',
@@ -28,7 +34,7 @@ const KIND_LABELS: Record<RecordKind, string> = {
   quantity: '数量',
 };
 
-/** 分隔标签 / 分组名称时用竖线，避免与 CSV 的逗号语义打架 */
+/** 分隔多个值（属性 / 分组 / 字段值）时用竖线，避免与 CSV 的逗号语义打架 */
 const LIST_SEPARATOR = ' | ';
 
 export const RECORDS_CSV_HEADERS = [
@@ -40,7 +46,7 @@ export const RECORDS_CSV_HEADERS = [
   '取值',
   '属性',
   '分组',
-  '标签',
+  '字段值',
   '备注',
   '状态',
   '删除时间',
@@ -48,10 +54,24 @@ export const RECORDS_CSV_HEADERS = [
 ] as const;
 
 export interface RecordsCsvOptions {
-  /** 标签 id → 名称；缺失时退回 id，保证信息不丢 */
-  tagNameById?: ReadonlyMap<string, string>;
   /** 分组 id → 名称；缺失时退回 id */
   groupNameById?: ReadonlyMap<string, string>;
+}
+
+/** 一条记录的字段取值 → `字段名：展示值`，多个用竖线分隔；没有取值时是空串。 */
+function fieldValueText(record: EventRecord): string {
+  const parts: string[] = [];
+  for (const value of record.fieldValues) {
+    const field = record.snapshot.fields.find((item) => item.id === value.fieldId);
+    if (!field) {
+      continue;
+    }
+    const text = describeFieldValue(field, value);
+    if (text !== undefined) {
+      parts.push(`${field.name}：${text}`);
+    }
+  }
+  return parts.join(LIST_SEPARATOR);
 }
 
 /** RFC 4180：含逗号、引号或换行的字段要加引号，内部引号翻倍。 */
@@ -76,10 +96,10 @@ export function recordsToCsv(records: readonly EventRecord[], options: RecordsCs
         KIND_LABELS[record.kind],
         // 取值保留原始数字（不加「+」），方便表格软件直接求和
         String(record.value),
-        // 一条记录可以标多个属性，用竖线分隔（与标签/分组同一套约定）
+        // 一条记录可以标多个属性，用竖线分隔（与分组/字段同一套约定）
         recordAttributes(record).join(LIST_SEPARATOR),
         resolveIds(record.snapshot.groupId ? [record.snapshot.groupId] : [], options.groupNameById),
-        resolveIds(record.snapshot.tagIds, options.tagNameById),
+        fieldValueText(record),
         record.note ?? '',
         record.deletedAt === undefined ? '有效' : '已删除',
         record.deletedAt ?? '',

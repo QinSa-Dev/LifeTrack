@@ -12,8 +12,8 @@ function makeRecord(overrides: Partial<EventRecord> = {}): EventRecord {
     occurredAt: '2026-10-22T08:00:00.000Z',
     recordedAt: '2026-10-22T08:00:00.000Z',
     source: 'manual',
-    tagIds: [],
-    snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: [], tagIds: [] },
+    fieldValues: [],
+    snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: [], fields: [] },
     ...overrides,
   };
 }
@@ -38,7 +38,7 @@ describe('formatRecordValue', () => {
   it('一个都没标时用记录时刻的定义属性，别丢「一次是什么」', () => {
     const record = makeRecord({
       attributes: [],
-      snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: ['200ml'], tagIds: [] },
+      snapshot: { definitionId: 'd1', name: '喝水', kind: 'counter', attributes: ['200ml'], fields: [] },
     });
     expect(formatRecordValue(record)).toBe('+1 200ml');
   });

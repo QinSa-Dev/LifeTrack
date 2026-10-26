@@ -14,14 +14,14 @@ function makeRecord(overrides: Partial<EventRecord> = {}): EventRecord {
     occurredAt: T1,
     recordedAt: T1,
     source: 'manual',
-    tagIds: [],
+    fieldValues: [],
     snapshot: {
       definitionId: '018fed00-0000-7000-8000-000000000301',
       name: '喝水',
       kind: 'counter',
       attributes: ['杯'],
       groupId: '018fed00-0000-7000-8000-000000000101',
-      tagIds: [],
+      fields: [],
     },
     ...overrides,
   };
@@ -65,7 +65,7 @@ describe('recordsToCsv', () => {
     expect(cells[5]).toBe('1');
     expect(cells[6]).toBe('杯');
     expect(cells[7]).toBe('018fed00-0000-7000-8000-000000000101'); // 分组没给名称映射 → 退回 id
-    expect(cells[8]).toBe(''); // 无标签
+    expect(cells[8]).toBe(''); // 无字段值
     expect(cells[9]).toBe(''); // 无备注
     expect(cells[10]).toBe('有效');
     expect(cells[11]).toBe(''); // 无删除时间
@@ -106,23 +106,44 @@ describe('recordsToCsv', () => {
     expect(cells[11]).toBe(T2);
   });
 
-  it('分组与标签用名称，解析不到时退回 id（信息不丢）', () => {
+  it('字段值按「名称：值」列出；分组用名称，解析不到时退回 id', () => {
     const record = makeRecord({
-      tagIds: ['018fed00-0000-7000-8000-000000000201'],
+      fieldValues: [{ fieldId: '018fed00-0000-7000-8000-000000000201', values: ['早晨', '晚上'] }],
       snapshot: {
         ...makeRecord().snapshot,
-        tagIds: ['018fed00-0000-7000-8000-000000000201', '018fed00-0000-7000-8000-000000000999'],
+        fields: [
+          {
+            id: '018fed00-0000-7000-8000-000000000201',
+            name: '时段',
+            kind: 'multi',
+            options: ['早晨', '晚上'],
+          },
+        ],
       },
     });
 
     const csv = recordsToCsv([record], {
-      tagNameById: new Map([['018fed00-0000-7000-8000-000000000201', '早晨']]),
       groupNameById: new Map([['018fed00-0000-7000-8000-000000000101', '健康']]),
     });
     const cells = rows(csv)[1]!.split(',');
 
     expect(cells[7]).toBe('健康');
-    expect(cells[8]).toBe('早晨 | 018fed00-0000-7000-8000-000000000999');
+    expect(cells[8]).toBe('时段：早晨 · 晚上');
+  });
+
+  it('时间段字段值还原成「开始–结束」', () => {
+    const record = makeRecord({
+      fieldValues: [{ fieldId: '018fed00-0000-7000-8000-000000000202', values: ['08:30', '09:15'] }],
+      snapshot: {
+        ...makeRecord().snapshot,
+        fields: [{ id: '018fed00-0000-7000-8000-000000000202', name: '时段', kind: 'range', options: [] }],
+      },
+    });
+
+    const csv = recordsToCsv([record]);
+    const cells = rows(csv)[1]!.split(',');
+
+    expect(cells[8]).toBe('时段：08:30–09:15');
   });
 
   it('含逗号 / 引号 / 换行的字段（事件名、备注）被正确转义，不破坏列数', () => {

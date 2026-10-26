@@ -272,7 +272,7 @@ export default function StatsScreen() {
                 entries={cycleEntries}
                 title="周期症状"
                 limit={5}
-                emptyHint="到「周期」标签页记录每天的阶段与症状后，这里会汇总。"
+                emptyHint="到「事件」页点开周期型事件、按天记录阶段与症状后，这里会汇总。"
               />
             </View>
           ) : null}

@@ -32,7 +32,6 @@ import {
   EventGroupRepository,
   EventRecordRepository,
   MetaRepository,
-  TagRepository,
 } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
@@ -177,7 +176,7 @@ export default function SettingsScreen() {
       }
       const saved = await exportBackupFile(file, exportedAt);
       setBackupMessage(
-        `已导出 ${saved.name}（分组 ${counts.eventGroups.length} / 标签 ${counts.tags.length} / ` +
+        `已导出 ${saved.name}（分组 ${counts.eventGroups.length} / ` +
           `事件定义 ${counts.eventDefinitions.length}（含周期型）/ 记录 ${counts.eventRecords.length} / ` +
           `周期实例 ${counts.cycleInstances.length} 段 / 每日记录 ${counts.cycleEntries.length} 条）`,
       );
@@ -187,14 +186,12 @@ export default function SettingsScreen() {
   const handleExportCsv = useCallback(() => {
     return runBackupTask(async () => {
       const exportedAt = new Date().toISOString();
-      const [records, tags, groups] = await Promise.all([
+      const [records, groups] = await Promise.all([
         new EventRecordRepository(db).list({ includeDeleted: true }),
-        new TagRepository(db).list(),
         new EventGroupRepository(db).list(),
       ]);
 
       const csv = recordsToCsv(records, {
-        tagNameById: new Map(tags.map((tag) => [tag.id, tag.name])),
         groupNameById: new Map(groups.map((group) => [group.id, group.name])),
       });
       const saved = await exportRecordsCsv(csv, exportedAt);

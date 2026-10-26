@@ -101,6 +101,9 @@ export default function DefinitionsScreen() {
             {!isCycle && definition.quickOptions.length > 0 ? (
               <Badge label={`${definition.quickOptions.length} 个快捷`} tone="neutral" />
             ) : null}
+            {!isCycle && definition.fields.length > 0 ? (
+              <Badge label={`${definition.fields.length} 个字段`} tone="neutral" />
+            ) : null}
             {isCycle ? <Badge label={`${own.length} 段`} tone="neutral" /> : null}
             <Badge
               label={muted ? '已归档' : eventKindLabel(definition.kind)}
@@ -117,7 +120,6 @@ export default function DefinitionsScreen() {
       <View style={styles.actions}>
         <Button label="+ 新建事件" onPress={() => router.push('/events/new')} style={styles.grow} />
         <Button label="分组" tone="secondary" onPress={() => router.push('/groups')} />
-        <Button label="标签" tone="secondary" onPress={() => router.push('/tags')} />
       </View>
       <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
         点按事件即可记录：计数型点一次记一次；周期型进内页开一段周期、逐天记录。

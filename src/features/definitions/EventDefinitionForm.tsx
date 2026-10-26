@@ -3,10 +3,19 @@ import { StyleSheet, View } from 'react-native';
 
 import { AppText, Button, Card, Chip, TextField } from '@/components';
 import { useReadyDatabase } from '@/db';
-import type { CycleMode, EventDefinition, EventDefinitionKind, EventGroup, Tag } from '@/domain/models';
-import type { EventDefinitionDraft, QuickOptionInput } from '@/domain/validation';
+import {
+  FIELD_KINDS,
+  isEnumFieldKind,
+  type CycleMode,
+  type EventDefinition,
+  type EventDefinitionKind,
+  type EventGroup,
+  type FieldKind,
+} from '@/domain/models';
+import type { EventDefinitionDraft, FieldInput, QuickOptionInput } from '@/domain/validation';
 import { CYCLE_MODE_HINTS, CYCLE_MODE_LABELS } from '@/features/cycles/labels';
-import { EventGroupRepository, TagRepository } from '@/repositories';
+import { FIELD_KIND_HINTS, FIELD_KIND_LABELS } from '@/features/definitions/fields';
+import { EventGroupRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
 /** 可以**新建**的类型：计数与周期。历史里的「数量」型只会在编辑老定义时出现。 */
@@ -25,6 +34,14 @@ interface QuickOptionRow {
   /** 「属性 + 取值」里的属性；空串表示这一下不带属性 */
   attribute: string;
   valueText: string;
+}
+
+/** 表单里自定义字段的编辑行；枚举型的候选值用字符串数组暂存。 */
+interface FieldRow {
+  id?: string;
+  name: string;
+  kind: FieldKind;
+  options: string[];
 }
 
 /** 数字输入框留空表示「不配置」，交给仓储把空串变成 undefined。 */
@@ -67,7 +84,11 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
     initial?.averagePeriodLengthDays === undefined ? '' : String(initial.averagePeriodLengthDays),
   );
   const [groupId, setGroupId] = useState<string | undefined>(initial?.groupId);
-  const [tagIds, setTagIds] = useState<string[]>(initial?.tagIds ?? []);
+  const [fields, setFields] = useState<FieldRow[]>(
+    [...(initial?.fields ?? [])]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((field) => ({ id: field.id, name: field.name, kind: field.kind, options: [...field.options] })),
+  );
   const [options, setOptions] = useState<QuickOptionRow[]>(
     [...(initial?.quickOptions ?? [])]
       .sort((a, b) => a.sortOrder - b.sortOrder)
@@ -78,19 +99,18 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
       })),
   );
   const [groups, setGroups] = useState<EventGroup[]>([]);
-  const [tags, setTags] = useState<Tag[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([new EventGroupRepository(db).list(), new TagRepository(db).list()])
-      .then(([loadedGroups, loadedTags]) => {
+    new EventGroupRepository(db)
+      .list()
+      .then((loadedGroups) => {
         if (cancelled) {
           return;
         }
         setGroups(loadedGroups);
-        setTags(loadedTags);
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
@@ -101,10 +121,6 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
       cancelled = true;
     };
   }, [db]);
-
-  const toggleTag = (id: string) => {
-    setTagIds((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
-  };
 
   /** 属性列表里已填好的名字（去空白、去重）：快捷选项只在这份名单里挑。 */
   const attributeNames = Array.from(
@@ -135,6 +151,55 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
     setOptions((current) => current.filter((_, i) => i !== index));
   };
 
+  const updateField = (index: number, patch: Partial<FieldRow>) => {
+    setFields((current) => current.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  };
+
+  /** 切到枚举型时若还没候选值，先补一个空行，省得用户还要再点一下「添加候选值」。 */
+  const changeFieldKind = (index: number, kind: FieldKind) => {
+    setFields((current) =>
+      current.map((row, i) => {
+        if (i !== index) {
+          return row;
+        }
+        const options = isEnumFieldKind(kind) && row.options.length === 0 ? [''] : row.options;
+        return { ...row, kind, options };
+      }),
+    );
+  };
+
+  const addField = () => {
+    setFields((current) => [...current, { name: '', kind: 'single', options: [''] }]);
+  };
+
+  const removeField = (index: number) => {
+    setFields((current) => current.filter((_, i) => i !== index));
+  };
+
+  const updateFieldOption = (fieldIndex: number, optionIndex: number, text: string) => {
+    setFields((current) =>
+      current.map((row, i) =>
+        i === fieldIndex
+          ? { ...row, options: row.options.map((option, j) => (j === optionIndex ? text : option)) }
+          : row,
+      ),
+    );
+  };
+
+  const addFieldOption = (fieldIndex: number) => {
+    setFields((current) =>
+      current.map((row, i) => (i === fieldIndex ? { ...row, options: [...row.options, ''] } : row)),
+    );
+  };
+
+  const removeFieldOption = (fieldIndex: number, optionIndex: number) => {
+    setFields((current) =>
+      current.map((row, i) =>
+        i === fieldIndex ? { ...row, options: row.options.filter((_, j) => j !== optionIndex) } : row,
+      ),
+    );
+  };
+
   const handleSubmit = () => {
     if (saving) {
       return;
@@ -149,15 +214,22 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
       sortOrder: index,
     }));
 
-    // 两种类型各交各的字段：周期型不带快捷选项与属性，计数型不带周期字段。
+    const fieldInputs: FieldInput[] = fields.map((row, index) => ({
+      id: row.id,
+      name: row.name,
+      kind: row.kind,
+      options: row.options,
+      sortOrder: index,
+    }));
+
+    // 两种类型各交各的字段：周期型不带快捷选项/属性/自定义字段，计数型不带周期字段。
     const draft: EventDefinitionDraft =
       kind === 'counter'
-        ? { name, kind, attributes, groupId, tagIds, quickOptions }
+        ? { name, kind, attributes, fields: fieldInputs, groupId, quickOptions }
         : {
             name,
             kind,
             groupId,
-            tagIds,
             quickOptions: [],
             cycleMode,
             averageCycleLengthDays: parseOptionalInteger(cycleLength),
@@ -285,25 +357,85 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
         ) : null}
       </Card>
 
-      <Card title="标签" subtitle="可多选；标签只是标注，不影响历史" style={styles.spaced}>
-        {tags.length === 0 ? (
-          <AppText variant="caption" color={palette.textMuted}>
-            还没有标签，可在「事件」页的「标签」里添加。
-          </AppText>
-        ) : (
-          <View style={styles.chipRow}>
-            {tags.map((tag) => (
-              <Chip
-                key={tag.id}
-                label={tag.name}
-                selected={tagIds.includes(tag.id)}
-                color={tag.color ?? palette.primary}
-                onPress={() => toggleTag(tag.id)}
-              />
-            ))}
-          </View>
-        )}
-      </Card>
+      {kind === 'counter' ? (
+        <Card
+          title="自定义字段"
+          subtitle="给这个事件定义带类型的输入项；记录时逐个选值"
+          style={styles.spaced}
+        >
+          {fields.length === 0 ? (
+            <AppText variant="caption" color={palette.textMuted}>
+              还没有字段。例如「时段」（单选：早晨/中午/晚上）、「心情」（多选）、「起床时间」（时间点）。
+            </AppText>
+          ) : (
+            fields.map((row, index) => (
+              <View key={row.id ?? index} style={styles.option}>
+                <TextField
+                  label={`字段 ${index + 1} 名称`}
+                  value={row.name}
+                  onChangeText={(text) => updateField(index, { name: text })}
+                  placeholder="例如：时段"
+                />
+                <AppText variant="label" color={palette.textMuted} style={styles.fieldLabel}>
+                  类型
+                </AppText>
+                <View style={styles.chipRow}>
+                  {FIELD_KINDS.map((item) => (
+                    <Chip
+                      key={item}
+                      label={FIELD_KIND_LABELS[item]}
+                      selected={row.kind === item}
+                      onPress={() => changeFieldKind(index, item)}
+                    />
+                  ))}
+                </View>
+                <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
+                  {FIELD_KIND_HINTS[row.kind]}
+                </AppText>
+
+                {isEnumFieldKind(row.kind) ? (
+                  <>
+                    <AppText variant="label" color={palette.textMuted} style={styles.fieldLabel}>
+                      候选值
+                    </AppText>
+                    {row.options.map((option, optionIndex) => (
+                      <View key={optionIndex} style={styles.attributeRow}>
+                        <TextField
+                          label={`候选值 ${optionIndex + 1}`}
+                          value={option}
+                          onChangeText={(text) => updateFieldOption(index, optionIndex, text)}
+                          placeholder="例如：早晨"
+                          containerStyle={styles.attributeField}
+                        />
+                        <Button
+                          label="移除"
+                          tone="danger"
+                          size="sm"
+                          onPress={() => removeFieldOption(index, optionIndex)}
+                        />
+                      </View>
+                    ))}
+                    <Button
+                      label="+ 添加候选值"
+                      tone="secondary"
+                      onPress={() => addFieldOption(index)}
+                      style={styles.spacedTop}
+                    />
+                  </>
+                ) : null}
+
+                <Button
+                  label="移除该字段"
+                  tone="danger"
+                  onPress={() => removeField(index)}
+                  style={styles.spacedTop}
+                />
+              </View>
+            ))
+          )}
+          <Button label="+ 添加字段" tone="secondary" onPress={addField} style={styles.spacedTop} />
+        </Card>
+      ) : null}
 
       {kind === 'counter' ? (
         <Card title="快捷选项" subtitle="一键记录「属性 + 取值」" style={styles.spaced}>

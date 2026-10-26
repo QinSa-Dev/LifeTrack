@@ -68,7 +68,7 @@ export default function EditEventScreen() {
     }
     Alert.alert(
       '永久删除事件定义',
-      `「${definition.name}」将被永久删除，其快捷选项与标签关联会一并清理。此操作不可撤销。`,
+      `「${definition.name}」将被永久删除，其快捷选项与自定义字段会一并清理。此操作不可撤销。`,
       [
         { text: '取消', style: 'cancel' },
         {

@@ -4,7 +4,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AppText, Badge, Button, Card, EmptyState, Header, Screen, TextField } from '@/components';
 import { useReadyDatabase } from '@/db';
-import { attributeText, recordAttributes, type EventRecord } from '@/domain/models';
+import { attributeText, describeFieldValue, recordAttributes, type EventRecord } from '@/domain/models';
 import { localDateText, localTimeText, parseLocalDateTime } from '@/features/common/datetime';
 import { formatFullTime, formatRecordValue, isBackfilled, sourceLabel } from '@/features/records/format';
 import { EventRecordRepository } from '@/repositories';
@@ -269,6 +269,17 @@ export default function RecordDetailScreen() {
       <Card title="这条记录" subtitle="记录当时的样子，之后改定义也不会动它" style={styles.spaced}>
         <DetailItem label="事件（记录时的名称）" value={record.snapshot.name} />
         <DetailItem label="属性" value={recordAttributeText ?? '（没有属性）'} />
+        {record.fieldValues.length > 0 ? (
+          record.fieldValues.map((value) => {
+            const field = record.snapshot.fields.find((item) => item.id === value.fieldId);
+            const text = field ? describeFieldValue(field, value) : undefined;
+            return text === undefined ? null : (
+              <DetailItem key={value.fieldId} label={`字段 · ${field?.name ?? value.fieldId}`} value={text} />
+            );
+          })
+        ) : (
+          <DetailItem label="字段" value="（没有字段值）" />
+        )}
         <DetailItem label="取值" value={formatRecordValue(record)} />
         <DetailItem label="发生时间" value={formatFullTime(record.occurredAt)} />
         <DetailItem label="录入时间" value={formatFullTime(record.recordedAt)} />

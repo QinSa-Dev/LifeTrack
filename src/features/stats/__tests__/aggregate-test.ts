@@ -43,13 +43,13 @@ function makeRecord(options: {
     occurredAt,
     recordedAt: occurredAt,
     source: 'manual',
-    tagIds: [],
+    fieldValues: [],
     snapshot: {
       definitionId,
       name: options.name ?? '喝水',
       kind,
       attributes: options.attributes ?? [],
-      tagIds: [],
+      fields: [],
     },
     deletedAt: options.deletedAt,
   };
