@@ -7,6 +7,7 @@ import { META_KEYS, useReadyDatabase } from '@/db';
 import type { CycleInstance, EventDefinition, EventGroup, EventRecord } from '@/domain/models';
 import { describeCycleDefinition, describeLatestCycle } from '@/features/cycles/labels';
 import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/features/cycles/predictionWindow';
+import { GroupManager } from '@/features/definitions/GroupManager';
 import { describeDefinition, eventKindLabel } from '@/features/definitions/labels';
 import { repeatDraft } from '@/features/records/repeat';
 import {
@@ -53,6 +54,8 @@ export default function DefinitionsScreen() {
   const [predictionWindow, setPredictionWindow] = useState(DEFAULT_PREDICTION_WINDOW_SETTING);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 分组管理卡是否展开（分组管理就地在「事件」页里做，不再跳单独一页）
+  const [groupsOpen, setGroupsOpen] = useState(false);
   // 正在写库的那几行（按钮显示「+1…」并禁用，避免连点记成两条）
   const [recordingIds, setRecordingIds] = useState<readonly string[]>([]);
   const [flash, setFlash] = useState<RowFlash | null>(null);
@@ -118,6 +121,21 @@ export default function DefinitionsScreen() {
       };
     }, [db]),
   );
+
+  /**
+   * 只重读分组。
+   *
+   * 分组管理卡每写一次就调它，而不是整页重读：整页重读会把列表打成 loading，
+   * 输名字 / 改名的时候闪一下很难看。这里只换分组，事件列表不动。
+   */
+  const reloadGroups = useCallback(() => {
+    new EventGroupRepository(db)
+      .list()
+      .then(setGroups)
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
+  }, [db]);
 
   const groupName = (id?: string) => groups.find((group) => group.id === id)?.name;
   const active = definitions.filter((definition) => !definition.isArchived);
@@ -233,11 +251,17 @@ export default function DefinitionsScreen() {
     <Screen scroll contentStyle={styles.content}>
       <View style={styles.actions}>
         <Button label="+ 新建事件" onPress={() => router.push('/events/new')} style={styles.grow} />
-        <Button label="分组" tone="secondary" onPress={() => router.push('/groups')} />
+        <Button
+          label={groupsOpen ? '收起分组' : '分组'}
+          tone="secondary"
+          onPress={() => setGroupsOpen((open) => !open)}
+        />
       </View>
       <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
         计数型点行内【+1】直接记一条；点行进内页看详情、改定义。
       </AppText>
+
+      {groupsOpen ? <GroupManager groups={groups} onChanged={reloadGroups} /> : null}
 
       {error ? (
         <Card title="读取失败" style={styles.spaced}>
@@ -252,11 +276,7 @@ export default function DefinitionsScreen() {
           <ActivityIndicator color={palette.primary} />
         </View>
       ) : definitions.length === 0 ? (
-        <EmptyState
-          title="尚未创建事件定义"
-          description="点上方「新建事件」定义你想记录的内容：计数型（如喝水 +1、属性 200ml）或周期型（如生理期）。"
-          footnote="归档只影响能否继续记录，不会删除任何历史。"
-        />
+        <EmptyState title="尚未创建事件定义" description="点上方「新建事件」开始" />
       ) : (
         <>
           <Card title="事件" subtitle={`${active.length} 个进行中`} style={styles.spaced}>
