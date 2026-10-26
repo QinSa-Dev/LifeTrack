@@ -241,11 +241,7 @@ export default function TimelineScreen() {
               <ActivityIndicator color={palette.primary} />
             </View>
           ) : (
-            <EmptyState
-              title="还没有任何记录"
-              description="到「事件」标签点按一个事件即可记录。计数型如「喝水 +1」，数量型如「跑步 5 公里」。"
-              footnote="记录会保存当时的事件快照，之后改定义也不会篡改历史。列表上的【+1】会按那条记录的取值再记一条。"
-            />
+            <EmptyState title="还没有任何记录" />
           )
         }
         contentContainerStyle={styles.content}

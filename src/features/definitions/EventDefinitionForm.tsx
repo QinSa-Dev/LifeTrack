@@ -314,10 +314,10 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
       </Card>
 
       {kind === 'counter' ? (
-        <Card title="属性" subtitle="描述「一次是什么」；可以写多条，记录时可以多选" style={styles.spaced}>
+        <Card title="属性" style={styles.spaced}>
           {attributes.length === 0 ? (
             <AppText variant="caption" color={palette.textMuted}>
-              还没有属性。例如「200ml」「温水」；不写也行，那就只记次数。
+              例如「200ml」（不写也行）
             </AppText>
           ) : (
             attributes.map((text, index) => (

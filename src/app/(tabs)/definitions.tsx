@@ -236,8 +236,7 @@ export default function DefinitionsScreen() {
         <Button label="分组" tone="secondary" onPress={() => router.push('/groups')} />
       </View>
       <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
-        计数型点行内【+1】直接记一条（照抄最近一次的取值与属性），点行进内页可填细节；
-        周期型点进内页开一段周期、逐天记录。在事件内页可编辑定义、归档或永久删除。
+        计数型点行内【+1】直接记一条；点行进内页看详情、改定义。
       </AppText>
 
       {error ? (
