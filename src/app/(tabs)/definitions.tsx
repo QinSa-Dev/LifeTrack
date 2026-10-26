@@ -82,13 +82,16 @@ export default function DefinitionsScreen() {
   const renderRow = (definition: EventDefinition, muted = false) => {
     const isCycle = definition.kind === 'cycle';
     const own = isCycle ? instances.filter((instance) => instance.definitionId === definition.id) : [];
+    const group = groupName(definition.groupId);
+    // 没分组就连分组这一段都不带，不写「未分组」（同 `describeDefinition`）
+    const groupPrefix = group === undefined ? '' : `${group} · `;
     const subtitle = isCycle
-      ? `${groupName(definition.groupId) ?? '未分组'} · ${describeCycleDefinition(definition)}　${describeLatestCycle(
+      ? `${groupPrefix}${describeCycleDefinition(definition)}　${describeLatestCycle(
           definition,
           own,
           predictionWindow,
         )}`
-      : describeDefinition(definition.kind, definition.attributes, groupName(definition.groupId));
+      : describeDefinition(definition.kind, definition.attributes, group);
 
     return (
       <ListRow
