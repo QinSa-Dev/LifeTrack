@@ -51,7 +51,8 @@
 `ON DELETE CASCADE`（跟随删除）、`ON DELETE RESTRICT`（拒绝删除）等。
 **为什么本项目需要**：「删除分组」和「删除事件定义」的正确行为**不一样**：
 
-- 分组只是「归类」。删掉它，事件定义应当保留，只是变成「未分组」→ 用 **SET NULL**。
+- 分组只是「归类」。删掉它，事件定义应当保留，只是 `group_id` 被置空、列表里不再显示分组这一段
+  → 用 **SET NULL**。
 - 事件定义一旦永删，它的快捷选项与标签关联就失去意义 → 用 **CASCADE**。
 
 **用在哪**：`src/db/schema.ts` 的 `MIGRATION_V2_EVENT_DEFINITIONS`。
@@ -274,7 +275,8 @@ npx expo export --platform ios   # 打包验证（不需要模拟器）
 
 ### 问题：删除分组后，事件「不见了」
 
-**原因**：不会——定义仍在，只是 `group_id` 被置空，分类名变成「未分组」。若真看不到，
+**原因**：不会——定义仍在，只是 `group_id` 被置空，列表里不再显示分组这一段
+（**不写「未分组」这种占位**，见第 10 节）。若真看不到，
 检查是不是误点了「永久删除」（那是另一个按钮，且有二次确认）。
 
 ### 问题：列表很长会不会卡
@@ -424,3 +426,36 @@ v2 里「标签」是**全局实体**（所有定义从同一张 `tags` 表里�
 周期型恒无字段）与 `db/__tests__/migrations-test.ts`（v7 块：字段表 / CHECK / 级联 /
 从 v6 折标签 / 索引对齐 / 版本号）；备份侧见 `backup-test.ts` 的「v2 备份折成字段」用例。
 端到端**没有为本特性新增 Maestro 流程**（界面层仍只有类型检查与人工确认兜底）。
+
+## 11. 后续变更（真机反馈）：列表行的副标题与类型标记
+
+装到 Android 真机后，事件列表的行有两处观感问题被提出来：
+
+1. **副标题里的「未分组」是占位词**。`describeDefinition` 原来写
+   `[groupName ?? '未分组', eventKindLabel(kind)]`——没分组也要把位置填上。
+   现在改成**没分组就不写这一段**（属性为空本来就不写，同一个原则）：
+
+   ```ts
+   const parts = groupName === undefined ? [eventKindLabel(kind)] : [groupName, eventKindLabel(kind)];
+   ```
+
+   周期行的副标题在 `(tabs)/definitions.tsx` 里单独拼，也照样去掉这一段。
+
+2. **右侧那颗蓝色类型标记写着「计数」，看起来像个按钮**。现在计数型显示 **`+1`**、
+   周期型仍显示「周期」：
+
+   ```ts
+   export function definitionBadgeLabel(kind: EventDefinitionKind): string {
+     return kind === 'counter' ? '+1' : eventKindLabel(kind);
+   }
+   ```
+
+   为什么用 `+1` 而不是「计数」：它说的是**用户要做的事**（点一次记一次），
+   而类型的正式名称并没有丢——副标题里由 `describeDefinition` 照旧写着「计数 / 周期」，
+   归档时那颗标记仍显示「已归档」。
+
+> **边界**：这颗标记**不是按钮**，点它等于点整行（进记录页）。如果以后要「在列表上直接记一条」，
+> 得换成真正的 `Button` 并补上列表内的成功反馈（见 [09](./09-event-recording.md) 第 10 节、`HANDOFF.md` 技术债）。
+
+**验证**：`src/features/definitions/__tests__/labels-test.ts` 覆盖 `describeDefinition` 的
+分组有无 / 属性有无四种组合，以及 `definitionBadgeLabel` 的取值。

@@ -195,7 +195,8 @@ src/theme/         设计令牌
 18. **「周期」是事件的一种类型，不是独立实体**（v6）：`EventDefinitionKind = 'counter' | 'cycle'`，
     周期定义就是 `kind = 'cycle'` 的 `EventDefinition`（`cycleMode` + 两个平均长度）。
     底部**没有**「周期」标签页：事件页一张列表并列两种类型，计数型点进记录页、周期型点进
-    `/cycles/[id]`（内页开一段、逐天记录）。周期分两种做法——
+    `/cycles/[id]`（内页开一段、逐天记录）。事件列表行右侧的类型标记：计数型显示【+1】、
+    周期型显示「周期」（**只是标记，不是按钮**，点它等于点整行）；没分组的行不写「未分组」占位。周期分两种做法——
     **自动循环**（按配置好的规律算出下一段，本轮只做「配置 + 生成下一段」，**不做后台自动写库**）
     与**手动标记**（自己点开始 / 点结束，时长不预先限定）。
     历史记录类型仍保留 `RecordKind = 'counter' | 'quantity'`（老记录不能改），
@@ -241,7 +242,7 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ **静态检查、470 个单元用例**（真实内存 SQLite）、iOS 打包。
+- ✅ **静态检查、472 个单元用例**（真实内存 SQLite）、iOS 打包。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go）：**4 个标签页** + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
@@ -274,7 +275,7 @@ src/theme/         设计令牌
   已修（`assertEntityId`，见第 10 节与技术债）。
 - ✅ **已装到 Android 真机**：走 EAS 云构建（`eas build -p android --profile preview`）出 APK、
   扫码安装（免费、长期有效），用户自测跑通。第一轮真机反馈与对应改动见 `README.md`
-  的「真机第一轮反馈」一节（记录反馈位置 / 按钮配色 / 不写「未分组」占位）。
+  的「真机第一轮反馈」一节（记录反馈位置 / 按钮配色 / 不写「未分组」占位 / 类型标记显示【+1】）。
 - ❌ **iOS 真机仍未跑过**：免费 Apple ID 只能本机 Xcode 直装且凭证 7 天失效，需要先
   `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`；流程见
   `docs/learning/18-build-and-distribute.md`（**该文档是操作手册，尚未实跑**）。
