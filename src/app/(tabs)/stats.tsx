@@ -14,6 +14,7 @@ import {
   compareDefinitions,
   compareWindows,
   recentComparisonWindows,
+  recordsOfDefinition,
   statsReadRange,
   summarize,
   TREND_RANGES,
@@ -23,12 +24,32 @@ import {
   type DefinitionTotal,
   type PeriodTotal,
 } from '@/features/stats/aggregate';
-import { describeComparison, describeDefinitionChange } from '@/features/stats/labels';
+import {
+  comparisonBasisLabel,
+  describeActiveComparison,
+  describeComparison,
+  describeDefinitionChange,
+} from '@/features/stats/labels';
 import { CycleEntryRepository, EventRecordRepository } from '@/repositories';
 import { palette, radius, spacing } from '@/theme';
 
 /** 趋势的粒度就是对比窗口的单位（同一个 `'day' | 'week'`）。 */
 type Mode = ComparisonUnit;
+
+/**
+ * 趋势要有「看什么」这一维，缺了它就只能把所有事件混成一个数。
+ *
+ * - `active`：**活跃事件数**——每天有几个不同的事件被记录过（覆盖 / 坚持度）。
+ *   把「3 次喝水 + 2 次跑步」加成一个数是没意义的，但「今天记了 2 个事件」
+ *   说得清，而且跨事件也能解释。
+ * - `all`：全部记录的条数（保留为一个显式选项，而不是默认口径）。
+ * - `definition`：某个事件每天的条数（「过去一周喝水每天有多少」）。
+ */
+type TrendSelection = { kind: 'active' } | { kind: 'all' } | { kind: 'definition'; definitionId: string };
+
+/** 两个非事件选项的标题，界面与文案共用。 */
+const ACTIVE_TREND_LABEL = '活跃事件数';
+const ALL_TREND_LABEL = '全部';
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
@@ -52,28 +73,39 @@ function periodLabel(date: string): string {
 }
 
 /**
- * 趋势条：每根横条的长度代表该桶的记录条数，最长的占满轨道。
- * 用 flex 表达比例（记录数为 0 时长度为 0），避免依赖字符串百分比宽度。
+ * 趋势条：每根横条的长度代表该桶的指标值（选「活跃事件数」时是事件数，
+ * 否则是记录条数），最长的占满轨道。
+ * 用 flex 表达比例（值为 0 时长度为 0），避免依赖字符串百分比宽度。
  */
-function TrendBars({ periods }: { periods: PeriodTotal[] }) {
-  const max = Math.max(1, ...periods.map((period) => period.recordCount));
+function TrendBars({
+  periods,
+  valueOf,
+}: {
+  periods: PeriodTotal[];
+  valueOf: (period: PeriodTotal) => number;
+}) {
+  const values = periods.map(valueOf);
+  const max = Math.max(1, ...values);
 
   return (
     <View>
-      {periods.map((period) => (
-        <View key={period.date} style={styles.barRow}>
-          <AppText variant="caption" color={palette.textMuted} style={styles.barLabel}>
-            {periodLabel(period.date)}
-          </AppText>
-          <View style={styles.barTrack}>
-            <View style={[styles.barFill, { flex: period.recordCount }]} />
-            <View style={{ flex: max - period.recordCount }} />
+      {periods.map((period, index) => {
+        const value = values[index] ?? 0;
+        return (
+          <View key={period.date} style={styles.barRow}>
+            <AppText variant="caption" color={palette.textMuted} style={styles.barLabel}>
+              {periodLabel(period.date)}
+            </AppText>
+            <View style={styles.barTrack}>
+              <View style={[styles.barFill, { flex: value }]} />
+              <View style={{ flex: max - value }} />
+            </View>
+            <AppText variant="caption" style={styles.barCount}>
+              {value}
+            </AppText>
           </View>
-          <AppText variant="caption" style={styles.barCount}>
-            {period.recordCount}
-          </AppText>
-        </View>
-      ))}
+        );
+      })}
     </View>
   );
 }
@@ -94,6 +126,8 @@ export default function StatsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Mode>('day');
   const [basis, setBasis] = useState<ComparisonBasis>('previous');
+  // 趋势看哪一条；`null` 表示还没手动选过，用下面算出的默认值。
+  const [trend, setTrend] = useState<TrendSelection | null>(null);
 
   // 每次回到这个标签页都重新读一次，这样刚记录/删除的内容马上反映到统计里。
   useFocusEffect(
@@ -136,13 +170,6 @@ export default function StatsScreen() {
 
   const summary = useMemo(() => summarize(records), [records]);
   const definitions = useMemo(() => aggregateByDefinition(records), [records]);
-  const periods = useMemo(
-    () =>
-      mode === 'day'
-        ? aggregateByDay(recentRecords, TREND_RANGES.day, now)
-        : aggregateByWeek(recentRecords, TREND_RANGES.week, now),
-    [recentRecords, mode, now],
-  );
 
   // 对比窗口与趋势窗口同长：「最近 14 天 vs 前 14 天」或「vs 上年同期」。
   const windows = useMemo(
@@ -150,14 +177,92 @@ export default function StatsScreen() {
     [mode, basis, now],
   );
   const comparison = useMemo(() => compareWindows(recentRecords, windows), [recentRecords, windows]);
-  // 每个事件的变化，用来给「按事件统计」的每一行加一句对比。
+
+  // 每个事件在两个窗口里的变化：既是「按事件统计」每一行的对比，
+  // 也是趋势选择器的排序依据与默认值来源。
+  const definitionChanges = useMemo(
+    () => compareDefinitions(recentRecords, windows),
+    [recentRecords, windows],
+  );
   const changeById = useMemo(() => {
     const map = new Map<string, DefinitionChange>();
-    for (const change of compareDefinitions(recentRecords, windows)) {
+    for (const change of definitionChanges) {
       map.set(change.definitionId, change);
     }
     return map;
-  }, [recentRecords, windows]);
+  }, [definitionChanges]);
+
+  // 趋势选择器里的事件列表：用「读进来的这段」而不是累计全量，
+  // 这样列表只含有近期出现过的事件，且不随「按天/按周」切换而变化。
+  const recentDefinitions = useMemo(() => aggregateByDefinition(recentRecords), [recentRecords]);
+
+  // 默认看「本期记录最多的那个事件」；本期没有就退到近来记录最多的事件，
+  // 再没有才退到「活跃事件数」。只有用户没手动选过时才用这个默认值。
+  const defaultTrend = useMemo<TrendSelection>(() => {
+    const topInWindow = definitionChanges.find((change) => change.currentCount > 0);
+    if (topInWindow) {
+      return { kind: 'definition', definitionId: topInWindow.definitionId };
+    }
+    const topOverall = recentDefinitions[0];
+    if (topOverall) {
+      return { kind: 'definition', definitionId: topOverall.definitionId };
+    }
+    return { kind: 'active' };
+  }, [definitionChanges, recentDefinitions]);
+  const trendSelection = trend ?? defaultTrend;
+
+  const trendPeriods = useMemo(() => {
+    const source =
+      trendSelection.kind === 'definition'
+        ? recordsOfDefinition(recentRecords, trendSelection.definitionId)
+        : recentRecords;
+    return mode === 'day'
+      ? aggregateByDay(source, TREND_RANGES.day, now)
+      : aggregateByWeek(source, TREND_RANGES.week, now);
+  }, [recentRecords, trendSelection, mode, now]);
+  const trendValueOf = useCallback(
+    (period: PeriodTotal) => (trendSelection.kind === 'active' ? period.definitionCount : period.recordCount),
+    [trendSelection],
+  );
+
+  const trendNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const total of recentDefinitions) {
+      map.set(total.definitionId, total.name);
+    }
+    for (const change of definitionChanges) {
+      if (!map.has(change.definitionId)) {
+        map.set(change.definitionId, change.name);
+      }
+    }
+    return map;
+  }, [recentDefinitions, definitionChanges]);
+
+  const rangeText = mode === 'day' ? `最近 ${TREND_RANGES.day} 天` : `最近 ${TREND_RANGES.week} 周`;
+  const trendSubtitle = useMemo(() => {
+    if (trendSelection.kind === 'active') {
+      return `${rangeText}，每天有几个事件被记录过`;
+    }
+    if (trendSelection.kind === 'all') {
+      return `${rangeText}，全部事件合起来的记录条数`;
+    }
+    const name = trendNameById.get(trendSelection.definitionId) ?? '所选事件';
+    return `${name} · ${rangeText}每天的条数`;
+  }, [trendSelection, trendNameById, rangeText]);
+
+  const comparisonText = useMemo(() => {
+    if (trendSelection.kind === 'active') {
+      return describeActiveComparison(comparison, basis);
+    }
+    if (trendSelection.kind === 'all') {
+      return describeComparison(comparison, basis);
+    }
+    const change = changeById.get(trendSelection.definitionId);
+    return (
+      (change ? describeDefinitionChange(change, basis) : undefined) ??
+      `本期与${comparisonBasisLabel(basis)}都没有记录`
+    );
+  }, [trendSelection, comparison, basis, changeById]);
 
   const hasData = !loading && records.length > 0;
   const hasCycleData = !loading && cycleEntries.length > 0;
@@ -198,23 +303,38 @@ export default function StatsScreen() {
                 ) : null}
               </Card>
 
-              <Card
-                title="趋势"
-                subtitle={
-                  mode === 'day'
-                    ? `最近 ${TREND_RANGES.day} 天（按本地日期）`
-                    : `最近 ${TREND_RANGES.week} 周（按周一起算）`
-                }
-                style={styles.spaced}
-              >
+              <Card title="趋势" subtitle={trendSubtitle} style={styles.spaced}>
                 <View style={styles.modeRow}>
                   <Chip label="按天" selected={mode === 'day'} onPress={() => setMode('day')} />
                   <Chip label="按周" selected={mode === 'week'} onPress={() => setMode('week')} />
                 </View>
-                <TrendBars periods={periods} />
+                <View style={styles.trendChips}>
+                  <Chip
+                    label={ACTIVE_TREND_LABEL}
+                    selected={trendSelection.kind === 'active'}
+                    onPress={() => setTrend({ kind: 'active' })}
+                  />
+                  <Chip
+                    label={ALL_TREND_LABEL}
+                    selected={trendSelection.kind === 'all'}
+                    onPress={() => setTrend({ kind: 'all' })}
+                  />
+                  {recentDefinitions.map((total) => (
+                    <Chip
+                      key={total.definitionId}
+                      label={total.name}
+                      selected={
+                        trendSelection.kind === 'definition' &&
+                        trendSelection.definitionId === total.definitionId
+                      }
+                      onPress={() => setTrend({ kind: 'definition', definitionId: total.definitionId })}
+                    />
+                  ))}
+                </View>
+                <TrendBars periods={trendPeriods} valueOf={trendValueOf} />
 
                 <AppText variant="label" color={palette.textMuted} style={styles.compareLabel}>
-                  对比（窗口长度同上）
+                  对比（与上图同一窗口）
                 </AppText>
                 <View style={styles.modeRow}>
                   <Chip
@@ -229,7 +349,7 @@ export default function StatsScreen() {
                   />
                 </View>
                 <AppText variant="caption" color={palette.textMuted}>
-                  {describeComparison(comparison, basis)}
+                  {comparisonText}
                 </AppText>
                 <AppText variant="caption" color={palette.textMuted} style={styles.range}>
                   对照窗口：{comparison.previous.window.startDate} ~ {comparison.previous.window.endDate}
@@ -305,6 +425,12 @@ const styles = StyleSheet.create({
   },
   modeRow: {
     flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  trendChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.sm,
     marginBottom: spacing.md,
   },
