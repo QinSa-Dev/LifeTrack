@@ -1,26 +1,39 @@
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AppText, Badge, Button, Card, EmptyState, ListRow, Screen } from '@/components';
 import { META_KEYS, useReadyDatabase } from '@/db';
-import type { CycleInstance, EventDefinition, EventGroup } from '@/domain/models';
+import type { CycleInstance, EventDefinition, EventGroup, EventRecord } from '@/domain/models';
 import { describeCycleDefinition, describeLatestCycle } from '@/features/cycles/labels';
 import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/features/cycles/predictionWindow';
-import { definitionBadgeLabel, describeDefinition } from '@/features/definitions/labels';
+import { describeDefinition, eventKindLabel } from '@/features/definitions/labels';
+import { repeatDraft } from '@/features/records/repeat';
 import {
   CycleInstanceRepository,
   EventDefinitionRepository,
   EventGroupRepository,
+  EventRecordRepository,
   MetaRepository,
 } from '@/repositories';
 import { palette, spacing } from '@/theme';
+
+/** 【+1】记完把结果贴在那一行里，2.5 秒后自己消失（不占整页顶部的位置）。 */
+const FLASH_MS = 2500;
+
+/** 一行的操作反馈：只给触发它的那一行看。 */
+interface RowFlash {
+  definitionId: string;
+  text: string;
+  tone: 'success' | 'danger';
+}
 
 /**
  * 「事件」页：**计数型与周期型在同一张列表里**。
  *
  * 周期不是单独的一类东西，而是事件的一种类型，所以这里不再分两个标签页：
- * 点计数型进记录页（点一次记一次），点周期型进周期页（开一段、逐天记录）。
+ * 计数型可以直接在行内点【+1】记一条，也可以点进记录页填细节；
+ * 周期型点进周期页（开一段、逐天记录）。
  */
 export default function DefinitionsScreen() {
   const router = useRouter();
@@ -29,10 +42,30 @@ export default function DefinitionsScreen() {
   const [definitions, setDefinitions] = useState<EventDefinition[]>([]);
   const [groups, setGroups] = useState<EventGroup[]>([]);
   const [instances, setInstances] = useState<CycleInstance[]>([]);
+  /**
+   * 每个定义**最近一条**记录。
+   *
+   * 【+1】要照抄它的取值 / 属性 / 字段，所以进页面时就备好，点下去不再临时查库。
+   * 定义被删掉的历史记录不会出现在这里（按定义查，查不到就是没有）。
+   */
+  const [latestByDefinition, setLatestByDefinition] = useState<ReadonlyMap<string, EventRecord>>(new Map());
   // 预测窗口：全局偏好，存 app_meta；周期行副标题里的预测要用同一个窗口
   const [predictionWindow, setPredictionWindow] = useState(DEFAULT_PREDICTION_WINDOW_SETTING);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 正在写库的那几行（按钮显示「+1…」并禁用，避免连点记成两条）
+  const [recordingIds, setRecordingIds] = useState<readonly string[]>([]);
+  const [flash, setFlash] = useState<RowFlash | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (flashTimer.current !== null) {
+        clearTimeout(flashTimer.current);
+      }
+    },
+    [],
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -44,7 +77,7 @@ export default function DefinitionsScreen() {
         new CycleInstanceRepository(db).list(),
         new MetaRepository(db).get(META_KEYS.predictionWindow),
       ])
-        .then(([loadedDefinitions, loadedGroups, loadedInstances, loadedWindow]) => {
+        .then(async ([loadedDefinitions, loadedGroups, loadedInstances, loadedWindow]) => {
           if (cancelled) {
             return;
           }
@@ -53,6 +86,22 @@ export default function DefinitionsScreen() {
           setInstances(loadedInstances);
           setPredictionWindow(parsePredictionWindow(loadedWindow));
           setError(null);
+
+          // 「最近一条」逐定义各查一次（走 definition_id 索引 + LIMIT 1）。
+          // 不读一大把记录再自己挑：那样定义一多，排在窗口外的老事件就拿不到自己的最近一条。
+          const records = new EventRecordRepository(db);
+          const latest = await Promise.all(
+            loadedDefinitions.map(async (definition) => {
+              const [record] = await records.list({ definitionId: definition.id, limit: 1 });
+              return [definition.id, record] as const;
+            }),
+          );
+          if (cancelled) {
+            return;
+          }
+          setLatestByDefinition(
+            new Map(latest.filter((entry): entry is [string, EventRecord] => entry[1] !== undefined)),
+          );
         })
         .catch((cause: unknown) => {
           if (!cancelled) {
@@ -79,6 +128,42 @@ export default function DefinitionsScreen() {
     router.push({ pathname, params: { id: definition.id } });
   };
 
+  const showFlash = (definitionId: string, text: string, tone: RowFlash['tone']) => {
+    setFlash({ definitionId, text, tone });
+    if (flashTimer.current !== null) {
+      clearTimeout(flashTimer.current);
+    }
+    flashTimer.current = setTimeout(() => setFlash(null), FLASH_MS);
+  };
+
+  /**
+   * 行内【+1】：照抄该事件**最近一条**记录的取值 / 属性 / 字段，来源记为「快捷」。
+   *
+   * 不弹确认、也不再给撤销入口——这一下就是「快」（与时间轴同一套取舍）：
+   * 记错了进这条记录的详情页改或删。记完也**不整页重读**（事件页不展示记录），
+   * 只把本地那份「最近一条」换成刚写的这条，连点两次的行为就与时间轴一致了。
+   */
+  const quickRecord = (definition: EventDefinition) => {
+    setRecordingIds((current) => [...current, definition.id]);
+    new EventRecordRepository(db)
+      .record({
+        definitionId: definition.id,
+        ...repeatDraft(latestByDefinition.get(definition.id)),
+        source: 'quick',
+      })
+      .then((created) => {
+        setLatestByDefinition((current) => new Map(current).set(definition.id, created));
+        showFlash(definition.id, `✓ 已记录 +${created.value}`, 'success');
+      })
+      .catch((cause: unknown) => {
+        // 失败同样落在这一行里，不弹到整页顶端（否则点完看不到）
+        showFlash(definition.id, cause instanceof Error ? cause.message : String(cause), 'danger');
+      })
+      .finally(() => {
+        setRecordingIds((current) => current.filter((id) => id !== definition.id));
+      });
+  };
+
   const renderRow = (definition: EventDefinition, muted = false) => {
     const isCycle = definition.kind === 'cycle';
     const own = isCycle ? instances.filter((instance) => instance.definitionId === definition.id) : [];
@@ -92,6 +177,9 @@ export default function DefinitionsScreen() {
           predictionWindow,
         )}`
       : describeDefinition(definition.kind, definition.attributes, group);
+    // 只有「未归档的计数型」才点得动：归档后不能再新增记录，周期型本来就不是点一次记一次
+    const canQuickRecord = !isCycle && !muted;
+    const rowFlash = flash?.definitionId === definition.id ? flash : null;
 
     return (
       <ListRow
@@ -101,6 +189,10 @@ export default function DefinitionsScreen() {
         onPress={() => open(definition)}
         right={
           <>
+            {/* 反馈紧贴这一行；放在按钮左边，按钮本身不挪位，点完不会「跳」 */}
+            {rowFlash ? (
+              <Badge label={rowFlash.text} tone={rowFlash.tone === 'success' ? 'success' : 'danger'} />
+            ) : null}
             {!isCycle && definition.quickOptions.length > 0 ? (
               <Badge label={`${definition.quickOptions.length} 个快捷`} tone="neutral" />
             ) : null}
@@ -108,10 +200,26 @@ export default function DefinitionsScreen() {
               <Badge label={`${definition.fields.length} 个字段`} tone="neutral" />
             ) : null}
             {isCycle ? <Badge label={`${own.length} 段`} tone="neutral" /> : null}
-            <Badge
-              label={muted ? '已归档' : definitionBadgeLabel(definition.kind)}
-              tone={muted ? 'warning' : 'primary'}
-            />
+            {canQuickRecord ? (
+              /*
+                标签就叫「+1」，与时间轴那颗一致。一屏多颗同名按钮对读屏不算友好，
+                但具体到「+1 喝水」这种名字会和 Maestro 的 `.*Maestro喝水.*` 选择器撞车
+                （同一屏里两个元素都能匹配，`tapOn` 会报多匹配）——详见 `.maestro/README.md`。
+              */
+              <Button
+                label={recordingIds.includes(definition.id) ? '+1…' : '+1'}
+                tone="secondary"
+                size="sm"
+                onPress={() => quickRecord(definition)}
+                disabled={recordingIds.includes(definition.id)}
+              />
+            ) : (
+              // 计数型的类型说明由副标题（describeDefinition）负责，这里只留周期型与归档态
+              <Badge
+                label={muted ? '已归档' : eventKindLabel(definition.kind)}
+                tone={muted ? 'warning' : 'primary'}
+              />
+            )}
           </>
         }
       />
@@ -125,8 +233,8 @@ export default function DefinitionsScreen() {
         <Button label="分组" tone="secondary" onPress={() => router.push('/groups')} />
       </View>
       <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
-        点按事件即可记录：计数型点一次记一次；周期型进内页开一段周期、逐天记录。
-        在事件内页可编辑定义、归档或永久删除。
+        计数型点行内【+1】直接记一条（照抄最近一次的取值与属性），点行进内页可填细节；
+        周期型点进内页开一段周期、逐天记录。在事件内页可编辑定义、归档或永久删除。
       </AppText>
 
       {error ? (

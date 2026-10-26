@@ -1,9 +1,4 @@
-import {
-  definitionBadgeLabel,
-  describeDefinition,
-  eventKindLabel,
-  recordKindLabel,
-} from '@/features/definitions/labels';
+import { describeDefinition, eventKindLabel, recordKindLabel } from '@/features/definitions/labels';
 
 describe('eventKindLabel / recordKindLabel', () => {
   it('事件类型与记录类型的中文名各自固定', () => {
@@ -12,17 +7,6 @@ describe('eventKindLabel / recordKindLabel', () => {
     // 历史里的 quantity 要标注来源，免得看起来像新功能
     expect(recordKindLabel('counter')).toBe('计数');
     expect(recordKindLabel('quantity')).toBe('数量（历史）');
-  });
-});
-
-describe('definitionBadgeLabel', () => {
-  it('计数型写 +1（说的是动作），周期型写周期', () => {
-    expect(definitionBadgeLabel('counter')).toBe('+1');
-    expect(definitionBadgeLabel('cycle')).toBe('周期');
-  });
-
-  it('换成 +1 不丢类型信息：副标题里仍写着「计数」', () => {
-    expect(describeDefinition('counter', [])).toContain('计数');
   });
 });
 
