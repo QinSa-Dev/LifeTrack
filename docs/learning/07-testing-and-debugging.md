@@ -573,7 +573,7 @@ Ran all test suites.
 | `src/db/client.ts`（`openDatabase` / `getDatabase` / PRAGMA） | ❌ 无用例 | 因为它 import 了 `expo-sqlite`，Jest 里跑不了。靠模拟器 + 读设备文件验证 |
 | `src/db/guard.ts` | ❌ 无直接用例 | 通过 `metaRepository-test.ts` 的「异常归一」用例**间接**覆盖 |
 | `src/db/DatabaseProvider.tsx` | ❌ 无用例 | 状态机（opening/ready/error）、`retry` 是否真的生效，全靠手工验证 |
-| `src/components/DatabaseGate.tsx` | ❌ 无用例 | 三个分支的渲染、启动记账、警告横幅，全靠手工验证 |
+| `src/components/DatabaseGate.tsx` | ❌ 无用例 | 三个分支的渲染与警告横幅全靠手工验证；它调用的 `seedStarterDefinitions` 有单测（见 05 的 4.3 节） |
 | `src/app/**` 所有页面 | ❌ 无用例（`collectCoverageFrom` 明确排除） | 界面能否渲染、标签能否切换，全靠手工验证 |
 | 端到端（用户操作 → 落盘） | ❌ 无自动化 | 每轮改动都要手工跑一遍模拟器 |
 

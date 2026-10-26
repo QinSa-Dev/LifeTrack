@@ -36,7 +36,7 @@
 | --- | --- | --- | --- |
 | `src/app/_layout.tsx` | 根布局，决定「谁包着谁」 | 新建：`<DatabaseProvider>` → `<StatusBar>` + `<DatabaseGate>` → `<Stack>` | 是整条链路的**起点**：Provider 提供数据库，Gate 挡住未就绪的界面 |
 | `src/db/DatabaseProvider.tsx` | 数据库的「状态提供者」 | 新建：`DatabaseStatus` 联合类型、`DatabaseContextValue` 接口、`DatabaseProvider` 组件、`useDatabase()`、`useReadyDatabase()` | 依赖 `client.ts` 的 `getDatabase`；被根布局使用，被 `DatabaseGate` 与设置页读取 |
-| `src/components/DatabaseGate.tsx` | 数据库门禁 + 启动记账 | 新建：三态渲染（加载中 / 出错 / 放行）；`useEffect` 里调用 `MetaRepository` 的 `ensureInstalledAt()` 与 `incrementLaunchCount()` | 依赖 `useDatabase()` 和 `MetaRepository`；**它是唯一一个既碰界面又碰数据库的组件** |
+| `src/components/DatabaseGate.tsx` | 数据库门禁 + 启动初始化 | 新建：三态渲染（加载中 / 出错 / 放行）；`useEffect` 里调用 `MetaRepository` 的 `ensureInstalledAt()` 与 `incrementLaunchCount()`，以及 `seedStarterDefinitions()`（新库才写一条内置事件） | 依赖 `useDatabase()`、`MetaRepository` 与 `seedStarterDefinitions()`；**它是唯一一个既碰界面又碰数据库的组件** |
 | `src/app/(tabs)/settings.tsx` | 设置页（诊断面板） | 新建：四张卡片；`useFocusEffect` 里用 `Promise.all` 并发读取 `readSchemaVersion(db)` 与 `repository.getAll()` | 依赖 `useReadyDatabase()`（取连接）与 `MetaRepository`；是本闭环的**读取端** |
 | `src/repositories/metaRepository.ts` | `app_meta` 仓储 | 提供 `ensureInstalledAt()`（只写一次）与 `incrementLaunchCount()`（每次 +1） | 见 [04](./04-sqlite-and-repository.md) |
 | `src/db/client.ts` | 连接入口 | 提供 `getDatabase()` 单例 | 见 [04](./04-sqlite-and-repository.md) |
@@ -196,7 +196,7 @@ useEffect(() => {
 
 **为什么本项目需要**：打开数据库是一个**副作用**（它会影响组件之外的东西——文件系统）。渲染函数本身必须是纯粹的，**不能在渲染过程中发起副作用**，否则每次重渲染都会重新打开一次数据库。
 
-**用在哪个真实文件**：`DatabaseProvider.tsx`（打开数据库）、`DatabaseGate.tsx`（启动记账）。
+**用在哪个真实文件**：`DatabaseProvider.tsx`（打开数据库）、`DatabaseGate.tsx`（启动初始化：记账 + 内置模板事件）。
 
 **不用会怎样**：直接在函数体里 `getDatabase().then(...)`，会在每次渲染时重复触发，形成请求风暴或无限循环。
 
@@ -365,12 +365,12 @@ export function DatabaseProvider({ children }: { children: ReactNode }) {
 4. **`attempt` 不传给 `getDatabase()`**。它是纯粹的「触发器」。真正让重试有意义的是 `client.ts` 里「失败后清空 `connectionPromise` 缓存」的逻辑（见 [04](./04-sqlite-and-repository.md) 4.2）。
 5. `useMemo` 的依赖列表就是 value 里的四个字段。**漏写会导致消费方拿到过期值**。
 
-### 4.3 `DatabaseGate`：三态渲染 + 一次启动记账
+### 4.3 `DatabaseGate`：三态渲染 + 启动时该做的两件事
 
 ```tsx
 export function DatabaseGate({ children }: { children: ReactNode }) {
   const { status, connection, error, retry } = useDatabase();
-  const [bookkeepingError, setBookkeepingError] = useState<string | null>(null);
+  const [bootWarning, setBootWarning] = useState<string | null>(null);
 
   useEffect(() => {
     if (status !== 'ready' || !connection) return;
@@ -379,9 +379,12 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
     repository
       .ensureInstalledAt()
       .then(() => repository.incrementLaunchCount())
+      .then(() =>
+        seedStarterDefinitions(connection.db, { freshDatabase: connection.migration.from === 0 }),
+      )
       .catch((cause: unknown) => {
         if (!cancelled) {
-          setBookkeepingError(cause instanceof Error ? cause.message : String(cause));
+          setBootWarning(cause instanceof Error ? cause.message : String(cause));
         }
       });
     return () => { cancelled = true; };
@@ -390,7 +393,7 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
   if (status === 'opening') { /* 转圈 + 「正在准备本地数据库…」 */ }
   if (status === 'error' || !connection) { /* 错误码 + 消息 + 重试按钮 */ }
 
-  return (<>{bookkeepingError ? <View style={styles.warning}>…</View> : null}{children}</>);
+  return (<>{bootWarning ? <View style={styles.warning}>…</View> : null}{children}</>);
 }
 ```
 
@@ -399,18 +402,25 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
 **A. 门禁**：`status === 'opening'` 时显示加载指示器；`status === 'error'` 时显示错误页和重试按钮；只有 `ready` 才渲染 `children`。
 注意错误分支的条件是 `status === 'error' || !connection`——**两个条件都要判**，因为 `status` 是 `'ready'` 但连接为 `null` 在类型上是可能的（虽然运行时不会），加个 `||` 让 `tsc` 也能确认 `connection` 非空。
 
-**B. 启动记账**：
+**B. 启动时该做的两件事**：
 
-- `ensureInstalledAt()` 先执行，`incrementLaunchCount()` 后执行（`.then` 串联）。顺序**有意义的**：先记录「首次安装时间」，再记启动次数。虽然这两个操作互相独立，但保持这个顺序让「第一次启动时两行一起出现」变得确定。
+1. **记账**：`ensureInstalledAt()` 先执行，`incrementLaunchCount()` 后执行（`.then` 串联）。顺序**有意义的**：先记录「首次安装时间」，再记启动次数。虽然这两个操作互相独立，但保持这个顺序让「第一次启动时两行一起出现」变得确定。
+2. **内置参考模板事件**：`seedStarterDefinitions()`（`src/features/definitions/starterDefinitions.ts`）写一条「喝水」定义——**只在数据库是这一次新建出来的时候**（`connection.migration.from === 0`）。
+   为什么用这个判断而不是「app_meta 里有没有标记」：用户把内置事件删了之后，下次升级不该让它复活；`from === 0` 只在建库那一次成立，此后每次打开都读不到 0。
+   `DatabaseGate` 是**唯一**适合做这件事的地方——它拿得到 `connection.migration`（别的组件拿不到「迁移前版本」），又已经在做启动写入。
+   「没有任何记录」的时间轴空状态此时只写 `还没有任何记录` 一句：新用户可以照这条内置事件点一下，不必先读一段说明。
+   （内置事件是**异步**写的，与门禁放行同时发生；只在「冷启动后立刻切到事件页」这种极端情况下第一帧可能还看不到它，切走再回来就有。）
+
 - `new MetaRepository(connection.db)` 每次 effect 执行时新建一个仓储实例。仓储本身无状态（只是持有连接），所以新建很便宜、也不用缓存。
 - 依赖数组是 `[status, connection]`。因为只有 `ready` 时才真正干活（前面有 `if (status !== 'ready' || !connection) return;`）。
-- **`bookkeepingError` 的处理方式很关键**：它**不阻止应用启动**，只在顶部显示一条黄色警告横幅「启动计数写入失败（不影响使用）：…」。
-  为什么这样设计：记账失败（比如磁盘满）不应该让用户**完全无法使用**应用。而数据库迁移失败则必须阻止启动，因为那时表结构不可信。**两类失败的处理态度不同**——这是刻意的产品判断。
+- **`bootWarning` 的处理方式很关键**：它**不阻止应用启动**，只在顶部显示一条黄色警告横幅「启动初始化未完成（不影响使用）：…」。
+  为什么这样设计：记账或内置模板失败（比如磁盘满）不应该让用户**完全无法使用**应用。而数据库迁移失败则必须阻止启动，因为那时表结构不可信。**两类失败的处理态度不同**——这是刻意的产品判断。
+  两件事共用一个警告位（只显示最后一条失败）：它们都属于「便利」，不需要用户分别处理。
 
 **容易误解的地方**：
 
-- `useEffect` 里 `repository.ensureInstalledAt().then(() => repository.incrementLaunchCount())` 只在 `.catch` 里处理错误。这意味着**中间步骤失败**（`ensureInstalledAt` 抛错）也会被同一个 `.catch` 捕获，`incrementLaunchCount` 不会执行。这在语义上是合理的：安装时间写不进去，就别急着累加计数。
-- `cancelled` 在这个 effect 里的作用：防止组件卸载后 setState。注意 `incrementLaunchCount` **不会被取消**，它还是会写进数据库——这是正确的，我们不想丢计数。
+- `useEffect` 里三条 `.then` 只在末尾 `.catch` 里处理错误。这意味着**中间步骤失败**也会被同一个 `.catch` 捕获，后面的步骤不会执行。这在语义上是合理的：安装时间写不进去，就别急着累加计数、也别写内置数据。
+- `cancelled` 在这个 effect 里的作用：防止组件卸载后 setState（横幅不再显示）。注意写入本身**不会被取消**，它还是会写进数据库——这是正确的，我们不想到手的初始化半途而废。
 
 ### 4.4 设置页：读回来的数据怎么变成界面
 
@@ -531,9 +541,9 @@ sequenceDiagram
 2. Provider 通过 `getDatabase()` 打开数据库（单例，见 [04](./04-sqlite-and-repository.md)），并**先设置 PRAGMA 再迁移**。
 3. 迁移是幂等的：全新库会走 `0 → 1`，已升级过的库 `applied` 为空。
 4. 只有 `status` 变成 `ready` 后，`DatabaseGate` 才会渲染业务界面。
-5. Gate 在渲染放行后（其实是在 effect 里，与渲染并行）执行启动记账：先补安装时间，再累加启动次数。
-6. 记账失败**不阻断使用**，只在顶部显示一条警告。
-7. 至此，数据库里已经有了这次启动留下的痕迹。
+5. Gate 在渲染放行后（其实是在 effect 里，与渲染并行）执行启动初始化：先补安装时间，再累加启动次数，最后**如果是刚新建的库**写一条内置模板事件（「喝水」）。
+6. 初始化失败**不阻断使用**，只在顶部显示一条警告。
+7. 至此，数据库里已经有了这次启动留下的痕迹；新用户打开「事件」页就能看到那条可删的模板事件。
 
 ### 5.2 打开设置页的读取链路
 
@@ -627,7 +637,7 @@ app_meta 表内容   启动次数用于验证跨重启持久化
 ### 如何查看失败信息
 
 - **数据库打开/迁移失败**：界面显示「数据库不可用」徽章 + 错误码 + 可复制的错误消息 + 重试按钮。
-- **记账失败**：界面顶部黄色横幅「启动计数写入失败（不影响使用）：<原因>」。**应用仍然可用**。
+- **记账或内置模板事件失败**：界面顶部黄色横幅「启动初始化未完成（不影响使用）：<原因>」。**应用仍然可用**。
 - **读取失败（设置页）**：`本地数据库` 卡片里多出一行「读取错误」。
 
 ### 测试覆盖了什么、没覆盖什么
@@ -638,6 +648,7 @@ app_meta 表内容   启动次数用于验证跨重启持久化
 | 「关闭后重开同一文件，数据还在」 | ✅ 有单测（`mkdtempSync` + 重开） |
 | `DatabaseProvider` 的状态机（opening → ready / error）与 `retry` | ❌ **无测试** |
 | `DatabaseGate` 的三态渲染与启动记账 | ❌ **无测试** |
+| `seedStarterDefinitions`（内置模板事件）的「新库才写、旧库不写、删了不复活」 | ✅ 有单测（`features/definitions/__tests__/starterDefinitions-test.ts`，用真实内存 SQLite） |
 | 设置页的读取与渲染 | ❌ **无测试**（`jest.config.js` 明确排除 `src/app/**`） |
 
 **这个缺口值得说清楚后果**：目前「Provider 会不会卡在 opening」「重试按钮是否真的能恢复」「Gate 在 error 时是否真的挡住了界面」这些问题，**都只靠人工在模拟器上看一眼**。
@@ -721,7 +732,7 @@ app_meta 表内容   启动次数用于验证跨重启持久化
 **需要理解的关键文件**
 
 `src/app/_layout.tsx`（嵌套顺序）、`src/db/DatabaseProvider.tsx`（状态机与 Context）、
-`src/components/DatabaseGate.tsx`（门禁 + 启动记账 + 两类失败的处理差异）、`src/app/(tabs)/settings.tsx`（读取与渲染）。
+`src/components/DatabaseGate.tsx`（门禁 + 启动初始化「记账 + 内置模板事件」+ 两类失败的处理差异）、`src/app/(tabs)/settings.tsx`（读取与渲染）。
 
 **建议亲自尝试的小练习**
 

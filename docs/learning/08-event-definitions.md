@@ -427,7 +427,7 @@ v2 里「标签」是**全局实体**（所有定义从同一张 `tags` 表里�
 从 v6 折标签 / 索引对齐 / 版本号）；备份侧见 `backup-test.ts` 的「v2 备份折成字段」用例。
 端到端**没有为本特性新增 Maestro 流程**（界面层仍只有类型检查与人工确认兜底）。
 
-## 11. 后续变更（真机反馈）：列表行的副标题与「一键记一条」
+## 11. 后续变更（真机反馈）：列表行的副标题、一键记一条与提示文案
 
 装到 Android 真机后，事件列表的行有两处被提出来：
 
@@ -470,6 +470,73 @@ v2 里「标签」是**全局实体**（所有定义从同一张 `tags` 表里�
 > **边界**：计数型的类型说明仍由副标题（`describeDefinition`）负责，那颗类型标记被按钮取代了，
 > 所以「计数」这个词只在副标题里出现——信息没丢。
 
+3. **表单与空状态里的提示太长**。原话：「还有一些提示不需要写得太过详细……只需要保留
+   「还没有任何记录」即可」「只需要保留「200ml」（不写也行）即可」。
+   规则是**只说「怎么做」，不解释设计**（README 领域规则 20）——被删掉的都是解释：
+
+   | 位置 | 原来 | 现在 |
+   | --- | --- | --- |
+   | 时间轴空状态 | 标题 + 「到「事件」标签点按一个事件即可记录。计数型如「喝水 +1」……」+ 「记录会保存当时的事件快照……」 | 只有 `还没有任何记录` |
+   | 定义表单「属性」卡 | 副标题「描述「一次是什么」；可以写多条，记录时可以多选」+「还没有属性。例如「200ml」「温水」；不写也行，那就只记次数。」 | 只有 `例如「200ml」（不写也行）` |
+   | 事件页顶部提示 | 三句（行内【+1】怎么记 / 周期怎么用 / 内页能改什么） | 一句「计数型点行内【+1】直接记一条；点行进内页看详情、改定义。」 |
+
+   「快照不可篡改」「【+1】会照抄最近一条」这类知识交给文档与内页，不占列表和表单的位置。
+
+> **配套**：新装应用已内置一条可删的「喝水」参考模板事件（见下一节），所以新用户进来就有东西可点，
+> 空状态不需要再教一遍「怎么记」。
+
 **验证**：`src/features/definitions/__tests__/labels-test.ts` 覆盖 `describeDefinition` 的
 分组有无 / 属性有无四种组合；`src/features/records/__tests__/repeat-test.ts` 覆盖 `repeatDraft` 的三条规则。
 **界面层仍无组件测试，也没有为本改动新增 Maestro 流程**（见 `HANDOFF.md` 技术债）。
+
+## 12. 后续变更（真机反馈）：新装内置一条参考模板事件
+
+**是什么**：`src/features/definitions/starterDefinitions.ts`
+
+```ts
+export const STARTER_DEFINITIONS: readonly EventDefinitionDraft[] = [
+  {
+    name: '喝水',
+    kind: 'counter',
+    attributes: ['200ml'],                              // 属性：这一次是什么
+    quickOptions: [{ attribute: '200ml', value: 1 }],   // 记录页会多出一颗「200ml +1」胶囊
+  },
+];
+
+export async function seedStarterDefinitions(
+  db: SqlExecutor,
+  options: { freshDatabase: boolean },
+): Promise<EventDefinition[]> {
+  if (!options.freshDatabase) return [];                 // 不是刚建的库：一条都不写
+  const repository = new EventDefinitionRepository(db);
+  const created: EventDefinition[] = [];
+  for (const draft of STARTER_DEFINITIONS) created.push(await repository.create(draft));
+  return created;
+}
+```
+
+**为什么**：原话「我觉得可以内置一个默认的喝水事件，也就是初始化应用后就存在了，这样用户有
+参考模板，不喜欢也可以直接删除」。空白的事件页要求用户先想清楚「事件怎么定义」（类型 / 属性 /
+快捷选项 / 字段各是什么）才能记第一笔；给一个**已经配好的例子**，点进去就能看到各处长什么样。
+内容刻意压到最小（一个计数型 + 一条属性 + 一个快捷选项），不塞周期型、不塞自定义字段——
+那些等真要用时再看，定义内页有完整表单。
+
+**怎么接进启动流程**：`src/components/DatabaseGate.tsx` 的启动 effect（见
+[05](./05-business-logic-and-data-flow.md) 的 4.3 节）在记账之后调用：
+
+```tsx
+.then(() => seedStarterDefinitions(connection.db, { freshDatabase: connection.migration.from === 0 }))
+```
+
+- **判据是「数据库刚新建」而不是「库里有没有事件」**：`openDatabase()` 把迁移前的版本放在
+  `connection.migration.from`，`from === 0` 只在这**一次**（建库那一次）成立。
+  换成 `app_meta` 标记或「当前是否为空库」都会带来一个很难解释的现象——用户把内置事件删了，
+  下次升级又冒出来一条。
+- **它不是迁移**：不进 `MIGRATIONS`、不参与 `user_version`，写入走 `EventDefinitionRepository`
+  （不手写 SQL）。所以**已有数据的设备不会凭空多出这条**；想现场看只能删掉设备上的库/重装。
+- **失败不阻断启动**：与启动记账同一档（便利，不是用户数据），只把 `DatabaseGate` 顶部的黄色
+  横幅换成「启动初始化未完成（不影响使用）：…」。
+
+**验证**：`src/features/definitions/__tests__/starterDefinitions-test.ts` 四条用例（真实内存 SQLite）：
+新库写入并可读回（类型 / 未归档 / 属性 / 快捷选项）、旧库一条不写、删完再跑「非新库」不复活、
+模板写法本身能过仓储校验。**真机上的「装完就有一条」没有实跑**（见 `HANDOFF.md` 第 8 节）。
