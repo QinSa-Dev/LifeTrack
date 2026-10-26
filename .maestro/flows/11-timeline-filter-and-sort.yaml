@@ -1,0 +1,58 @@
+# 写入路径 11：时间轴的筛选与排序（就地展开面板 → 立刻生效 → 跨重启记得住 → 还原默认）。
+#
+# 覆盖：
+#   1. 页头「筛选」**就地展开**一张「筛选与排序」面板（不是跳页；它是 `FlatList` 的页头）；
+#   2. 点「来源 → 快捷」+「排序 → 按次数」：页头多出一行摘要「快捷 · 按次数」，
+#      计数行从「最近 N 条」变成「筛出 N 条」；
+#   3. 杀掉重启：筛选与排序**还在**（`app_meta.app.timeline_query`，一段 JSON，见
+#      `docs/learning/19-timeline-filter-and-sort.md`）；
+#   4. 收尾把状态**还原成默认**：「清空筛选」+「还原排序」。
+#      （`00` 冒烟的断言也已放宽，认得「筛出 …」/「没有符合筛选的记录」这几种文案——偏好会跨重启
+#      记住，不该被上一条流程的残留状态卡住；但自己用完就还原，下一次跑才是干净的起点。）
+#
+# 只动偏好、不写业务数据：所以空库也能跑，也不依赖别的流程先跑过。
+appId: host.exp.Exponent
+name: 11 时间轴 · 筛选与排序（面板 / 记得住 / 还原）
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 4'
+    timeout: 120000
+- tapOn: '.*时间轴, tab.*'
+
+# —— 就地展开面板：四组筛选 + 一组排序都在 ——
+- tapOn: '筛选'
+- assertVisible: '筛选与排序'
+- assertVisible: '按最近修改'
+- takeScreenshot: 11-query-panel
+
+# —— 筛「来源 = 快捷」，并按次数排 ——
+# 「快捷」在行副标题里是「10-22 14:30 · 快捷」的一部分，全文匹配不会撞上（第 1 条坑）。
+- tapOn: '快捷'
+- tapOn: '按次数'
+- tapOn: '筛选' # 再点一次收起面板，看页头那行摘要
+- assertVisible: '.*快捷 · 按次数.*'
+- assertNotVisible: '筛选与排序'
+- takeScreenshot: 11-query-summary
+
+# —— 杀掉重启：偏好写在 app_meta 里，应该还在 ——
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 4'
+    timeout: 120000
+- tapOn: '.*时间轴, tab.*'
+- assertVisible: '.*快捷 · 按次数.*'
+- takeScreenshot: 11-query-after-restart
+
+# —— 收尾：还原成默认（先清筛选，再还原排序）——
+- tapOn: '清空筛选'
+- assertVisible: '按次数' # 筛选没了，排序还在
+- tapOn: '还原排序'
+- assertNotVisible: '按次数'
+- takeScreenshot: 11-query-reset
