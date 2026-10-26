@@ -54,6 +54,14 @@ export interface PeriodTotal {
   date: IsoDate;
   recordCount: number;
   totalValue: number;
+  /**
+   * 该桶里出现过的**不同事件数**（「活跃事件数」趋势用）。
+   *
+   * 为什么需要它：把所有事件的条数加成一个数没有意义（「3 次喝水 + 2 次跑步」
+   * 不等于「5 次什么」），但「今天有哪几个事件被记录过」是一个说得清的指标——
+   * 它衡量的是**覆盖 / 坚持度**。按某个事件过滤后再算时，这个值只会是 0 或 1。
+   */
+  definitionCount: number;
 }
 
 /** 全部记录的总体概览。 */
@@ -68,6 +76,8 @@ export interface OverallSummary {
 interface Bucket {
   recordCount: number;
   totalValue: number;
+  /** 该桶里出现过的事件 id（去重后就是「活跃事件数」） */
+  definitionIds: Set<string>;
 }
 
 /** 合计值保留的小数位：挡住 `0.1 + 0.2` 这类浮点误差。 */
@@ -117,8 +127,13 @@ function bucketBy(
     if (bucket) {
       bucket.recordCount += 1;
       bucket.totalValue += record.value;
+      bucket.definitionIds.add(record.definitionId);
     } else {
-      buckets.set(key, { recordCount: 1, totalValue: record.value });
+      buckets.set(key, {
+        recordCount: 1,
+        totalValue: record.value,
+        definitionIds: new Set([record.definitionId]),
+      });
     }
   }
   return buckets;
@@ -129,6 +144,7 @@ function toPeriodTotal(date: IsoDate, bucket: Bucket | undefined): PeriodTotal {
     date,
     recordCount: bucket?.recordCount ?? 0,
     totalValue: bucket ? roundValue(bucket.totalValue) : 0,
+    definitionCount: bucket?.definitionIds.size ?? 0,
   };
 }
 
@@ -192,6 +208,15 @@ export function aggregateByDefinition(records: readonly EventRecord[]): Definiti
       a.name.localeCompare(b.name) ||
       a.definitionId.localeCompare(b.definitionId),
   );
+}
+
+/**
+ * 只留下某个事件定义的记录（给「按事件看趋势」用）。
+ *
+ * 这里**不**再过滤软删除：可见性统一由下游的聚合函数兜底，避免两处各写一套。
+ */
+export function recordsOfDefinition(records: readonly EventRecord[], definitionId: string): EventRecord[] {
+  return records.filter((record) => record.definitionId === definitionId);
 }
 
 /**

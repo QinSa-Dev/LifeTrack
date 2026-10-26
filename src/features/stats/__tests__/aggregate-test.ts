@@ -7,6 +7,7 @@ import {
   compareDefinitions,
   compareWindows,
   recentComparisonWindows,
+  recordsOfDefinition,
   statsReadRange,
   summarize,
   summarizeWindow,
@@ -171,7 +172,23 @@ describe('aggregateByDay', () => {
 
     expect(days.map((day) => day.date)).toEqual(['2026-10-17', '2026-10-18', '2026-10-19']);
     expect(days.map((day) => day.recordCount)).toEqual([1, 0, 2]);
+    expect(days.map((day) => day.definitionCount)).toEqual([1, 0, 1]);
     expect(days[2]?.totalValue).toBe(2);
+  });
+
+  it('「活跃事件数」：同一天出现几个不同事件就算几个，同事件多条只算一个', () => {
+    const days = aggregateByDay(
+      [
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 19, 9] }),
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 19, 10] }),
+        makeRecord({ definitionId: 'd2', at: [2026, 10, 19, 11] }),
+      ],
+      2,
+      now,
+    );
+
+    expect(days.map((day) => day.definitionCount)).toEqual([0, 2]);
+    expect(days[1]?.recordCount).toBe(3);
   });
 
   it('范围之外的记录不进桶', () => {
@@ -223,6 +240,27 @@ describe('aggregateByWeek', () => {
 
     expect(weeks.map((week) => week.date)).toEqual(['2026-10-12', '2026-10-19']);
     expect(weeks.map((week) => week.recordCount)).toEqual([2, 1]);
+    expect(weeks.map((week) => week.definitionCount)).toEqual([1, 1]);
+  });
+});
+
+describe('recordsOfDefinition', () => {
+  it('只留下指定事件的记录，不预先过滤软删除（可见性交给聚合函数兜底）', () => {
+    const kept = recordsOfDefinition(
+      [
+        makeRecord({ definitionId: 'd1', at: [2026, 10, 19] }),
+        makeRecord({ definitionId: 'd2', at: [2026, 10, 19] }),
+        makeRecord({
+          definitionId: 'd1',
+          at: [2026, 10, 18],
+          deletedAt: '2026-10-18T10:00:00.000Z',
+        }),
+      ],
+      'd1',
+    );
+
+    expect(kept).toHaveLength(2);
+    expect(kept.every((record) => record.definitionId === 'd1')).toBe(true);
   });
 });
 

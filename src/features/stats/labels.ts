@@ -56,6 +56,26 @@ export function describeComparison(summary: ComparisonSummary, basis: Comparison
 }
 
 /**
+ * 「活跃事件数」趋势的对比：本期与对照期各有几个**不同事件**被记录过。
+ *
+ * 与 `describeComparison`（比条数）不同，这里比的是「覆盖了几个事件」，
+ * 所以单位是「个」而不是「条」，两种文案不能互相套用。
+ */
+export function describeActiveComparison(summary: ComparisonSummary, basis: ComparisonBasis): string {
+  const label = comparisonBasisLabel(basis);
+  const current = summary.current.definitionCount;
+  const previous = summary.previous.definitionCount;
+
+  if (previous === 0) {
+    return current === 0 ? `本期与${label}都没有记录` : `本期记了 ${current} 个事件，${label}没有记录`;
+  }
+  if (summary.definitionDelta === 0) {
+    return `与${label}持平（都是 ${current} 个事件）`;
+  }
+  return `本期记了 ${current} 个事件，较${label} ${formatDelta(summary.definitionDelta)} 个`;
+}
+
+/**
  * 单个事件在两个窗口之间的变化，用于「按事件统计」每行的副标题。
  *
  * 两个窗口都没有它时返回 `undefined`（调用方据此不显示这一段）。

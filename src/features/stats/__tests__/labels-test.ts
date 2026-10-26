@@ -1,6 +1,7 @@
 import type { ComparisonSummary, DefinitionChange } from '@/features/stats/aggregate';
 import {
   comparisonBasisLabel,
+  describeActiveComparison,
   describeComparison,
   describeDefinitionChange,
   describeSymptomSummary,
@@ -40,6 +41,25 @@ function makeChange(currentCount: number, previousCount: number): DefinitionChan
     currentCount,
     previousCount,
     delta: currentCount - previousCount,
+  };
+}
+
+/** 构造「活跃事件数」口径的对比：只关心两个窗口各有几个不同事件。 */
+function makeActiveSummary(currentDefinitions: number, previousDefinitions: number): ComparisonSummary {
+  return {
+    current: {
+      window: { startDate: '2026-10-17', endDate: '2026-10-19' },
+      recordCount: currentDefinitions,
+      definitionCount: currentDefinitions,
+    },
+    previous: {
+      window: { startDate: '2026-10-14', endDate: '2026-10-16' },
+      recordCount: previousDefinitions,
+      definitionCount: previousDefinitions,
+    },
+    recordCountDelta: 0,
+    recordCountRate: undefined,
+    definitionDelta: currentDefinitions - previousDefinitions,
   };
 }
 
@@ -89,6 +109,33 @@ describe('describeComparison', () => {
 
   it('两边都没有记录时明说', () => {
     expect(describeComparison(makeSummary(0, 0, undefined), 'lastYear')).toBe('本期与上年同期都没有记录');
+  });
+});
+
+describe('describeActiveComparison', () => {
+  it('对照期没有记录时只说本期覆盖了几个事件', () => {
+    expect(describeActiveComparison(makeActiveSummary(3, 0), 'previous')).toBe(
+      '本期记了 3 个事件，前一段没有记录',
+    );
+  });
+
+  it('两边都没有记录时明说', () => {
+    expect(describeActiveComparison(makeActiveSummary(0, 0), 'lastYear')).toBe('本期与上年同期都没有记录');
+  });
+
+  it('持平时明说持平，单位是「个事件」', () => {
+    expect(describeActiveComparison(makeActiveSummary(2, 2), 'previous')).toBe(
+      '与前一段持平（都是 2 个事件）',
+    );
+  });
+
+  it('差值非零时给出「较… +N 个」', () => {
+    expect(describeActiveComparison(makeActiveSummary(5, 3), 'previous')).toBe(
+      '本期记了 5 个事件，较前一段 +2 个',
+    );
+    expect(describeActiveComparison(makeActiveSummary(1, 3), 'lastYear')).toBe(
+      '本期记了 1 个事件，较上年同期 -2 个',
+    );
   });
 });
 
