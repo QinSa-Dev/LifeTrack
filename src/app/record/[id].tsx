@@ -17,9 +17,25 @@ import { describeRecord, formatOccurredAt, sourceLabel } from '@/features/record
 import { RecordRow } from '@/features/records/RecordRow';
 import { EventDefinitionRepository, EventRecordRepository } from '@/repositories';
 import type { FieldValueInput } from '@/domain/validation';
-import { palette, spacing } from '@/theme';
+import { palette, radius, spacing } from '@/theme';
 
 const RECENT_LIMIT = 5;
+
+/** 反馈贴在「刚才点的那个地方」：快捷胶囊 / 手动按钮 / 最近记录，三处各一片。 */
+type FlashScope = 'quick' | 'manual' | 'recent';
+
+/**
+ * 一次操作的结果。
+ *
+ * 存在的理由：原来成功提示是一张卡片、渲染在页面最顶端，而「手动记录」的按钮在
+ * 页面底部——记完看不到任何变化，会以为没记上。所以提示必须落在操作点附近，
+ * 成功失败也走同一套（错误同样可能出现在页面底部）。
+ */
+interface Flash {
+  text: string;
+  tone: 'success' | 'danger';
+  scope: FlashScope;
+}
 
 export default function RecordScreen() {
   const router = useRouter();
@@ -41,7 +57,7 @@ export default function RecordScreen() {
   const [timeText, setTimeText] = useState(() => localTimeText(new Date()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [flash, setFlash] = useState<string | null>(null);
+  const [flash, setFlash] = useState<Flash | null>(null);
   // 「最近记录」里正在【+1】的那一条
   const [repeatingId, setRepeatingId] = useState<string | null>(null);
 
@@ -71,12 +87,6 @@ export default function RecordScreen() {
 
   useEffect(() => load(), [load]);
 
-  /**
-   * 记一条。
-   *
-   * `note` 默认取输入框里的备注；行内的【+1】显式传空串——它不该顺手带上
-   * 你刚敲进「手动记录」输入框、还没提交的备注。
-   */
   /** 当前表单里非空的字段取值；仓储会再按定义逐条校验（空值直接不提交）。 */
   const selectedFieldValues = (): FieldValueInput[] =>
     (definition?.fields ?? [])
@@ -89,19 +99,25 @@ export default function RecordScreen() {
    * `note` 默认取输入框里的备注；行内的【+1】显式传空串——它不该顺手带上
    * 你刚敲进「手动记录」输入框、还没提交的备注。
    * `fieldValues` 同理：手动记录用当前选择，快捷记录与【+1】各自显式传值。
+   * `scope` 决定成功/失败提示贴在哪张卡里（见 `Flash`），默认贴在手动记录。
    */
   const save = (
     value: number,
     usedAttributes: string[],
     source: RecordSource,
-    options: { occurredAt?: string; note?: string; fieldValues?: FieldValueInput[] } = {},
+    options: {
+      occurredAt?: string;
+      note?: string;
+      fieldValues?: FieldValueInput[];
+      scope?: FlashScope;
+    } = {},
   ): Promise<void> => {
     if (!definition || busy) {
       return Promise.resolve();
     }
+    const scope = options.scope ?? 'manual';
     const usedNote = options.note ?? note;
     setBusy(true);
-    setError(null);
     setFlash(null);
     return new EventRecordRepository(db)
       .record({
@@ -114,14 +130,22 @@ export default function RecordScreen() {
         occurredAt: options.occurredAt,
       })
       .then((created) => {
-        setFlash(`${created.source === 'backfill' ? '已补录' : '已记录'}：${describeRecord(created)}`);
+        setFlash({
+          text: `${created.source === 'backfill' ? '已补录' : '已记录'}：${describeRecord(created)}`,
+          tone: 'success',
+          scope,
+        });
         if (usedNote.trim() !== '') {
           setNote('');
         }
         load();
       })
       .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        setFlash({
+          text: cause instanceof Error ? cause.message : String(cause),
+          tone: 'danger',
+          scope,
+        });
       })
       .finally(() => {
         setBusy(false);
@@ -137,6 +161,7 @@ export default function RecordScreen() {
     void save(record.value, recordAttributes(record), 'quick', {
       note: '',
       fieldValues: record.fieldValues,
+      scope: 'recent',
     }).finally(() => setRepeatingId(null));
   };
 
@@ -160,7 +185,12 @@ export default function RecordScreen() {
     }
     const occurredAt = parseLocalDateTime(dateText, timeText);
     if (occurredAt === null) {
-      setError('日期或时间格式不正确，日期应形如 2026-10-19，时间应形如 08:30。');
+      // 提示同样贴在按钮旁边——校验失败时人在页面底部，看不到顶端那张错误卡
+      setFlash({
+        text: '日期或时间格式不正确，日期应形如 2026-10-19，时间应形如 08:30。',
+        tone: 'danger',
+        scope: 'manual',
+      });
       return;
     }
     void save(Number(manualValue.trim()), attributes, 'backfill', { occurredAt });
@@ -185,6 +215,21 @@ export default function RecordScreen() {
 
   const archived = definition.isArchived;
   const selectedAttributeText = attributeText(attributes);
+
+  /** 把一次操作的反馈贴在指定那张卡里（见 `Flash`）；不匹配就是什么都不渲染。 */
+  const flashFor = (scope: FlashScope) => {
+    if (flash === null || flash.scope !== scope) {
+      return null;
+    }
+    const success = flash.tone === 'success';
+    return (
+      <View style={[styles.flash, { backgroundColor: success ? palette.successSoft : palette.dangerSoft }]}>
+        <AppText variant="label" color={success ? palette.success : palette.danger}>
+          {success ? `✓ ${flash.text}` : flash.text}
+        </AppText>
+      </View>
+    );
+  };
 
   return (
     <Screen scroll contentStyle={styles.content}>
@@ -221,14 +266,6 @@ export default function RecordScreen() {
         </Card>
       ) : null}
 
-      {flash ? (
-        <Card style={styles.spaced}>
-          <AppText variant="body" color={palette.success}>
-            {flash}
-          </AppText>
-        </Card>
-      ) : null}
-
       {error ? (
         <Card style={styles.spaced}>
           <AppText variant="body" color={palette.danger}>
@@ -247,11 +284,13 @@ export default function RecordScreen() {
                 onPress={() =>
                   void save(option.value, option.attribute ? [option.attribute] : [], 'quick', {
                     fieldValues: [],
+                    scope: 'quick',
                   })
                 }
               />
             ))}
           </View>
+          {flashFor('quick')}
         </Card>
       ) : null}
 
@@ -347,10 +386,12 @@ export default function RecordScreen() {
             onPress={submitManual}
             disabled={busy}
           />
+          {flashFor('manual')}
         </Card>
       ) : null}
 
       <Card title="最近记录" subtitle={`该事件最近 ${recent.length} 条`} style={styles.spaced}>
+        {flashFor('recent')}
         {recent.length === 0 ? (
           <AppText variant="caption" color={palette.textMuted}>
             还没有记录。
@@ -398,6 +439,13 @@ const styles = StyleSheet.create({
   },
   fieldLabel: {
     marginBottom: spacing.sm,
+  },
+  /** 操作反馈条：贴在按钮/胶囊下面，绿底=成功、红底=失败 */
+  flash: {
+    marginTop: spacing.md,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   toggleRow: {
     flexDirection: 'row',
