@@ -128,7 +128,7 @@ export default function DeletedRecordsScreen() {
       <Header title="回收站" onBack={() => router.back()} />
 
       <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
-        删除记录是「软删除」，会先放进这里；可以恢复，也可以永久删除。永久删除不可撤销。
+        删除的记录会先到这里；永久删除不可撤销。
       </AppText>
 
       {error ? (
@@ -144,10 +144,7 @@ export default function DeletedRecordsScreen() {
           <ActivityIndicator color={palette.primary} />
         </View>
       ) : empty ? (
-        <EmptyState
-          title="回收站是空的"
-          description="在时间轴或周期里删除记录后，它会出现在这里，等你决定恢复还是永久删除。"
-        />
+        <EmptyState title="回收站是空的" description="删除的记录会先到这里" />
       ) : (
         <>
           {records.length > 0 ? (
@@ -217,8 +214,7 @@ export default function DeletedRecordsScreen() {
                 />
               ))}
               <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-                周期记录的日期必须落在它所属周期的区间内：如果这段周期的边界已经缩到不包含这一天，
-                恢复会被拒绝并说明原因——先改回边界，或者彻底删除它。
+                恢复要求这一天仍在周期的区间内；被拒绝就改回边界，或彻底删除它。
               </AppText>
             </Card>
           ) : null}

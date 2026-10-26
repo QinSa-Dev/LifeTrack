@@ -52,7 +52,7 @@ export function SymptomStatsCard({ entries, title = '症状统计', emptyHint, l
             </AppText>
           ) : null}
           <AppText variant="caption" color={palette.textMuted} style={styles.note}>
-            百分比按「记了症状的记录数」算；同一天里重复写的同一个症状只算一次；软删除的记录不计入。
+            百分比按「记了症状的记录数」算；软删除的记录不计入。
           </AppText>
         </>
       )}

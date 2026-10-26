@@ -297,8 +297,8 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
               keyboardType="number-pad"
               hint={
                 cycleMode === 'auto'
-                  ? '自动循环按它推算下一段的开始日。'
-                  : '两个周期开始日之间的平均天数，用来预测下次开始日。'
+                  ? '每隔多少天一次，用来推算下一段。'
+                  : '两次开始日之间的平均天数，用来预测。'
               }
             />
             <TextField
@@ -307,7 +307,7 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
               onChangeText={setPeriodLength}
               placeholder="例如：5"
               keyboardType="number-pad"
-              hint={cycleMode === 'auto' ? '自动生成时会按它一并给出结束日。' : '只作参考，不限定真实时长。'}
+              hint={cycleMode === 'auto' ? '生成时按它给出结束日。' : '只作参考。'}
             />
           </>
         ) : null}
@@ -337,7 +337,7 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
         </Card>
       ) : null}
 
-      <Card title="分组" subtitle="分组用于归类；删除分组不会删除事件" style={styles.spaced}>
+      <Card title="分组" subtitle="分组用于归类" style={styles.spaced}>
         <View style={styles.chipRow}>
           <Chip label="未分组" selected={groupId === undefined} onPress={() => setGroupId(undefined)} />
           {groups.map((group) => (
@@ -352,20 +352,16 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
         </View>
         {groups.length === 0 ? (
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-            还没有分组，可在「事件」页的「分组」里添加。
+            还没有分组，可在「事件」页里添加。
           </AppText>
         ) : null}
       </Card>
 
       {kind === 'counter' ? (
-        <Card
-          title="自定义字段"
-          subtitle="给这个事件定义带类型的输入项；记录时逐个选值"
-          style={styles.spaced}
-        >
+        <Card title="自定义字段" subtitle="带类型的输入项，记录时逐个选值" style={styles.spaced}>
           {fields.length === 0 ? (
             <AppText variant="caption" color={palette.textMuted}>
-              还没有字段。例如「时段」（单选：早晨/中午/晚上）、「心情」（多选）、「起床时间」（时间点）。
+              例如「时段」（单选）、「起床时间」（时间点）
             </AppText>
           ) : (
             fields.map((row, index) => (
@@ -441,7 +437,7 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
         <Card title="快捷选项" subtitle="一键记录「属性 + 取值」" style={styles.spaced}>
           {options.length === 0 ? (
             <AppText variant="caption" color={palette.textMuted}>
-              还没有快捷选项。添加后，记录页上会多出一排一点就记的胶囊。
+              添加后记录页会多出一排胶囊
             </AppText>
           ) : (
             options.map((row, index) => (

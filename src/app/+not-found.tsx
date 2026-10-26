@@ -10,11 +10,7 @@ export default function NotFoundScreen() {
 
   return (
     <Screen scroll contentStyle={styles.content}>
-      <EmptyState
-        title="页面不存在"
-        description="你访问的页面可能已被移除，或链接不正确。"
-        footnote="如果是通过通知或导入跳转进来的，请回到时间轴重新操作。"
-      />
+      <EmptyState title="页面不存在" description="链接可能已失效，回时间轴看看" />
       <Button label="回到时间轴" onPress={() => router.replace('/')} />
     </Screen>
   );

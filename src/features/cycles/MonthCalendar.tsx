@@ -144,7 +144,7 @@ export function MonthCalendar({
       ))}
 
       <AppText variant="caption" color={palette.textMuted} style={styles.legend}>
-        有记录的日子涂底色；下方小圆点表示那天记了症状；今天带细边框；点一天就能填进下方表单。
+        涂底色 = 有记录；圆点 = 记了症状；点一天填进下方表单。
       </AppText>
     </View>
   );

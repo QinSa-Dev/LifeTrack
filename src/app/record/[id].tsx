@@ -248,7 +248,7 @@ export default function RecordScreen() {
       {definition.kind === 'cycle' ? (
         <Card title="这是周期型事件" style={styles.spaced}>
           <AppText variant="body" color={palette.textMuted}>
-            周期型事件不点一次记一次，而是在它的详情页里开一段周期、逐天记录。
+            周期型事件要在内页开一段周期、逐天记录。
           </AppText>
           <Button
             label="去周期页面"
@@ -261,7 +261,7 @@ export default function RecordScreen() {
       {archived ? (
         <Card title="已归档" style={styles.spaced}>
           <AppText variant="body" color={palette.warning}>
-            这个事件已归档，不能再新增记录。历史记录不受影响；如需继续记录，请先取消归档。
+            已归档，不能再新增记录。取消归档后可继续。
           </AppText>
         </Card>
       ) : null}
@@ -275,7 +275,7 @@ export default function RecordScreen() {
       ) : null}
 
       {!archived && definition.kind === 'counter' && definition.quickOptions.length > 0 ? (
-        <Card title="快捷记录" subtitle="点一下即可记录（属性 + 取值）" style={styles.spaced}>
+        <Card title="快捷记录" subtitle="点一下记一条" style={styles.spaced}>
           <View style={styles.chipRow}>
             {definition.quickOptions.map((option) => (
               <Chip
@@ -295,7 +295,7 @@ export default function RecordScreen() {
       ) : null}
 
       {!archived && definition.kind === 'counter' ? (
-        <Card title="手动记录" subtitle="记录本次的增量（正整数）" style={styles.spaced}>
+        <Card title="手动记录" subtitle="本次的增量（正整数）" style={styles.spaced}>
           {definition.fields.length > 0 ? (
             <>
               <AppText variant="label" color={palette.textMuted} style={styles.fieldLabel}>

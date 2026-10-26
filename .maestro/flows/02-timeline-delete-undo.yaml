@@ -34,7 +34,9 @@ tags:
     text: '.*Maestro喝水.*'
     index: 0
 - assertVisible: '这条记录'
-- assertVisible: '记录当时的样子，之后改定义也不会动它'
+# 这两条断言写的是**提示文案**（卡片副标题）：改提示就要一起改这里，
+# 见 `docs/learning/08` 第 13 节与 `.maestro/README.md` 的「选择器」一节。
+- assertVisible: '记录当时的样子'
 - assertVisible: '记录 id'
 - takeScreenshot: 02-detail
 
@@ -44,7 +46,7 @@ tags:
       text: '修改这条记录'
     direction: DOWN
 - tapOn: '修改这条记录'
-- assertVisible: '改的是记录本身；记录时的名称与属性是快照，不会跟着变'
+- assertVisible: '只改取值 / 时间 / 备注'
 # 发生日期输入框有预填值，没有 placeholder 可点，所以按「值的形状」点它：这页上只有它的
 # 文本整串长成 2026-10-22（详情里发生/录入时间是「2026-10-22 18:20」，整串不匹配）。
 # 点它右侧 95% 处让光标落在文本末尾——`eraseText` 是往回删字符，光标在中间就会删成半截

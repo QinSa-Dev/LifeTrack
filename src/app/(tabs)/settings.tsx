@@ -252,7 +252,7 @@ export default function SettingsScreen() {
           ))}
         </View>
         <AppText variant="caption" color={palette.textMuted} style={styles.chipHint}>
-          逐条：一条记录一行；合并：同一事件并成一行，点行再就地展开逐条。
+          逐条：一行一条；合并：一个事件一行。
         </AppText>
 
         <AppText variant="label" color={palette.textMuted} style={styles.chipLabel}>
@@ -269,7 +269,7 @@ export default function SettingsScreen() {
           ))}
         </View>
         <AppText variant="caption" color={palette.textMuted} style={styles.chipHint}>
-          预测时只用最近这几段「实际间隔」取平均。窗口越小越贴合最近状态，也越容易被一次异常周期带偏。
+          按最近几段「实际间隔」取平均来预测。
         </AppText>
 
         {preferenceError ? (
@@ -309,8 +309,7 @@ export default function SettingsScreen() {
         <AppText variant="caption" color={palette.textMuted} style={styles.spacedSmall}>
           {backupBusy
             ? '处理中…'
-            : (backupMessage ??
-              '导入只会「合并」：本地独有的数据一定保留。周期越界、引用缺失等非法备份会被整体拒绝，不会写进半截数据。')}
+            : (backupMessage ?? '导入只会合并：本地独有的数据一定保留；非法备份整体拒绝。')}
         </AppText>
       </Card>
 
@@ -327,7 +326,7 @@ export default function SettingsScreen() {
         {diagnostics.error ? <Row label="读取错误" value={diagnostics.error} /> : null}
       </Card>
 
-      <Card title="app_meta 表内容" subtitle="启动次数用于验证跨重启持久化" style={styles.spaced}>
+      <Card title="app_meta 表内容" style={styles.spaced}>
         {diagnostics.entries.length === 0 ? (
           <AppText color={palette.textMuted}>暂无数据</AppText>
         ) : (
@@ -336,10 +335,7 @@ export default function SettingsScreen() {
       </Card>
 
       <Card title="数据安全约定" style={styles.spaced}>
-        <AppText color={palette.textMuted}>
-          迁移失败或版本高于应用支持时，LifeTrack
-          会拒绝启动并保留原数据文件，不会删除或重建数据库。永久删除操作在此后阶段也会要求二次确认。
-        </AppText>
+        <AppText color={palette.textMuted}>迁移失败会拒绝启动并保留原数据文件，不会重建数据库。</AppText>
       </Card>
     </Screen>
   );

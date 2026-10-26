@@ -211,17 +211,13 @@ export default function RecordDetailScreen() {
             <Badge label="在回收站里" />
           </View>
           <AppText variant="body" color={palette.textMuted}>
-            它已经进了回收站，在那里可以恢复，也可以永久删除；也可以在下面的「更多操作」里撤销删除，立刻找回。
+            下面的「更多操作」里可以撤销删除。
           </AppText>
         </Card>
       ) : null}
 
       {editing ? (
-        <Card
-          title="修改这条记录"
-          subtitle="改的是记录本身；记录时的名称与属性是快照，不会跟着变"
-          style={styles.spaced}
-        >
+        <Card title="修改这条记录" subtitle="只改取值 / 时间 / 备注" style={styles.spaced}>
           <TextField
             label={valueLabel}
             value={valueText}
@@ -266,7 +262,7 @@ export default function RecordDetailScreen() {
         </Card>
       ) : null}
 
-      <Card title="这条记录" subtitle="记录当时的样子，之后改定义也不会动它" style={styles.spaced}>
+      <Card title="这条记录" subtitle="记录当时的样子" style={styles.spaced}>
         <DetailItem label="事件（记录时的名称）" value={record.snapshot.name} />
         <DetailItem label="属性" value={recordAttributeText ?? '（没有属性）'} />
         {record.fieldValues.length > 0 ? (
@@ -299,11 +295,7 @@ export default function RecordDetailScreen() {
         浮球正好压住屏幕右上角——实测点那个位置会打开 Expo Go 自己的面板。放到底部既躲开了它，
         也让删除这类低频操作离阅读位置远一点。
       */}
-      <Card
-        title="更多操作"
-        subtitle={deleted ? '这条记录已删除。' : '记错了可以改；删掉的话能在回收站里找回。'}
-        style={styles.spaced}
-      >
+      <Card title="更多操作" subtitle={deleted ? '这条记录已删除' : '改 / 删都在这里'} style={styles.spaced}>
         {deleted ? (
           <Button
             label={busy ? '撤销中…' : '撤销删除'}

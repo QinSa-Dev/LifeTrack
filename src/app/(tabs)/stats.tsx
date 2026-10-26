@@ -287,11 +287,7 @@ export default function StatsScreen() {
           <ActivityIndicator color={palette.primary} />
         </View>
       ) : !hasData && !hasCycleData ? (
-        <EmptyState
-          title="还没有可统计的数据"
-          description="先到「事件」标签记录几次，这里会按天/周汇总、按事件统计总条数与取值合计，并与前一段或上年同期对比；周期里记的症状也会在这里汇总。"
-          footnote="统计从事实记录实时计算，不含已软删除的记录，也不落汇总表。"
-        />
+        <EmptyState title="还没有可统计的数据" description="先到「事件」标签记几次" />
       ) : (
         <>
           {hasData ? (
@@ -430,7 +426,7 @@ export default function StatsScreen() {
                 entries={cycleEntries}
                 title="周期症状"
                 limit={5}
-                emptyHint="到「事件」页点开周期型事件、按天记录阶段与症状后，这里会汇总。"
+                emptyHint="先在周期里记几天"
               />
             </View>
           ) : null}

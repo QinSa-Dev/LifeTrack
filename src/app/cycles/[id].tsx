@@ -117,7 +117,7 @@ export default function CycleEventScreen() {
         <Header title={definition.name} onBack={() => router.back()} />
         <Card title="这不是周期型事件" style={styles.spaced}>
           <AppText variant="body" color={palette.textMuted}>
-            周期功能只对「周期」类型的事件开放。想点一次记一次，请到它的记录页。
+            这不是周期型事件，去记录页记一条。
           </AppText>
           <Button
             label="去记录页"
@@ -243,7 +243,7 @@ export default function CycleEventScreen() {
       {definition.isArchived ? (
         <Card title="已归档" style={styles.spaced}>
           <AppText variant="body" color={palette.warning}>
-            这个周期事件已归档，不能再开新周期。已有的周期与记录不受影响。
+            已归档，不能再开新周期。已有的周期与记录不受影响。
           </AppText>
         </Card>
       ) : null}
@@ -278,17 +278,13 @@ export default function CycleEventScreen() {
             {describePrediction(prediction)}
           </AppText>
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-            预测窗口在「设置 → 偏好设置」里统一改。
+            预测窗口在「设置」里改。
           </AppText>
         </Card>
       )}
 
       {cycleMode === 'auto' ? (
-        <Card
-          title="自动循环：生成下一段"
-          subtitle="按配置好的规律算出下一段，由你确认写入"
-          style={styles.spaced}
-        >
+        <Card title="自动循环：生成下一段" subtitle="算出下一段，由你确认" style={styles.spaced}>
           <AppText variant="body" color={palette.textMuted}>
             {describeAutoSegment(autoSegment)}
           </AppText>
@@ -300,7 +296,7 @@ export default function CycleEventScreen() {
           />
           {ongoing !== undefined ? (
             <AppText variant="caption" color={palette.warning} style={styles.spacedTop}>
-              当前有一段进行中的周期，先结束它再生成下一段。
+              先结束进行中的这段。
             </AppText>
           ) : null}
         </Card>
@@ -313,7 +309,7 @@ export default function CycleEventScreen() {
       >
         {instances.length === 0 ? (
           <AppText variant="caption" color={palette.textMuted}>
-            还没有周期。在下方填入开始日后点「开始新周期」。
+            还没有周期。在下方填入开始日。
           </AppText>
         ) : (
           instances.map((instance) => {
@@ -340,11 +336,7 @@ export default function CycleEventScreen() {
             placeholder="2026-10-19"
             autoCapitalize="none"
             autoCorrect={false}
-            hint={
-              ongoing
-                ? '已有一段进行中的周期，先把它结束再开新的。'
-                : '默认避开上一段周期的结束日；同一周期的两段区间不能重叠。'
-            }
+            hint={ongoing ? '先结束进行中的这段。' : '两段区间不能重叠。'}
           />
           <Button
             label={busy ? '处理中…' : '开始新周期'}
@@ -355,10 +347,7 @@ export default function CycleEventScreen() {
       </Card>
 
       <View style={styles.spaced}>
-        <SymptomStatsCard
-          entries={entries}
-          emptyHint="进入某一段周期，在月视图上点一天，就能记录那天的阶段与症状；记过之后这里会汇总。"
-        />
+        <SymptomStatsCard entries={entries} emptyHint="点开一段周期，在月视图上点一天就能记" />
       </View>
 
       <Card title="状态与删除" subtitle="归档可随时取消；永久删除需二次确认" style={styles.spaced}>

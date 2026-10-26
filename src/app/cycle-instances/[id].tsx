@@ -459,7 +459,7 @@ export default function CycleInstanceScreen() {
           placeholder="2026-10-05"
           autoCapitalize="none"
           autoCorrect={false}
-          hint="若新边界会把已有记录甩在外面，这里会立刻提示；保存也会被拒绝——不会悄悄删掉它们。"
+          hint="越界会立刻提示，保存也会被拒绝。"
         />
         <View style={styles.actions}>
           <Button
@@ -480,8 +480,7 @@ export default function CycleInstanceScreen() {
         </View>
         {outsideDates.length > 0 ? (
           <AppText variant="body" color={palette.warning} style={styles.spacedTop}>
-            按这个边界，会有 {outsideDates.length} 条记录落在区间外（{outsideDates.join('、')}）：
-            保存会被拒绝，这些记录不会被删除。
+            会有 {outsideDates.length} 条记录落在区间外（{outsideDates.join('、')}）：保存会被拒绝。
           </AppText>
         ) : null}
         {overlappingInstance ? (
@@ -496,7 +495,7 @@ export default function CycleInstanceScreen() {
         ) : null}
       </Card>
 
-      <Card title="月视图" subtitle="点一天，就能把那一天填进下方的表单" style={styles.spaced}>
+      <Card title="月视图" subtitle="点一天填进下方表单" style={styles.spaced}>
         {month === '' ? (
           <ActivityIndicator color={palette.primary} />
         ) : (
@@ -522,7 +521,7 @@ export default function CycleInstanceScreen() {
       <Card title="每日记录" subtitle={`${entries.length} 条`} style={styles.spaced}>
         {entries.length === 0 ? (
           <AppText variant="caption" color={palette.textMuted}>
-            还没有记录。在下方选一天、填阶段与症状即可。
+            还没有记录。在下方选一天、填阶段与症状。
           </AppText>
         ) : (
           entries.map((entry) => {
@@ -553,8 +552,7 @@ export default function CycleInstanceScreen() {
         )}
         {entries.length > 0 ? (
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-            点某一行可以把那天填进下方表单；同一天再保存是覆盖更新。删除是软删除，可在「时间轴 →
-            回收站」恢复或永久删除。
+            点行填进下方表单；删除是软删除，可在「时间轴 → 回收站」找回。
           </AppText>
         ) : null}
       </Card>
