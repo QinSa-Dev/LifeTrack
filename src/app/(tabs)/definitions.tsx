@@ -7,7 +7,7 @@ import { META_KEYS, useReadyDatabase } from '@/db';
 import type { CycleInstance, EventDefinition, EventGroup } from '@/domain/models';
 import { describeCycleDefinition, describeLatestCycle } from '@/features/cycles/labels';
 import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/features/cycles/predictionWindow';
-import { eventKindLabel, describeDefinition } from '@/features/definitions/labels';
+import { definitionBadgeLabel, describeDefinition } from '@/features/definitions/labels';
 import {
   CycleInstanceRepository,
   EventDefinitionRepository,
@@ -109,7 +109,7 @@ export default function DefinitionsScreen() {
             ) : null}
             {isCycle ? <Badge label={`${own.length} 段`} tone="neutral" /> : null}
             <Badge
-              label={muted ? '已归档' : eventKindLabel(definition.kind)}
+              label={muted ? '已归档' : definitionBadgeLabel(definition.kind)}
               tone={muted ? 'warning' : 'primary'}
             />
           </>

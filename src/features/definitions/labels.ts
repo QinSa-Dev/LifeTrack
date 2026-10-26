@@ -11,6 +11,18 @@ export function recordKindLabel(kind: RecordKind): string {
 }
 
 /**
+ * 「事件」列表行右侧那颗类型标记。
+ *
+ * 计数型写【+1】而不是「计数」——它说的是「点一次记一次」这个动作，比一个分类名更接近
+ * 用户要做的事（真机反馈：这颗蓝标记看起来就像按钮）。周期型仍写「周期」。
+ *
+ * 类型的正式名称没有丢：副标题里由 `describeDefinition` 照旧写着「计数 / 周期」。
+ */
+export function definitionBadgeLabel(kind: EventDefinitionKind): string {
+  return kind === 'counter' ? '+1' : eventKindLabel(kind);
+}
+
+/**
  * 一行副标题：分组名 + 类型 +（写了的话）属性。
  *
  * **没分组就不写这一段**，而不是补一个「未分组」——列表只列真实存在的信息，
