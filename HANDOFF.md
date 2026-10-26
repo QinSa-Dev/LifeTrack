@@ -195,8 +195,10 @@ src/theme/         设计令牌
 18. **「周期」是事件的一种类型，不是独立实体**（v6）：`EventDefinitionKind = 'counter' | 'cycle'`，
     周期定义就是 `kind = 'cycle'` 的 `EventDefinition`（`cycleMode` + 两个平均长度）。
     底部**没有**「周期」标签页：事件页一张列表并列两种类型，计数型点进记录页、周期型点进
-    `/cycles/[id]`（内页开一段、逐天记录）。事件列表行右侧的类型标记：计数型显示【+1】、
-    周期型显示「周期」（**只是标记，不是按钮**，点它等于点整行）；没分组的行不写「未分组」占位。周期分两种做法——
+    `/cycles/[id]`（内页开一段、逐天记录）；**未归档的计数型行右侧还有一颗可点的【+1】**，
+    点一下照抄该事件最近一条记录的取值 / 属性 / 字段（没有历史就记 +1、不带属性），
+    结果以 Badge 贴在这一行里、2.5 秒后消失；周期型与归档的行显示的仍是「周期」/「已归档」
+    **标记**（不是按钮，点它等于点整行）。没分组的行不写「未分组」占位。周期分两种做法——
     **自动循环**（按配置好的规律算出下一段，本轮只做「配置 + 生成下一段」，**不做后台自动写库**）
     与**手动标记**（自己点开始 / 点结束，时长不预先限定）。
     历史记录类型仍保留 `RecordKind = 'counter' | 'quantity'`（老记录不能改），
@@ -222,8 +224,8 @@ src/theme/         设计令牌
 - 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`
 - 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `recordAttributes` / `attributeText` / `toRecordKind` / `isVisibleRecord` / `isVisibleEntry` / `DeletedCycleEntry`）、`src/domain/validation.ts`（含 `requireNotFuture`、`readTextList`（宽松解析属性 JSON）、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `observedCycleLength` / `predictNextCycle`）、`src/domain/backup.ts`（备份格式契约 `BACKUP_FORMAT` / `parseAttributes` / 严格解析 `parseBackup` / 引用完整性 `assertBackupIntegrity` / 合并 `mergeBackup` / 稳定排序 `sortBackupData` / 文件名 `backupFileName`）
 - 仓储：`src/repositories/eventDefinitionRepository.ts`（计数型与周期型共用；`normalizeDraft` 保证「周期 ⟺ `cycleMode`」且周期型属性 / 字段恒为 `[]`；计数的字段整组替换并按 `sortOrder` 读回）、`eventRecordRepository.ts`（记录 / 补录 / **`update` 更正事实** / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until`；记录时把定义字段固化成快照并用 `normalizeFieldValues` 校验取值）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`eventGroupRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`；`DELETE_ORDER` 含 `event_definition_fields`）、`metaRepository.ts`（键值偏好，时间轴显示方式用它）
-- 功能组件：`src/features/definitions/`（定义表单 `EventDefinitionForm`：**类型（计数 / 周期）+ 属性多行 + 周期字段 + 自定义字段 + 快捷选项「属性 + 取值」**；`fields.ts` 汇总字段类型标签与提示）、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime` / `describeRecord`）/ `FieldValuePicker`（按字段类型渲染取值控件）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `timelineView.ts`（显示方式偏好）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `describeLatestCycle` / `describeOverlap` / `describeCycleDefinition` / `CYCLE_MODE_LABELS` / `CYCLE_MODE_HINTS` / `predictionWindow.ts`（预测窗口这个纯偏好的选项 / 解析 / 文案）/ `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」，`DefinitionTotal.attributeText`）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV，多个属性用 ` | ` 连接，字段取值汇总成「字段值」列）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
-- 界面：`src/app/(tabs)/definitions.tsx`（**事件页：计数 / 周期同一张列表**，计数进记录页、周期进 `/cycles/[id]`）、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 合并 + 行内【+1】，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/settings.tsx`（诊断 + **偏好设置（时间轴显示 / 周期预测窗口）** + 备份与恢复）、`src/app/events/new.tsx`、`src/app/events/[id].tsx`（编辑定义）、`src/app/record/[id].tsx`（记录 / 补录，**属性多选 chips + 自定义字段取值**）、`src/app/records/[id].tsx`（**单条记录详情：快照（含字段定义与取值）+ 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/cycles/[id].tsx`（周期型事件详情：开一段 / 生成下一段 / 归档 / 删除；非周期型定义会提示并给「去记录页」）、`src/app/cycle-instances/[id].tsx`
+- 功能组件：`src/features/definitions/`（定义表单 `EventDefinitionForm`：**类型（计数 / 周期）+ 属性多行 + 周期字段 + 自定义字段 + 快捷选项「属性 + 取值」**；`fields.ts` 汇总字段类型标签与提示）、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime` / `describeRecord`）/ `FieldValuePicker`（按字段类型渲染取值控件）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `repeat.ts`（`repeatDraft`：【+1】照抄最近一条要写的那几项，事件列表用它）/ `timelineView.ts`（显示方式偏好）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `describeLatestCycle` / `describeOverlap` / `describeCycleDefinition` / `CYCLE_MODE_LABELS` / `CYCLE_MODE_HINTS` / `predictionWindow.ts`（预测窗口这个纯偏好的选项 / 解析 / 文案）/ `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」，`DefinitionTotal.attributeText`）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV，多个属性用 ` | ` 连接，字段取值汇总成「字段值」列）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
+- 界面：`src/app/(tabs)/definitions.tsx`（**事件页：计数 / 周期同一张列表**，计数型行内有【+1】、点行进记录页，周期进 `/cycles/[id]`）、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 合并 + 行内【+1】，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/settings.tsx`（诊断 + **偏好设置（时间轴显示 / 周期预测窗口）** + 备份与恢复）、`src/app/events/new.tsx`、`src/app/events/[id].tsx`（编辑定义）、`src/app/record/[id].tsx`（记录 / 补录，**属性多选 chips + 自定义字段取值**）、`src/app/records/[id].tsx`（**单条记录详情：快照（含字段定义与取值）+ 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/cycles/[id].tsx`（周期型事件详情：开一段 / 生成下一段 / 归档 / 删除；非周期型定义会提示并给「去记录页」）、`src/app/cycle-instances/[id].tsx`
 - 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`、`17-custom-fields.md`
 - 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`10`（11 条流程）、`.maestro/subflows/record-once.yaml`（记一次）、`.maestro/subflows/use-expanded-view.yaml`（把时间轴钉成「逐条」）
 
@@ -242,7 +244,7 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ **静态检查、472 个单元用例**（真实内存 SQLite）、iOS 打包。
+- ✅ **静态检查、473 个单元用例**（真实内存 SQLite）、iOS 打包。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go）：**4 个标签页** + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
@@ -275,7 +277,7 @@ src/theme/         设计令牌
   已修（`assertEntityId`，见第 10 节与技术债）。
 - ✅ **已装到 Android 真机**：走 EAS 云构建（`eas build -p android --profile preview`）出 APK、
   扫码安装（免费、长期有效），用户自测跑通。第一轮真机反馈与对应改动见 `README.md`
-  的「真机第一轮反馈」一节（记录反馈位置 / 按钮配色 / 不写「未分组」占位 / 类型标记显示【+1】）。
+  的「真机第一轮反馈」一节（记录反馈位置 / 按钮配色 / 不写「未分组」占位 / 事件列表行内【+1】）。
 - ❌ **iOS 真机仍未跑过**：免费 Apple ID 只能本机 Xcode 直装且凭证 7 天失效，需要先
   `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`；流程见
   `docs/learning/18-build-and-distribute.md`（**该文档是操作手册，尚未实跑**）。
@@ -379,6 +381,12 @@ src/theme/         设计令牌
   见 `docs/learning/09` 第 10 节）。改法照抄即可，留待后续一起做。
 - **时间轴没有操作反馈**：点行内【+1】只是静默重载列表——如果新记录不在可视范围内，也看不出「记上了没有」。
   与上一条同源（反馈要落在操作点附近），需要轻量 Toast / 行内闪烁才自然；**先不动**，等真机再反馈。
+  （**事件列表行内的【+1】已按此原则处理**：结果以 Badge 贴回那一行、2.5 秒后消失。）
+- **一屏多颗同名【+1】对读屏不友好**：时间轴与事件列表的【+1】按钮读出来都只是「+1」，
+  分不出是哪一行（`ListRow` 的文字区是独立元素，读屏会按顺序读，但按钮本身没有上下文）。
+  想修就得给按钮更具体的名字（如「+1 喝水」），而**这会和 `.maestro` 里 `.*Maestro喝水.*`
+  这类行选择器撞车**（同一屏两个元素都匹配，`tapOn` 报多匹配）——要一起改 flows 才安全。
+  真要做，优先方案是给按钮 `testID` 并在 flows 里用 `id` 定位，而不是改可见文字。
 - **界面只有端到端、没有组件级测试**：Maestro 流程（`.maestro/`）能证明「点得通、落得进库」，
   但跑得慢、只能盖住主干路径；细粒度的界面交互（条件渲染、空状态、错误态）若要自动化，
   仍需 `@testing-library/react-native`。
@@ -429,6 +437,8 @@ src/theme/         设计令牌
   它的快捷选项 **取值 0.5 在保存定义 / 记录时会被 `requireQuickOptionValue` 拒绝**
   （计数型要求正整数）。历史记录不受影响（记录类型仍是 `quantity`，能正常展示与统计），
   但**编辑那个定义就会报错**——需要用户把取值改成整数，或把那条定义归档 / 删掉重建成新的事件。
+  同理，**对那条 0.5 的历史记录点【+1】（时间轴或事件列表）也会被拒**
+  （照抄取值 → 计数型不接受非整数），界面会显示仓储给的错误文案。
   这是「类型收敛」的必然代价，记在案；若反馈多，可在迁移里把非整数取值取整或丢弃（本轮没做）。
 - **属性 JSON 是宽松解析的**：`readTextList` 解析失败会退化成 `[]`（不抛错），
   因为属性只是展示信息，坏一个不值得让整页打不开；但这也意味着**手改坏的 JSON 会静默丢属性**。
