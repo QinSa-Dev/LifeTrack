@@ -241,7 +241,7 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ 静态检查、460 个单元用例（真实内存 SQLite）、iOS 打包。
+- ✅ **静态检查、470 个单元用例**（真实内存 SQLite）、iOS 打包。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go）：**4 个标签页** + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
@@ -272,7 +272,13 @@ src/theme/         设计令牌
   所以素材是宿主 `cp` 进去的，**跨 App 那一步没有端到端闭环**；真机未验证。
   这一步还**撞出一个真 bug**：自家备份被自己拒（导入端只认 UUID v7，而老库里是 v4），
   已修（`assertEntityId`，见第 10 节与技术债）。
-- ❌ **没在 Android 与真机上跑过**（Maestro 流程也只写了 iOS 路径）。
+- ✅ **已装到 Android 真机**：走 EAS 云构建（`eas build -p android --profile preview`）出 APK、
+  扫码安装（免费、长期有效），用户自测跑通。第一轮真机反馈与对应改动见 `README.md`
+  的「真机第一轮反馈」一节（记录反馈位置 / 按钮配色 / 不写「未分组」占位）。
+- ❌ **iOS 真机仍未跑过**：免费 Apple ID 只能本机 Xcode 直装且凭证 7 天失效，需要先
+  `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`；流程见
+  `docs/learning/18-build-and-distribute.md`（**该文档是操作手册，尚未实跑**）。
+  Maestro 流程也只写了 iOS 模拟器路径。
 - ❌ 界面交互的**组件级**自动化测试仍没有（项目里只有单元测试 + Maestro 端到端两层）。
 
 ## 9. 下一步任务：第二阶段剩余项
@@ -367,6 +373,11 @@ src/theme/         设计令牌
 
 - **`MetaRepository.incrementLaunchCount` 是「读-改-写」，非原子**（`docs/learning/04` 4.6）。
   当前只用于启动计数，无实际损失；写真正的计数逻辑时不要照抄这个模式，改用原子 SQL 或事务。
+- **`cycle-instances/[id].tsx` 的 `flash` 仍在页面顶端**：那一页的「保存这一天的记录」按钮在月视图
+  下面，与记录页当初「记完看不到提示」是同一个问题（记录页已改：`flash` 带 `scope`，贴在操作点旁边，
+  见 `docs/learning/09` 第 10 节）。改法照抄即可，留待后续一起做。
+- **时间轴没有操作反馈**：点行内【+1】只是静默重载列表——如果新记录不在可视范围内，也看不出「记上了没有」。
+  与上一条同源（反馈要落在操作点附近），需要轻量 Toast / 行内闪烁才自然；**先不动**，等真机再反馈。
 - **界面只有端到端、没有组件级测试**：Maestro 流程（`.maestro/`）能证明「点得通、落得进库」，
   但跑得慢、只能盖住主干路径；细粒度的界面交互（条件渲染、空状态、错误态）若要自动化，
   仍需 `@testing-library/react-native`。

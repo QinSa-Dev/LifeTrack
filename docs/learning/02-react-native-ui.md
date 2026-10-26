@@ -261,7 +261,7 @@ export function Screen({ children, scroll = false, padded = true, contentStyle }
 ```tsx
 const TONES: Record<ButtonTone, { background: string; text: string; border: string }> = {
   primary: { background: palette.primary, text: '#FFFFFF', border: palette.primary },
-  secondary: { background: palette.surface, text: palette.text, border: palette.border },
+  secondary: { background: palette.primarySoft, text: palette.primary, border: palette.primary },
   danger: { background: palette.dangerSoft, text: palette.danger, border: palette.danger },
 };
 
@@ -293,6 +293,9 @@ export function Button({ label, onPress, tone = 'primary', disabled = false, tes
 
 - `Record<ButtonTone, {...}>`：声明「每个色调都必然有这三种颜色」。这是 `Record` 的用法，好处是**漏写一个色调，`tsc` 会报错**。
 - `const colors = TONES[tone]`：先查表，后面就不用写 `if (tone === 'primary')` 这样的分支了。加第四种色调时，只改表，不改渲染逻辑。
+- **配色约定**：默认主题是「白底 + 蓝色组件」。所以 `secondary` 从最初的浅灰底改成了
+  `primarySoft`（浅蓝底）+ `primary`（蓝字、蓝边）——浅灰按钮放在白色卡片上几乎看不出底色。
+  所有颜色都取自 `palette`（`src/theme/index.ts`），换主题色只改那一个文件。
 - `style={({ pressed }) => [...]}`：注意这里传的是**一个函数**，不是对象。`Pressable` 会把「当前是否被按住」告诉你（`pressed`），你据此返回样式。这是 RN 里处理按压反馈的标准做法。
 - `opacity: disabled ? 0.45 : pressed ? 0.75 : 1`：三级优先级，禁用最优先。
 - `accessibilityRole="button"` / `accessibilityState={{ disabled }}`：给读屏软件（VoiceOver / TalkBack）提供语义。**这是必须的**，否则视障用户只知道「有个能点的东西」。
