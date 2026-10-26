@@ -56,6 +56,7 @@
 | `src/app/(tabs)/stats.tsx` | 页面 | **新增**：统计标签页；后来改为两段读取（全量给累计卡片、`from`/`until` 给趋势与对比），并把一次加载的 `now` 贯穿到底（4.4）；再后来趋势加「先选看什么」的选择器（3.14） |
 | `src/app/(tabs)/_layout.tsx` | 导航 | 新增「统计」标签（时间轴 / 统计 / 事件 / 周期 / 设置） |
 | `src/components/ListRow.tsx` | 通用 UI | 新增可选 `divider`（默认显示底部分隔线） |
+| `src/components/Card.tsx` | 通用 UI | 后来新增可选 `right`（标题右上角操作区，够折叠开关用；见 4.4） |
 | `src/features/records/RecordRow.tsx` | 功能组件 | 透传 `divider` |
 | `src/app/(tabs)/index.tsx` | 页面（时间轴） | `ScrollView` + `map` → `FlatList`，每行单独成卡 |
 
@@ -335,8 +336,13 @@ function bucketBy(
     if (bucket) {
       bucket.recordCount += 1;
       bucket.totalValue += record.value;
+      bucket.definitionIds.add(record.definitionId); // 去重后就是「活跃事件数」
     } else {
-      buckets.set(key, { recordCount: 1, totalValue: record.value });
+      buckets.set(key, {
+        recordCount: 1,
+        totalValue: record.value,
+        definitionIds: new Set([record.definitionId]),
+      });
     }
   }
   return buckets;
@@ -455,6 +461,11 @@ const trendPeriods = useMemo(() => {
 ```
 
 值为 0 时前一段 `flex: 0`，长度为 0；最长的一段占满轨道。
+
+**低频选择折进右上角**：「按天/按周」与「较前一段/较上年同期」用得少，平铺在卡片里
+占地方。现在它们收进标题右上角的 `Pressable`，折叠时只显示当前选择（如「按天 · 较前一段」），
+点「展开」才出现两行 Chip。为此给通用 `Card` 加了可选的 `right`（与标题同一行右对齐）——
+折叠态也会显示当前口径，不必展开就知道在看什么。总开关是页面里的 `optionsOpen` 一个布尔。
 
 ### 4.5 时间轴换个容器（`src/app/(tabs)/index.tsx`）
 
