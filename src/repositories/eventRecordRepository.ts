@@ -15,6 +15,9 @@
  * 6. **记录可以更正**：`update` 只改事实本身（取值、发生时间、备注），
  *    快照（名称、属性、分组、字段）永不更新——「快照不可改，事实可更正」。
  *    已软删除的记录不能改（先撤销删除），避免改了又留在回收站里对不上账。
+ * 7. **列表筛选只收窄「看什么」，不改数据**：筛事件名与分组都优先按「事件**现在**的样子」
+ *    匹配，只有定义已被永久删除的历史才回落到它当时的快照——筛选不该把历史藏起来。
+ *    筛选**下推到 SQL**，所以 `limit` 说的是「符合条件的最近 N 条」。
  *
  * 读取时 `kind` / `source` 都会再过一次守卫（泛型运行时不校验）。
  */
@@ -109,6 +112,14 @@ function toSource(value: unknown): RecordSource {
 }
 
 /**
+ * 把用户输入里的 LIKE 元字符转义，配合 SQL 里的 `ESCAPE '\'` 使用：
+ * 搜「100%」的人要的是「100%」这个字面量，不是「100 + 任意内容」。
+ */
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (char) => `\\${char}`);
+}
+
+/**
  * 列表类字段（字段快照、字段取值）是 JSON 文本；解析失败时退化为空数组，
  * 而不是让整行读不出来。
  */
@@ -151,6 +162,25 @@ export interface ListRecordsOptions {
   until?: IsoDateTime;
   /** 最多返回多少条（时间轴分页用） */
   limit?: number;
+  /**
+   * 事件名关键字（子串匹配，不区分英文大小写）：
+   * 命中**记录当时的名称**（快照）或**事件现在的名称**（定义）。
+   * 定义已被永久删除的历史没有「现在的名称」，只能靠快照命中。
+   *
+   * 空字符串 / 只有空白按「不限」处理；`%` 与 `_` 是普通字符，不当通配符（内部转义）。
+   */
+  nameLike?: string;
+  /** 只列这种记录类型（计数 / 数量（历史）） */
+  kind?: RecordKind;
+  /** 只列这种来源（手动 / 快捷 / 补录） */
+  source?: RecordSource;
+  /**
+   * 只列与这个分组有关的记录：命中「事件**现在**属于这个分组」，
+   * 或（定义已被永久删除时）「记录当时属于这个分组」。`null` 表示「未分组」。
+   *
+   * `undefined` 是「不限」，`null` 才是「未分组」——两者意思不同，别混。
+   */
+  groupId?: string | null;
 }
 
 export class EventRecordRepository {
@@ -290,6 +320,8 @@ export class EventRecordRepository {
    *
    * `from` / `until` 把时间范围**下推到 SQL**（走 `idx_event_records_occurred_at`），
    * 统计页的趋势与对比因此不必先把全表读进内存再逐行判断窗口。
+   * `nameLike` / `kind` / `source` / `groupId` 同样下推：时间轴的筛选因此作用在
+   * 「符合条件的最近 N 条」上，而不是「最近 N 条里碰巧符合的几条」。
    *
    * 比较用的是 `occurred_at` 文本的**字典序**：这成立的前提是写入路径一律把时间戳
    * 归一到 `...Z`（`toISOString()`）。同一假设本来就被 `ORDER BY occurred_at` 与
@@ -317,6 +349,37 @@ export class EventRecordRepository {
       if (options.until !== undefined) {
         clauses.push('occurred_at < ?');
         params.push(requireIsoDateTime(options.until, '结束时间'));
+      }
+      if (options.nameLike !== undefined && options.nameLike.trim() !== '') {
+        // 两个 LIKE 共用同一个 pattern：「记录当时的名称」或「事件现在的名称」命中都算。
+        const pattern = `%${escapeLikePattern(options.nameLike.trim())}%`;
+        clauses.push(
+          `(snapshot_name LIKE ? ESCAPE '\\' OR definition_id IN (SELECT id FROM event_definitions WHERE name LIKE ? ESCAPE '\\'))`,
+        );
+        params.push(pattern, pattern);
+      }
+      if (options.kind !== undefined) {
+        if (!isRecordKind(options.kind)) {
+          throw new ValidationError(`筛选的记录类型不合法：${String(options.kind)}`);
+        }
+        clauses.push('kind = ?');
+        params.push(options.kind);
+      }
+      if (options.source !== undefined) {
+        if (!isRecordSource(options.source)) {
+          throw new ValidationError(`筛选的来源不合法：${String(options.source)}`);
+        }
+        clauses.push('source = ?');
+        params.push(options.source);
+      }
+      if (options.groupId !== undefined) {
+        // `IS` 而不是 `=`：`IS NULL` 才认得出「未分组」这个筛选值。
+        // 定义已被永久删除的历史（子查询里找不到）用记录当时的分组兜底，不让它凭空消失。
+        clauses.push(
+          `(definition_id IN (SELECT id FROM event_definitions WHERE group_id IS ?)
+             OR (definition_id NOT IN (SELECT id FROM event_definitions) AND snapshot_group_id IS ?))`,
+        );
+        params.push(options.groupId, options.groupId);
       }
 
       const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';

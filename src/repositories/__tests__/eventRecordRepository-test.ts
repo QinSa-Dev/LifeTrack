@@ -3,6 +3,7 @@ import { MIGRATIONS } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { ConflictError, NotFoundError, ValidationError } from '@/domain/errors';
 import { EventDefinitionRepository } from '@/repositories/eventDefinitionRepository';
+import { EventGroupRepository } from '@/repositories/eventGroupRepository';
 import { EventRecordRepository } from '@/repositories/eventRecordRepository';
 
 const T1 = '2026-10-19T08:00:00.000Z';
@@ -25,11 +26,12 @@ describe('EventRecordRepository', () => {
     db.close();
   });
 
-  async function createCounter(overrides: { name?: string; attributes?: string[] } = {}) {
+  async function createCounter(overrides: { name?: string; attributes?: string[]; groupId?: string } = {}) {
     return definitions.create({
       name: overrides.name ?? '喝水',
       kind: 'counter',
       attributes: overrides.attributes,
+      groupId: overrides.groupId,
       quickOptions: [],
     });
   }
@@ -141,6 +143,115 @@ describe('EventRecordRepository', () => {
   it('时间范围不是合法时间戳时抛错，且不查库', async () => {
     await expect(records.list({ from: '昨天' })).rejects.toThrow(ValidationError);
     await expect(records.list({ until: '2026-10-20' })).rejects.toThrow(ValidationError);
+  });
+
+  it('按事件名筛：记录当时的名字与定义现在的名字都算命中', async () => {
+    const drank = await createCounter({ name: '喝水' });
+    const walked = await createCounter({ name: '散步' });
+    const waterRecord = await records.record({ definitionId: drank.id, value: 1, source: 'manual' }, T1);
+    await records.record({ definitionId: walked.id, value: 1, source: 'manual' }, T2);
+
+    expect((await records.list({ nameLike: '喝' })).map((item) => item.id)).toEqual([waterRecord.id]);
+
+    // 定义后来改名：老记录的快照还写着「喝水」，但用新名字也该搜得到它
+    await definitions.update(drank.id, { name: '饮水', kind: 'counter', quickOptions: [] }, T3);
+
+    expect((await records.list({ nameLike: '饮' })).map((item) => item.id)).toEqual([waterRecord.id]);
+    expect((await records.list({ nameLike: '喝' })).map((item) => item.id)).toEqual([waterRecord.id]);
+    // 空白关键字 = 不限，别当成「匹配空串」
+    expect((await records.list({ nameLike: '   ' })).length).toBe(2);
+  });
+
+  it('事件名里的 % 与 _ 是普通字符，不当通配符', async () => {
+    const literal = await createCounter({ name: '完成 100%' });
+    const plain = await createCounter({ name: '完成 100' });
+    await records.record({ definitionId: literal.id, value: 1, source: 'manual' }, T1);
+    await records.record({ definitionId: plain.id, value: 1, source: 'manual' }, T2);
+
+    expect((await records.list({ nameLike: '100%' })).map((item) => item.snapshot.name)).toEqual([
+      '完成 100%',
+    ]);
+    expect((await records.list({ nameLike: '100_' })).length).toBe(0);
+  });
+
+  it('按类型筛：计数与历史遗留的「数量」各走各的', async () => {
+    const definition = await createCounter();
+    await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+
+    // `quantity` 只来自 2026-10 之前的旧库（新建事件不再有这个类型），只能直接造一行历史数据。
+    await db.runAsync(
+      `INSERT INTO event_records
+         (id, definition_id, kind, value, attributes, occurred_at, recorded_at, note, source, deleted_at,
+          snapshot_name, snapshot_attributes, snapshot_group_id, snapshot_fields, field_values)
+       VALUES ('legacy-quantity', ?, 'quantity', 2.5, '[]', ?, ?, NULL, 'manual', NULL, ?, '[]', NULL, '[]', '[]')`,
+      definition.id,
+      T1,
+      T1,
+      '喝水',
+    );
+
+    expect((await records.list({ kind: 'counter' })).map((item) => item.value)).toEqual([1]);
+    expect((await records.list({ kind: 'quantity' })).map((item) => item.value)).toEqual([2.5]);
+  });
+
+  it('按来源筛：手动 / 快捷 / 补录', async () => {
+    const definition = await createCounter();
+    await records.record({ definitionId: definition.id, value: 1, source: 'manual' }, T1);
+    await records.record({ definitionId: definition.id, value: 1, source: 'quick' }, T2);
+    await records.record({ definitionId: definition.id, value: 1, source: 'backfill', occurredAt: T1 }, T3);
+
+    expect((await records.list({ source: 'manual' })).length).toBe(1);
+    expect((await records.list({ source: 'quick' })).map((item) => item.recordedAt)).toEqual([T2]);
+    expect((await records.list({ source: 'backfill' })).map((item) => item.occurredAt)).toEqual([T1]);
+  });
+
+  it('按分组筛：按事件**现在**的分组，事件换了分组旧记录也跟着走', async () => {
+    const groups = new EventGroupRepository(db);
+    const health = await groups.create({ name: '健康' });
+    const water = await createCounter({ name: '喝水' });
+    const walk = await createCounter({ name: '散步', groupId: health.id });
+    await records.record({ definitionId: water.id, value: 1, source: 'manual' }, T1);
+    await records.record({ definitionId: walk.id, value: 1, source: 'manual' }, T2);
+
+    expect((await records.list({ groupId: health.id })).map((item) => item.snapshot.name)).toEqual(['散步']);
+    expect((await records.list({ groupId: null })).map((item) => item.snapshot.name)).toEqual(['喝水']);
+
+    // 「散步」挪出「健康」：它名下那条历史跟着新分组走（旧记录的快照里还写着旧分组）
+    await definitions.update(walk.id, { name: '散步', kind: 'counter', quickOptions: [] }, T3);
+
+    expect((await records.list({ groupId: health.id })).length).toBe(0);
+    expect((await records.list({ groupId: null })).length).toBe(2);
+  });
+
+  it('按分组筛：定义被永久删除的历史回落到它当时的分组，不会凭空消失', async () => {
+    const groups = new EventGroupRepository(db);
+    const health = await groups.create({ name: '健康' });
+    const walk = await createCounter({ name: '散步', groupId: health.id });
+    await records.record({ definitionId: walk.id, value: 1, source: 'manual' }, T1);
+
+    await definitions.remove(walk.id);
+
+    expect((await records.list({ groupId: health.id })).length).toBe(1);
+    expect((await records.list({ groupId: null })).length).toBe(0);
+  });
+
+  it('筛选与 limit 一起用时，limit 说的是「符合条件的最近 N 条」', async () => {
+    const water = await createCounter({ name: '喝水' });
+    const walk = await createCounter({ name: '散步' });
+    await records.record({ definitionId: water.id, value: 1, source: 'manual' }, T1);
+    await records.record({ definitionId: walk.id, value: 1, source: 'manual' }, T2);
+    await records.record({ definitionId: walk.id, value: 1, source: 'manual' }, T3);
+
+    // 最近一条是「散步」，但筛「喝水」时不该被它挤掉
+    expect((await records.list({ limit: 1 })).map((item) => item.snapshot.name)).toEqual(['散步']);
+    expect((await records.list({ nameLike: '喝水', limit: 1 })).map((item) => item.snapshot.name)).toEqual([
+      '喝水',
+    ]);
+  });
+
+  it('筛选值不合法时抛错：类型与来源都过守卫', async () => {
+    await expect(records.list({ kind: 'cycle' as never })).rejects.toThrow(ValidationError);
+    await expect(records.list({ source: 'auto' as never })).rejects.toThrow(ValidationError);
   });
 
   it('归档的事件不能新增记录，且不会写入任何数据', async () => {
