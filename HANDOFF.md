@@ -22,14 +22,14 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
      记录里的 `snapshot_tag_ids` → `snapshot_fields` + `field_values`）。
   历史记录里的 `quantity` 类型**保留不动**（展示 / 统计 / 导入继续接受它）。
   此后的统计、回收站、导入导出、周期增强、月视图、时间轴改版、设置项归拢、统计趋势改版、
-  自定义字段、接入 EAS、内置模板事件、提示文案精简、分组管理收进「事件」页
+  自定义字段、接入 EAS、内置模板事件、提示文案精简、分组管理收进「事件」页、时间轴筛选与排序
   都没有再新增迁移（v7 是最近一次）。
 - 验证状态（全部真实跑过）：
 
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 30 个套件 / 481 个用例通过
+npm test             # 32 个套件 / 516 个用例通过
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（本次只改 JS / SQL，无新增原生依赖）
 npx expo-doctor      # 8 个旧依赖 patch 版本漂移（与最近改动无关）
@@ -47,9 +47,9 @@ maestro test .maestro/flows      # 11/11 通过（6m47s；需先起 Metro，见 
 > 11 条流程全绿，跑完还直接读模拟器的 `lifetrack.db` 核对过（`PRAGMA foreign_key_check` 为空）。
 > 走读见 `docs/learning/15-maestro-e2e.md`（时间轴改版那部分见 `16-timeline-row-and-detail.md`，
 > 周期并入事件类型见 `11-cycle-tracking.md` 4.13 节）。
-> ⚠️ 仍未验证：**iOS 真机**、**组件级测试**、**最近三项改动（内置模板事件 / 提示文案精简 /
-> 分组管理卡）在设备上都没看过**（见第 8 节）。（**「选文件导入」已补上**，见第 8 节与
-> `.maestro/README.md` 的「选文件导入」一节：手工两段式，模拟器上跨 App 那段没有端到端闭环。）
+> ⚠️ 仍未验证：**iOS 真机**、**组件级测试**、**最近四项改动（内置模板事件 / 提示文案精简 /
+> 分组管理卡 / 时间轴筛选与排序）在设备上都没看过**（见第 8 节）。（**「选文件导入」已补上**，
+> 见第 8 节与 `.maestro/README.md` 的「选文件导入」一节：手工两段式，模拟器上跨 App 那段没有端到端闭环。）
 >
 > 本机访问 GitHub Releases 很慢，`expo start --ios` 会卡在「Fetching Expo Go」超时。变通办法见
 > `README.md`「本机 iOS 模拟器实机运行」末尾的排障备注（手动分片下载 Expo Go → `simctl install`）。
@@ -248,17 +248,46 @@ src/theme/         设计令牌
     - **改名要带全字段**：`EventGroupRepository.update` 是整体替换（`name` / `color` / `sort_order`），
       只传 `name` 会把颜色清空、排序归零 → 一律走纯函数 `renameGroupInput(group, name)`（有单测）。
     - 「某个事件属于哪个分组」仍在事件定义表单的「分组」卡里选，两件事不混。
+24. **时间轴的筛选与排序：筛选下推 SQL、排序在客户端、状态存 `app_meta`**：时间轴页头「筛选」
+    就地展开一张「筛选与排序」面板（`FlatList` 的页头），四组筛选（事件名关键字 / 类型 / 来源 /
+    分组，每组「不限 + 选一个」）+ 四种排序（按时间 / 按名称 / 按次数 / 按最近修改）。
+    - **筛选下推到 SQL**：`EventRecordRepository.list` 的 `nameLike` / `kind` / `source` / `groupId`。
+      时间轴只读最近 100 条（`RECENT_LIMIT`），若「先读 100 条再在内存里筛」，筛「喝水」就可能只出来
+      两三条——用户会以为记录丢了。所以窗口语义是「**符合筛选的**最近 N 条」，页头文案也跟着从
+      「最近 N 条」变成「筛出 N 条」。
+    - **事件名两头认**（快照名 **OR** 定义现在的名字，任一命中即可）：只认一头都有死胡同——
+      只认快照名，改名后新名字搜不到自己；只认现在的名字，行上写着「喝水」却搜不出「喝水」。
+      `%` / `_` 按字面量转义（`ESCAPE '\'`）。
+    - **分组优先看「事件现在属于哪个分组」**（把事件挪出分组，它名下的历史跟着走），
+      只有定义已被永久删除的历史（子查询里找不到它）才回落到记录当时的分组，免得那段历史消失。
+    - **`groupId` 三态**：`undefined` = 不限（这一条 `WHERE` 不出现）、`null` = 未分组、
+      字符串 = 那个分组；SQL 里用 **`IS ?`**（不是 `=`）才认得出 NULL。JSON 里没有 `undefined`，
+      所以存 `app_meta` 时折成 `'all'` / `'none'` / id。
+    - **排序键都是事件级的**，所以页面里**先按发生时间倒序合并、再给事件排队**（顺序不能换：
+      合并行上的「最近一次」与【+1】都取「组里第一条」，而这条来自发生时间倒序）。
+      「按名称」＝**行上显示的那个名字**（最近一条记录的记录时名称）；「按次数」＝这次载入的条数
+      （与「共 N 次」同一个数）；「按最近修改」＝**录入时间**（补录的旧事也能排到前面，
+      与「按时间」确有区别）。名次相等时补「最近发生时间倒序 + 定义 id 升序」的兜底，
+      排序结果因此是确定的。逐条视图用同一套键（同一事件的记录仍连在一起、组内仍是发生时间倒序）。
+    - **状态记住**：`app_meta.app.timeline_query`，一段 JSON（零迁移）。解析**逐项回落**：
+      不是 JSON、字段类型不对、排序键不认识，一律换默认值——`app_meta` 是文本表，手改坏了不该让
+      时间轴打不开。与「显示方式」不同，**这一页自己是唯一写入者**，所以只在挂载时读一次
+      （不是聚焦重读），并用一个 ref 挡住「读到之前把默认值写回去」。
+    - **不会「看着像数据没了」**：页头在**不是默认**时多一行摘要（如 `快捷 · 按次数`）
+      +「清空筛选」/「还原排序」；筛出 0 条时空状态写「没有符合筛选的记录」；
+      存着的分组被删掉时自动放下**那一项**（其余筛选与排序照旧）。
+    - 取舍与代价见第 10 节（「按次数」受 100 条窗口影响、「按名称」排的是快照名）。
 
 ## 6. 关键文件索引
 
 - 迁移与 schema：`src/db/schema.ts`、`src/db/migrations.ts`
 - 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`（**启动初始化：记账 + 新库写内置模板事件**）
 - 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `recordAttributes` / `attributeText` / `toRecordKind` / `isVisibleRecord` / `isVisibleEntry` / `DeletedCycleEntry`）、`src/domain/validation.ts`（含 `requireNotFuture`、`readTextList`（宽松解析属性 JSON）、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `observedCycleLength` / `predictNextCycle`）、`src/domain/backup.ts`（备份格式契约 `BACKUP_FORMAT` / `parseAttributes` / 严格解析 `parseBackup` / 引用完整性 `assertBackupIntegrity` / 合并 `mergeBackup` / 稳定排序 `sortBackupData` / 文件名 `backupFileName`）
-- 仓储：`src/repositories/eventDefinitionRepository.ts`（计数型与周期型共用；`normalizeDraft` 保证「周期 ⟺ `cycleMode`」且周期型属性 / 字段恒为 `[]`；计数的字段整组替换并按 `sortOrder` 读回）、`eventRecordRepository.ts`（记录 / 补录 / **`update` 更正事实** / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until`；记录时把定义字段固化成快照并用 `normalizeFieldValues` 校验取值）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`eventGroupRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`；`DELETE_ORDER` 含 `event_definition_fields`）、`metaRepository.ts`（键值偏好，时间轴显示方式用它）
-- 功能组件：`src/features/definitions/`（定义表单 `EventDefinitionForm`：**类型（计数 / 周期）+ 属性多行 + 周期字段 + 自定义字段 + 快捷选项「属性 + 取值」**；`GroupManager`（**分组管理卡：新建 / 改名 / 删除**，就地在「事件」页展开）/ `groupInput.ts`（`renameGroupInput`：改名要提交的整组字段——`update` 是整体替换，不能只传 `name`）；`fields.ts` 汇总字段类型标签与提示；`labels.ts` 副标题与类型名的文案；`starterDefinitions.ts`（`STARTER_DEFINITIONS` + `seedStarterDefinitions`：新库写一条可删的参考模板事件））、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime` / `describeRecord`）/ `FieldValuePicker`（按字段类型渲染取值控件）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `repeat.ts`（`repeatDraft`：【+1】照抄最近一条要写的那几项，事件列表用它）/ `timelineView.ts`（显示方式偏好）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `describeLatestCycle` / `describeOverlap` / `describeCycleDefinition` / `CYCLE_MODE_LABELS` / `CYCLE_MODE_HINTS` / `predictionWindow.ts`（预测窗口这个纯偏好的选项 / 解析 / 文案）/ `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」，`DefinitionTotal.attributeText`）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV，多个属性用 ` | ` 连接，字段取值汇总成「字段值」列）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
-- 界面：`src/app/(tabs)/definitions.tsx`（**事件页：计数 / 周期同一张列表**，计数型行内有【+1】、点行进记录页，周期进 `/cycles/[id]`；顶部「分组」按钮**就地展开分组管理卡**——没有单独的分组页）、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 合并 + 行内【+1】，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/settings.tsx`（诊断 + **偏好设置（时间轴显示 / 周期预测窗口）** + 备份与恢复）、`src/app/events/new.tsx`、`src/app/events/[id].tsx`（编辑定义）、`src/app/record/[id].tsx`（记录 / 补录，**属性多选 chips + 自定义字段取值**）、`src/app/records/[id].tsx`（**单条记录详情：快照（含字段定义与取值）+ 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/cycles/[id].tsx`（周期型事件详情：开一段 / 生成下一段 / 归档 / 删除；非周期型定义会提示并给「去记录页」）、`src/app/cycle-instances/[id].tsx`
-- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`、`17-custom-fields.md`
-- 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`10`（11 条流程）、`.maestro/subflows/record-once.yaml`（记一次）、`.maestro/subflows/use-expanded-view.yaml`（把时间轴钉成「逐条」）
+- 仓储：`src/repositories/eventDefinitionRepository.ts`（计数型与周期型共用；`normalizeDraft` 保证「周期 ⟺ `cycleMode`」且周期型属性 / 字段恒为 `[]`；计数的字段整组替换并按 `sortOrder` 读回）、`eventRecordRepository.ts`（记录 / 补录 / **`update` 更正事实** / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until` 与**筛选下推 `nameLike` / `kind` / `source` / `groupId`**；记录时把定义字段固化成快照并用 `normalizeFieldValues` 校验取值）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`eventGroupRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`；`DELETE_ORDER` 含 `event_definition_fields`）、`metaRepository.ts`（键值偏好，时间轴显示方式、筛选排序与预测窗口用它）
+- 功能组件：`src/features/definitions/`（定义表单 `EventDefinitionForm`：**类型（计数 / 周期）+ 属性多行 + 周期字段 + 自定义字段 + 快捷选项「属性 + 取值」**；`GroupManager`（**分组管理卡：新建 / 改名 / 删除**，就地在「事件」页展开）/ `groupInput.ts`（`renameGroupInput`：改名要提交的整组字段——`update` 是整体替换，不能只传 `name`）；`fields.ts` 汇总字段类型标签与提示；`labels.ts` 副标题与类型名的文案；`starterDefinitions.ts`（`STARTER_DEFINITIONS` + `seedStarterDefinitions`：新库写一条可删的参考模板事件））、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime` / `describeRecord`）/ `FieldValuePicker`（按字段类型渲染取值控件）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `repeat.ts`（`repeatDraft`：【+1】照抄最近一条要写的那几项，事件列表用它）/ `timelineView.ts`（显示方式偏好）/ `TimelineQueryPanel.tsx`（**时间轴的「筛选与排序」面板：四组「不限 + 选一个」的胶囊**）/ `timelineQuery.ts`（**筛选 / 排序的类型、默认值、`app_meta` 读写（一段 JSON，逐项回落）、摘要文案、映射到仓储参数**）/ `timelineSort.ts`（**排序纯函数：算事件级排序键 → 给事件排队**）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `describeLatestCycle` / `describeOverlap` / `describeCycleDefinition` / `CYCLE_MODE_LABELS` / `CYCLE_MODE_HINTS` / `predictionWindow.ts`（预测窗口这个纯偏好的选项 / 解析 / 文案）/ `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」，`DefinitionTotal.attributeText`）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV，多个属性用 ` | ` 连接，字段取值汇总成「字段值」列）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
+- 界面：`src/app/(tabs)/definitions.tsx`（**事件页：计数 / 周期同一张列表**，计数型行内有【+1】、点行进记录页，周期进 `/cycles/[id]`；顶部「分组」按钮**就地展开分组管理卡**——没有单独的分组页）、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 合并 + 行内【+1】 + **页头「筛选」面板（筛选下推 SQL、排序在客户端、状态存 `app_meta`）**，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/settings.tsx`（诊断 + **偏好设置（时间轴显示 / 周期预测窗口）** + 备份与恢复）、`src/app/events/new.tsx`、`src/app/events/[id].tsx`（编辑定义）、`src/app/record/[id].tsx`（记录 / 补录，**属性多选 chips + 自定义字段取值**）、`src/app/records/[id].tsx`（**单条记录详情：快照（含字段定义与取值）+ 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/cycles/[id].tsx`（周期型事件详情：开一段 / 生成下一段 / 归档 / 删除；非周期型定义会提示并给「去记录页」）、`src/app/cycle-instances/[id].tsx`
+- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`、`17-custom-fields.md`、`19-timeline-filter-and-sort.md`
+- 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`11`（12 条流程）、`.maestro/subflows/record-once.yaml`（记一次）、`.maestro/subflows/use-expanded-view.yaml`（把时间轴钉成「逐条」）
 
 ## 7. 必须遵守的工作约定
 
@@ -313,12 +342,19 @@ src/theme/         设计令牌
   （`seedStarterDefinitions`，判据 `connection.migration.from === 0`），所以**开发机 / 模拟器上的
   现有库不会多出这条**（想现场看，得删掉设备上的 `lifetrack.db*` 让它重建，或重装 APK）。
   逻辑本身有单测（新库才写 / 旧库不写 / 删了不复活），**但真机上的「装完就有」这一下没有验过**。
-- ❌ **提示文案全量精简（第 13 节）与分组管理卡（第 14 节）都没有在设备上看过**：
-  文案改动只在 JSX 里，`verify` + `format:check` 通过，**但界面层没有组件测试**（仓库还没有
-  `@testing-library/react-native`），**Maestro 也没有重跑**。有一处连带改动：
-  `.maestro/flows/02-timeline-delete-undo.yaml` 里两条断言写的就是被改掉的提示文案，
+- ❌ **提示文案全量精简（第 13 节）、分组管理卡（第 14 节）与时间轴筛选排序（第 15 节）
+  都没有在设备上看过**：这几项改动只在 JSX / 纯函数里，`verify` + `format:check` 通过，
+  **但界面层没有组件测试**（仓库还没有 `@testing-library/react-native`），**Maestro 也没有重跑**。
+  有一处连带改动：`.maestro/flows/02-timeline-delete-undo.yaml` 里两条断言写的就是被改掉的提示文案，
   已改成新文案，**是否仍然通过没有实跑验证**（见 `.maestro/README.md` 的「选择器」第 7 条）。
-  分组管理卡（新建 / 改名 / 删除）**一次都没有手点过**，只有 `renameGroupInput` 的纯函数单测兜底。
+  分组管理卡（新建 / 改名 / 删除）**一次都没有手点过**，只有 `renameGroupInput` 的纯函数单测兜底；
+  筛选与排序的面板同样**没手点过**，但**筛选语义（两头认名 / 分组看现在 / 未分组 / 转义 / 与 `limit` 组合）
+  有仓储单测**（真实内存 SQLite），**排序四种键 × 两种视图**有纯函数单测。
+- ❌ **`.maestro/flows/11-timeline-filter-and-sort.yaml` 是新写的、一次都没跑过**（写作时本机没有可用模拟器）：
+  它碰的是时间轴页头那块纯 JSX，选择器能不能命中只有真跑才知道。跑的时候注意两点：
+  ① 摘要行**只在「不是默认」时**才渲染，所以 `assertVisible` 必须发生在点完「快捷」「按次数」之后；
+  ② 它**收尾会把状态还原成默认**（「清空筛选」+「还原排序」）——这一步不能省，
+  否则下一条跑 `00` 冒烟时页头是「筛出 …」，而它断言的是「最近 … 条」。
 - ❌ **iOS 真机仍未跑过**：免费 Apple ID 只能本机 Xcode 直装且凭证 7 天失效，需要先
   `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`；流程见
   `docs/learning/18-build-and-distribute.md`（**该文档是操作手册，尚未实跑**）。
@@ -434,6 +470,22 @@ src/theme/         设计令牌
   但跑得慢、只能盖住主干路径；细粒度的界面交互（条件渲染、空状态、错误态）若要自动化，
   仍需 `@testing-library/react-native`。
 - **时间轴只取最近 100 条**：已用 `FlatList` 虚拟化，但没有分页 / 无限滚动；更早的记录要去事件页看。
+  第 15 节加了筛选之后，窗口语义是「**符合筛选的**最近 100 条」（筛选下推到 SQL），
+  但**窗口本身还在**：筛一个很活跃的事件、或按「次数」排序时，次数说的是**这次载入的条数**
+  （与合并行上的「共 N 次」同一个数，受窗口影响）。**要做分页 / 无限滚动的话，「按次数」与
+  「按最近修改」这两个键要重新定义**（是「这一页里的次数」还是「全量次数」），别顺手改成后者
+  让列表随滚动重排。
+- **「按名称」排的是快照名，不是定义现在的名字**：`timelineSort` 用的是**行上显示的那个名字**
+  （该事件最近一条记录的记录时名称，快照不可改）。这是有意的——排序要跟**你看到的字**一致；
+  但事件改名之后，「按名称」的位置仍按老名字算，容易让人愣一下。真要按「现在的名字」排，
+  就得把定义表也掺进排序键（页面手里有 `definitions`），改之前先想清楚「筛名两头认、排序认一头」
+  这个不一致会不会更绕。
+- **筛选与排序每次改动都写一次 `app_meta`**（`app.timeline_query`，单行 UPSERT）——**包括在事件名
+  输入框里逐字输入时**。单用户单连接、SQLite 本地写，代价可忽略；但若以后把偏好同步到别处
+  （或加防抖之外的重活），记得这里是「按键写」而不是「收工时写」。
+- **已删分组的自愈是「读完之后」发生的**：`load` 的 `then` 里发现筛的分组不在了才放下这一项，
+  所以理论上会先查一次「筛出 0 条」再重查。首次加载时那一帧被 `loading`（转圈）挡住，
+  实际看不到空列表；若以后把它做成不显示转圈的静默刷新，要重新检查这个时序。
 - **统计页的「累计」卡片要读全量**：`EventRecordRepository.list()` 无上限。趋势与对比已经把时间范围
   下推给 SQL（`list({ from, until })` + `statsReadRange`，见 `12-statistics.md` 3.13 节），但「概览」与
   「按事件统计」是**有史以来**的口径，仍会把全部记录读进内存再聚合（2 万条记录时，全量读 + 两个
@@ -518,7 +570,7 @@ src/theme/         设计令牌
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：30 套件 / 481 用例通过
+npm run verify             # 应为：32 套件 / 516 用例通过
 npx expo export --platform ios   # 应能打包
 npm start                  # Expo Go 扫码（或走下面的自动流程）
 
@@ -526,7 +578,7 @@ npm start                  # Expo Go 扫码（或走下面的自动流程）
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17
 export PATH="$HOME/.maestro/bin:$PATH"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-maestro test .maestro/flows      # 应为 11/11 通过（6m47s）
+maestro test .maestro/flows      # 曾为 11/11 通过（6m47s）；现已 12 条，`11` 尚未跑过（见第 8 节）
 sqlite3 "$(xcrun simctl get_app_container booted host.exp.Exponent data)"/Documents/ExponentExperienceData/@anonymous/lifetrack-*/SQLite/lifetrack.db \
   "select count(*), sum(deleted_at is not null) from event_records;"   # 跑完核对：多的应该只有 Maestro* 那条记录
 ```
@@ -563,6 +615,10 @@ sqlite3 "$(xcrun simctl get_app_container booted host.exp.Exponent data)"/Docume
 周期里记一天 → 点「删除」→ 出现「撤销」提示条 → 撤销找回；再删 → 回收站「已删除的周期记录」里恢复 / 彻底删除
 进周期实例页 → 月视图点一天 → 表单日期变成那天 → 保存 → 那格涂底色（有症状还带小圆点）
 回周期定义页 → 「症状统计」列出症状与「N 天 · 百分比」；统计页拉到底也有「周期症状」
+时间轴页头「筛选」→ 就地展开「筛选与排序」面板（不是跳页）：输入一半事件名 → 列表随输入变少，
+  页头写「筛出 N 条」；点「来源 → 补录」只剩补录的；点「分组 → 未分组」只剩没分组的事件；
+  点「排序 → 按次数」用得多的排前面（切「逐条」看，同一事件的记录应连在一起）；
+  杀掉 App 再打开 → 筛选与排序**还在**（app_meta）；点「清空筛选」/「还原排序」回到默认
 设置页：导出 JSON 备份 → 存到「文件」→ 再导入这份备份
 （第二次导入应提示「新增 0 条」；导出 CSV 用表格软件打开看列是否错位）
 ```
