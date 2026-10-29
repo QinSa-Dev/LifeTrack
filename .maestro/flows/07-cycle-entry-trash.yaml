@@ -91,15 +91,17 @@ tags:
       text: '每日记录'
 - scrollUntilVisible:
     element:
-      text: '.*回收站.*找回.*'
+      text: '.*已删除 .* 的记录.*'
     direction: DOWN
-- assertVisible: '.*回收站.*找回.*'
+# 这一页底下还有一行常驻提示也写着「可在…回收站…找回」，所以断言要认撤销条
+# 自己的文案（「已删除 … 的记录」），不能用「回收站/找回」去认。
+- assertVisible: '.*已删除 .* 的记录.*'
 - assertVisible: '.*还没有记录.*'
 - takeScreenshot: 07-entry-soft-deleted
 
 # —— 撤销：记录回到列表 ——
 - tapOn: '撤销'
-- assertNotVisible: '.*回收站.*找回.*'
+- assertNotVisible: '.*已删除 .* 的记录.*'
 - assertVisible: '1 条'
 - takeScreenshot: 07-entry-undo
 

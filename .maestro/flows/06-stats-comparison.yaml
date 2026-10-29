@@ -25,21 +25,36 @@ tags:
 - assertVisible: '概览'
 - takeScreenshot: 06-overview
 
-# 先滚到「对比」区块：让 Chip 和「对照窗口」那行都完整露出来
+# 按天 / 按周与对比基准现在默认折叠进趋势卡右上角的「展开」开关（统计趋势改版）。
+# 不先展开，下面的「较前一段」是渲染不出来的。
+- tapOn: '.*显示选项.*'
+- assertVisible: '按天'
+- assertVisible: '较前一段'
+- assertVisible: '较上年同期'
+- takeScreenshot: 06-options-open
+
+# 环比：面板刚展开，两个 Chip 就在眼前。**别先滚下去**——滚下去之后 Chip 会顶到
+# 状态栏下面，点它会落到状态栏上（iOS 把点状态栏当成「滚回顶部」）。
+- tapOn: '较前一段'
 - scrollUntilVisible:
     element:
       text: '.*对照窗口：.*'
     direction: DOWN
-
-# 环比：紧挨着的同长前一段
-- tapOn: '较前一段'
 - assertVisible: '.*对照窗口：.*'
 - assertVisible: '.*本期.*'
 - assertVisible: '.*(较前一段|前一段没有记录|本期与前一段都没有记录).*'
 - takeScreenshot: 06-compare-previous
 
-# 同比：整体前移 52 周（星期几对齐）
+# 同比：先滚回趋势卡（以面板里的「对比基准」为锚，它下面紧跟着两个 Chip），再点
+- scrollUntilVisible:
+    element:
+      text: '对比基准'
+    direction: UP
 - tapOn: '较上年同期'
+- scrollUntilVisible:
+    element:
+      text: '.*对照窗口：.*'
+    direction: DOWN
 - assertVisible: '.*对照窗口：.*'
 - assertVisible: '.*(较上年同期|上年同期没有记录|本期与上年同期都没有记录).*'
 - takeScreenshot: 06-compare-last-year

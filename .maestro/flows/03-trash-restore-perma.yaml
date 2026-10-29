@@ -39,10 +39,13 @@ tags:
     direction: DOWN
 - tapOn: '删除这条记录'
 # 删完之后卡片就地变成「撤销删除」，再滚回顶部看「已删除」横幅
+# 滚动到「返回」后它可能正卡在状态栏下面（点它会落到状态栏上，iOS 会当成「滚回顶部」），
+# 所以让 Maestro 把它滚到屏幕中间再点。
 - scrollUntilVisible:
     element:
       text: '返回'
     direction: UP
+    centerElement: true
 - assertVisible: '这条记录已删除'
 - tapOn: '返回'
 - takeScreenshot: 03-deleted
@@ -81,6 +84,7 @@ tags:
     element:
       text: '返回'
     direction: UP
+    centerElement: true
 - tapOn: '返回'
 - tapOn: '回收站'
 - assertVisible: '.*Maestro喝水.*'

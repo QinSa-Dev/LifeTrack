@@ -29,7 +29,8 @@ tags:
       - assertVisible: '事件名称'
       - tapOn: '例如：喝水'
       - inputText: 'Maestro导入'
-      - hideKeyboard
+      # 单行输入回车即失焦：这台机器上 hideKeyboard 会因中文输入法失败（见 .maestro/README.md）。
+      - pressKey: Enter
       - scrollUntilVisible:
           element:
             text: '创建'

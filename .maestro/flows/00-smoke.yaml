@@ -47,7 +47,8 @@ tags:
     when:
       visible: '概览'
     commands:
-      - assertVisible: '较前一段' # 对比 Chip（本期/对照期在这张卡片里）
+      # 对比基准现在折叠在趋势卡右上角的开关里（默认收起），开关的可访问文字带着当前选择。
+      - assertVisible: '.*显示选项.*较前一段.*'
       - scrollUntilVisible:
           element:
             text: '按事件统计'

@@ -52,7 +52,8 @@ tags:
 
 # —— 收尾：还原成默认（先清筛选，再还原排序）——
 - tapOn: '清空筛选'
-- assertVisible: '按次数' # 筛选没了，排序还在
+# 摘要行是「全部 · 按次数」整串（全文匹配），所以要用正则认「按次数」这一截。
+- assertVisible: '.*按次数.*' # 筛选没了，排序还在
 - tapOn: '还原排序'
-- assertNotVisible: '按次数'
+- assertNotVisible: '.*按次数.*'
 - takeScreenshot: 11-query-reset
