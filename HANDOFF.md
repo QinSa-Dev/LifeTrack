@@ -33,8 +33,8 @@ npm test             # 32 个套件 / 516 个用例通过
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（本次只改 JS / SQL，无新增原生依赖）
 npx expo-doctor      # 8 个旧依赖 patch 版本漂移（与最近改动无关）
-maestro test .maestro/flows      # 11/11 通过（6m47s；需先起 Metro，见 .maestro/README.md）
-                                  # ⚠️ 这是 2026-10-23 那次整跑的口径；之后的改动没有重跑，见第 8 节
+maestro test .maestro/flows      # 12/12 通过（7m49s，2026-10-29；需先起 Metro，见 .maestro/README.md）
+                                                                    # 文案精简 / 统计趋势改版 / 时间轴筛选排序之后的第一次整跑
 ```
 
 > ✅ **已在本机 iOS 模拟器实机跑起来**，并且**写入路径已经用 Maestro 真手点过**（见第 8 节）：
@@ -43,12 +43,13 @@ maestro test .maestro/flows      # 11/11 通过（6m47s；需先起 Metro，见 
 > 导出 JSON 到分享面板、**周期型事件改从「事件」页新建（类型选「周期」）→ 开周期 → 记一天 →
 > 边界预演 + 越界保存被拒**、统计环比/同比切换、
 > 周期记录软删除 → 撤销 → 回收站恢复 → 彻底删除、**月视图点日期 → 保存 → 症状统计**、
-> **在设置里改预测窗口 → 定义页文案跟着变 → 改边界时的重叠预演**，
-> 11 条流程全绿，跑完还直接读模拟器的 `lifetrack.db` 核对过（`PRAGMA foreign_key_check` 为空）。
+> **在设置里改预测窗口 → 定义页文案跟着变 → 改边界时的重叠预演**、
+> **时间轴页头筛选与排序（含杀掉重启后偏好还在、收尾还原）**，
+> 12 条流程全绿，跑完还直接读模拟器的 `lifetrack.db` 核对过（`PRAGMA foreign_key_check` 为空）。
 > 走读见 `docs/learning/15-maestro-e2e.md`（时间轴改版那部分见 `16-timeline-row-and-detail.md`，
 > 周期并入事件类型见 `11-cycle-tracking.md` 4.13 节）。
-> ⚠️ 仍未验证：**iOS 真机**、**组件级测试**、**最近四项改动（内置模板事件 / 提示文案精简 /
-> 分组管理卡 / 时间轴筛选与排序）在设备上都没看过**（见第 8 节）。（**「选文件导入」已补上**，
+> ⚠️ 仍未验证：**iOS 真机**、**组件级测试**、**内置模板事件在「全新安装」那一下**、
+> **分组管理卡（没有任何流程覆盖，也没手点过）**（见第 8 节）。（**「选文件导入」已补上**，
 > 见第 8 节与 `.maestro/README.md` 的「选文件导入」一节：手工两段式，模拟器上跨 App 那段没有端到端闭环。）
 >
 > 本机访问 GitHub Releases 很慢，`expo start --ios` 会卡在「Fetching Expo Go」超时。变通办法见
@@ -87,7 +88,7 @@ export PATH="$HOME/.maestro/bin:$PATH"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer   # 本机 xcode-select 指向 CLT，simctl 要靠它
 
 npx expo start                     # 另一个终端，保持运行
-maestro test .maestro/flows        # 11/11，6m47s
+maestro test .maestro/flows        # 12/12，7m49s（2026-10-29）
 maestro hierarchy                  # 排错：打印当前屏幕的视图树
 ```
 
@@ -304,17 +305,18 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ **静态检查、481 个单元用例**（真实内存 SQLite）、iOS 打包。
+- ✅ **静态检查、516 个单元用例**（真实内存 SQLite）、iOS 打包。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go）：**4 个标签页** + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
-- ✅ **写入路径已经真手点过**（Maestro，`11/11` 通过，6m47s）：点一下记录、
+- ✅ **写入路径已经真手点过**（Maestro，`12/12` 通过，7m49s，2026-10-29）：点一下记录、
   **行内【+1】即时落库**、**「逐条 / 合并」切换与就地展开**、**点行进详情 → 修改 → 删除 → 撤销**、
   回收站「恢复 / 永久删除」（含原生二次确认）、导出 JSON 到系统分享面板、
-  **「事件」页新建周期型事件 → 开周期 → 越界预演 + 越界保存被拒绝**、统计页的环比 / 同比切换、
+  **「事件」页新建周期型事件 → 开周期 → 越界预演 + 越界保存被拒绝**、统计页展开「显示选项」后切环比 / 同比、
   周期内记录软删除 → 撤销 → 回收站恢复 → 彻底删除、
   **周期月视图点日期 → 保存 → 定义页症状统计**、
-  **在设置里改预测窗口 → 定义页文案跟着变 → 改边界时的重叠预演**。
+  **在设置里改预测窗口 → 定义页文案跟着变 → 改边界时的重叠预演**、
+  **时间轴页头「筛选」：筛来源 + 按次数 → 摘要行 → 杀掉重启还在 → 收尾还原默认**。
   流程在 `.maestro/`，走读见 `docs/learning/15-maestro-e2e.md`（时间轴改版见 `16`，周期增强见 `11`），
   结果明细见 `README.md` 的「端到端：Maestro 真手点」一节。
   另外，跑完会**直接读模拟器里的 `lifetrack.db`** 核对：`PRAGMA foreign_key_check` 为空
@@ -342,19 +344,17 @@ src/theme/         设计令牌
   （`seedStarterDefinitions`，判据 `connection.migration.from === 0`），所以**开发机 / 模拟器上的
   现有库不会多出这条**（想现场看，得删掉设备上的 `lifetrack.db*` 让它重建，或重装 APK）。
   逻辑本身有单测（新库才写 / 旧库不写 / 删了不复活），**但真机上的「装完就有」这一下没有验过**。
-- ❌ **提示文案全量精简（第 13 节）、分组管理卡（第 14 节）与时间轴筛选排序（第 15 节）
-  都没有在设备上看过**：这几项改动只在 JSX / 纯函数里，`verify` + `format:check` 通过，
-  **但界面层没有组件测试**（仓库还没有 `@testing-library/react-native`），**Maestro 也没有重跑**。
-  有一处连带改动：`.maestro/flows/02-timeline-delete-undo.yaml` 里两条断言写的就是被改掉的提示文案，
-  已改成新文案，**是否仍然通过没有实跑验证**（见 `.maestro/README.md` 的「选择器」第 7 条）。
-  分组管理卡（新建 / 改名 / 删除）**一次都没有手点过**，只有 `renameGroupInput` 的纯函数单测兜底；
-  筛选与排序的面板同样**没手点过**，但**筛选语义（两头认名 / 分组看现在 / 未分组 / 转义 / 与 `limit` 组合）
-  有仓储单测**（真实内存 SQLite），**排序四种键 × 两种视图**有纯函数单测。
-- ❌ **`.maestro/flows/11-timeline-filter-and-sort.yaml` 是新写的、一次都没跑过**（写作时本机没有可用模拟器）：
-  它碰的是时间轴页头那块纯 JSX，选择器能不能命中只有真跑才知道。跑的时候注意两点：
-  ① 摘要行**只在「不是默认」时**才渲染，所以 `assertVisible` 必须发生在点完「快捷」「按次数」之后；
-  ② 它**收尾会把状态还原成默认**（「清空筛选」+「还原排序」）——这一步不能省，
-  否则下一条跑 `00` 冒烟时页头是「筛出 …」，而它断言的是「最近 … 条」。
+- ✅ **提示文案全量精简、时间轴筛选排序与统计趋势改版，已在 2026-10-29 的整跑里过了一遍**：
+  `12/12` 通过（7m49s），其中 `11` 是**第一次真跑**。这次整跑同时修掉了 5 处「界面改了、断言没跟上」
+  的流程漂移（`hideKeyboard` → `pressKey: Enter`、统计对比基准折叠后要先展开、撤销条断言别用常驻提示认、
+  页头滚上来会顶到状态栏下面 → `centerElement: true`、摘要行全文匹配要写 `.*`），
+  明细见 `.maestro/README.md` 的「2026-10-29 这次修了什么」。**App 代码一行没改**。
+- ❌ **分组管理卡（新建 / 改名 / 删除）仍然一次都没有手点过**：它没有任何 Maestro 流程覆盖，
+  只有 `renameGroupInput` 的纯函数单测兜底；`00` 冒烟也不碰它。要补的话是一条新流程的事。
+- ❌ 筛选与排序的**界面**这次点过了（`11`），但它覆盖的只是主干：
+  「事件名」输入框逐字输入、分组筛选（含「未分组」）、四种排序键的切换仍只有
+  **仓储单测**（筛选语义：两头认名 / 分组看现在 / 未分组 / 转义 / 与 `limit` 组合）与
+  **纯函数单测**（排序四种键 × 两种视图）兜底。
 - ❌ **iOS 真机仍未跑过**：免费 Apple ID 只能本机 Xcode 直装且凭证 7 天失效，需要先
   `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`；流程见
   `docs/learning/18-build-and-distribute.md`（**该文档是操作手册，尚未实跑**）。
@@ -578,7 +578,7 @@ npm start                  # Expo Go 扫码（或走下面的自动流程）
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17
 export PATH="$HOME/.maestro/bin:$PATH"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-maestro test .maestro/flows      # 曾为 11/11 通过（6m47s）；现已 12 条，`11` 尚未跑过（见第 8 节）
+maestro test .maestro/flows      # 12/12 通过（7m49s，2026-10-29，见第 8 节）
 sqlite3 "$(xcrun simctl get_app_container booted host.exp.Exponent data)"/Documents/ExponentExperienceData/@anonymous/lifetrack-*/SQLite/lifetrack.db \
   "select count(*), sum(deleted_at is not null) from event_records;"   # 跑完核对：多的应该只有 Maestro* 那条记录
 ```
