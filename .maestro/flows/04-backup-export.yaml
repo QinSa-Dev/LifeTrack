@@ -38,5 +38,11 @@ tags:
     optional: true
 - swipe:
     direction: DOWN
+# 面板关掉后，刚才那下 DOWN 可能顺手把设置页滚回顶部；再滚回按钮，不假设它还在原位
+- scrollUntilVisible:
+    element:
+      text: '导出 JSON 备份'
+    direction: DOWN
+    centerElement: true
 - assertVisible: '导出 JSON 备份'
 - takeScreenshot: 04-back-to-settings
