@@ -30,10 +30,10 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 34 个套件 / 542 个用例通过
+npm test             # 39 个套件 / 572 个用例通过（含组件测试 5 个套件 / 30 个用例）
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（本次只改 JS / SQL，无新增原生依赖）
-npx expo-doctor      # 8 个旧依赖 patch 版本漂移（与最近改动无关）
+npx expo-doctor      # 13 个旧依赖 patch 版本漂移（SDK 58 的 patch 已往前走了；本次未升级，与功能改动无关）
 maestro test .maestro/flows      # 14/14 通过（9m58s，2026-11-04；需先起 Metro，见 .maestro/README.md）
                                                                     # 固定页头 / 时间轴工具条 / 文案再精简之后的整跑
 ```
@@ -59,7 +59,7 @@ maestro test .maestro/flows      # 14/14 通过（9m58s，2026-11-04；需先起
 > 见第 8 节。
 > 走读见 `docs/learning/15-maestro-e2e.md`（时间轴改版那部分见 `16-timeline-row-and-detail.md`，
 > 周期并入事件类型见 `11-cycle-tracking.md` 4.13 节，自动循环懒补齐见 4.14 节）。
-> ⚠️ 仍未验证：**iOS 真机**、**组件级测试**、**内置模板事件在「全新安装」那一下**（见第 8 节）。
+> ⚠️ 仍未验证：**iOS 真机**、**Android 上的端到端流程**、**内置模板事件在「全新安装」那一下**（见第 8 节）。
 > （**「选文件导入」已补上**，见第 8 节与 `.maestro/README.md` 的「选文件导入」一节：
 > 手工两段式，模拟器上跨 App 那段没有端到端闭环。）
 >
@@ -319,7 +319,7 @@ src/theme/         设计令牌
 - 仓储：`src/repositories/eventDefinitionRepository.ts`（计数型与周期型共用；`normalizeDraft` 保证「周期 ⟺ `cycleMode`」且周期型属性 / 字段恒为 `[]`；计数的字段整组替换并按 `sortOrder` 读回）、`eventRecordRepository.ts`（记录 / 补录 / **`update` 更正事实** / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until` 与**筛选下推 `nameLike` / `kind` / `source` / `groupId`**；记录时把定义字段固化成快照并用 `normalizeFieldValues` 校验取值）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`eventGroupRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`；`DELETE_ORDER` 含 `event_definition_fields`）、`metaRepository.ts`（键值偏好，时间轴显示方式、筛选排序与预测窗口用它）
 - 功能组件：`src/features/definitions/`（定义表单 `EventDefinitionForm`：**类型（计数 / 周期）+ 属性多行 + 周期字段 + 自定义字段 + 快捷选项「属性 + 取值」**；`GroupManager`（**分组管理卡：新建 / 改名 / 删除**，就地在「事件」页展开）/ `groupInput.ts`（`renameGroupInput`：改名要提交的整组字段——`update` 是整体替换，不能只传 `name`）；`fields.ts` 汇总字段类型标签与提示；`labels.ts` 副标题与类型名的文案；`starterDefinitions.ts`（`STARTER_DEFINITIONS` + `seedStarterDefinitions`：新库写一条可删的参考模板事件））、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime` / `describeRecord`）/ `FieldValuePicker`（按字段类型渲染取值控件）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `repeat.ts`（`repeatDraft`：【+1】照抄最近一条要写的那几项，事件列表用它）/ `timelineView.ts`（显示方式偏好）/ `TimelineQueryPanel.tsx`（**时间轴的「筛选与排序」面板：四组「不限 + 选一个」的胶囊**）/ `timelineQuery.ts`（**筛选 / 排序的类型、默认值、`app_meta` 读写（一段 JSON，逐项回落）、摘要文案、映射到仓储参数**）/ `timelineSort.ts`（**排序纯函数：算事件级排序键 → 给事件排队**）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `describeLatestCycle` / `describeOverlap` / `describeCycleDefinition` / `CYCLE_MODE_LABELS` / `CYCLE_MODE_HINTS` / `predictionWindow.ts`（预测窗口这个纯偏好的选项 / 解析 / 文案）/ `autoFill.ts`（启动懒补齐的纯计划 `planAutoCycleFill` + 水位键 / 解析）/ `fillAutoCycles.ts`（按定义写库 + 只增不减的 `rememberAutoFillHorizon`）/ `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」，`DefinitionTotal.attributeText`）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV，多个属性用 ` | ` 连接，字段取值汇总成「字段值」列）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）
 - 界面：`src/app/(tabs)/definitions.tsx`（**事件页：计数 / 周期同一张列表**，计数型行内有【+1】、点行进记录页，周期进 `/cycles/[id]`；顶部「分组」按钮**就地展开分组管理卡**——没有单独的分组页）、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 合并 + 行内【+1】 + **页头「筛选」面板（筛选下推 SQL、排序在客户端、状态存 `app_meta`）**，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/settings.tsx`（诊断 + **偏好设置（时间轴显示 / 周期预测窗口）** + 备份与恢复）、`src/app/events/new.tsx`、`src/app/events/[id].tsx`（编辑定义）、`src/app/record/[id].tsx`（记录 / 补录，**属性多选 chips + 自定义字段取值**）、`src/app/records/[id].tsx`（**单条记录详情：快照（含字段定义与取值）+ 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/cycles/[id].tsx`（周期型事件详情：开一段 / 生成下一段 / 归档 / 删除；自动型生成时顺手推 `app_meta` 水位；非周期型定义会提示并给「去记录页」）、`src/app/cycle-instances/[id].tsx`
-- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`、`17-custom-fields.md`、`19-timeline-filter-and-sort.md`
+- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`、`17-custom-fields.md`、`19-timeline-filter-and-sort.md`、`20-component-testing.md`
 - 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`13`（14 条流程；`13` 也测分组管理；`12` 用相对日期测启动懒补齐）、`.maestro/subflows/record-once.yaml`（记一次）、`.maestro/subflows/use-expanded-view.yaml`（把时间轴钉成「逐条」）
 
 ## 7. 必须遵守的工作约定
@@ -337,7 +337,11 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ **静态检查、542 个单元用例**（真实内存 SQLite）、iOS 打包。
+- ✅ **静态检查、572 个用例**（仓储 / 纯函数跑真实内存 SQLite，界面跑 RNTL 组件测试）、iOS 打包。
+- ✅ **组件级测试已起步**（2026-11-04）：`@testing-library/react-native`，5 个套件 / 30 个用例，
+  覆盖 `Button`、`RecordRow`、`RecordGroupRow`、`TimelineQueryPanel`、`MonthCalendar`；
+  不连数据库、不启动模拟器。写法、边界与「RNTL 14 的 `render` / `fireEvent` 必须 `await`」的坑见
+  `docs/learning/20-component-testing.md`。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go）：**4 个标签页** + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
@@ -407,14 +411,16 @@ src/theme/         设计令牌
   第一版试跑点到了别人那一行的「删除」。颜色 / 排序的保留仍只有 `renameGroupInput` 单测；
   「删分组后事件回到未分组」由 `eventDefinitionRepository-test` 的 SET NULL 用例兜底。
 - ❌ 筛选与排序的**界面**这次点过了（`11`），但它覆盖的只是主干：
-  「事件名」输入框逐字输入、分组筛选（含「未分组」）、四种排序键的切换仍只有
-  **仓储单测**（筛选语义：两头认名 / 分组看现在 / 未分组 / 转义 / 与 `limit` 组合）与
-  **纯函数单测**（排序四种键 × 两种视图）兜底。
+  「事件名」输入框逐字输入、分组筛选（含「未分组」）、四种排序键的切换仍没有
+  **端到端**逐条覆盖；其中「改一项只影响自己」「三颗『全部』互不串台」与选中态已由
+  `timelineQueryPanel-test` 组件测试兜住，筛选语义与排序仍由仓储 / 纯函数单测兜底。
 - ❌ **iOS 真机仍未跑过**：免费 Apple ID 只能本机 Xcode 直装且凭证 7 天失效，需要先
   `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`；流程见
   `docs/learning/18-build-and-distribute.md`（**该文档是操作手册，尚未实跑**）。
   Maestro 流程也只写了 iOS 模拟器路径。
-- ❌ 界面交互的**组件级**自动化测试仍没有（项目里只有单元测试 + Maestro 端到端两层）。
+- ✅ **组件级测试已起步**，但只覆盖纯展示组件；带数据库的页面（分组管理、表单、详情、
+  回收站、设置）、导航、原生 `Alert` / 文件选择 / 分享、加载与错误态仍未覆盖
+  （见第 10 节与 `docs/learning/20-component-testing.md`）。
 
 ## 9. 下一步任务：第二阶段剩余项
 
@@ -505,7 +511,9 @@ src/theme/         设计令牌
 第二阶段的功能项到此清零。剩下的不是「再做一项功能」，而是：
 
 - **真机验证**：iOS 真机 / Android（见第 8 节）。
-- **组件级测试**：目前只有单元测试 + Maestro 两层，界面细粒度交互没有自动化。
+- **组件级测试**：已起步（5 个套件 / 30 个用例，见第 8 节与 `docs/learning/20`），
+  但带数据库的页面与原生交互仍没有；下一批候选是 `FieldValuePicker`、合并行展开后的子行顺序、
+  表单校验分支。
 - 第 10 节里记在案的技术债，按真机反馈挑，不要顺手全改。
 
 ### 提交与验证习惯
@@ -533,9 +541,11 @@ src/theme/         设计令牌
   分组行的「改名 / 删除」已经试过更轻的一条路：`Button.accessibilityLabel` 带上分组名
   （可见文字仍只有「改名 / 删除」，见流程 `13`）；要给【+1】补上下文可以照这个做法，
   但先想清楚与「+1 是通用标识」的产品取舍。
-- **界面只有端到端、没有组件级测试**：Maestro 流程（`.maestro/`）能证明「点得通、落得进库」，
-  但跑得慢、只能盖住主干路径；细粒度的界面交互（条件渲染、空状态、错误态）若要自动化，
-  仍需 `@testing-library/react-native`。
+- **组件级测试只覆盖了纯展示组件**：`npm test` 现在含 RNTL（5 个套件 / 30 个用例），
+  但带数据库的页面（分组管理、表单、详情、回收站、设置）、导航、`Alert` / 文件选择 / 分享
+  仍未覆盖；这一层刻意不连数据库，跨过这条线就该交给 Maestro。
+  新写组件测试记得 `render` / `fireEvent` **每一处都 `await`**（RNTL 14 是异步的，漏掉会报
+  `overlapping act()` 再让后面的查询莫名失败）。也没有覆盖率门槛，别用数字替代关键规则。
 - **时间轴只取最近 100 条**：已用 `FlatList` 虚拟化，但没有分页 / 无限滚动；更早的记录要去事件页看。
   第 15 节加了筛选之后，窗口语义是「**符合筛选的**最近 100 条」（筛选下推到 SQL），
   但**窗口本身还在**：筛一个很活跃的事件、或按「次数」排序时，次数说的是**这次载入的条数**
@@ -662,7 +672,7 @@ src/theme/         设计令牌
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：34 套件 / 542 用例通过
+npm run verify             # 应为：39 套件 / 572 用例通过
 npx expo export --platform ios   # 应能打包
 npm start                  # Expo Go 扫码（或走下面的自动流程）
 
