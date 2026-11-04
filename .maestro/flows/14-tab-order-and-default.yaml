@@ -1,0 +1,74 @@
+# 写入路径 14：设置里的底部导航顺序 + 默认打开页。
+#
+# 覆盖：
+#   1. 设置页新增「底部导航」卡：四个标签按当前顺序列出，左右移动按钮带标签名
+#      （`把「统计」左移`），首尾方向按钮禁用；
+#   2. 顺序改完标签栏立刻换位（无障碍标签里的 `tab, N of 4` 会跟着变）；
+#   3. 「默认打开」选事件后冷启动，应用直接落在事件页，且标签顺序仍是改过的；
+#   4. 末尾把顺序与默认页都还原成初始值，再冷启动确认恢复时间轴——
+#      本流程自产自销，不把偏好留给后续流程。
+#
+# `launchApp: stopApp true` 是真正的冷启动（JS 重新加载），才能验证「默认页」。
+appId: host.exp.Exponent
+name: 14 设置 · 底部导航顺序与默认页
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '.*设置, tab.*'
+    timeout: 120000
+- tapOn: '.*设置, tab.*'
+- scrollUntilVisible:
+    element:
+      text: '底部导航'
+    direction: DOWN
+- assertVisible: '.*统计, tab, 2 of 4.*'
+
+# —— 顺序：统计左移到第一 ——
+- tapOn: '把「统计」左移'
+- assertVisible: '.*统计, tab, 1 of 4.*'
+- assertVisible: '.*时间轴, tab, 2 of 4.*'
+
+# —— 默认页：选事件 ——
+- scrollUntilVisible:
+    element:
+      text: '默认打开「事件」'
+    direction: DOWN
+- tapOn: '默认打开「事件」'
+- takeScreenshot: 14-nav-order-and-default
+
+# —— 冷启动：落在事件页，顺序保持 ——
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '+ 新建事件'
+    timeout: 120000
+- assertVisible: '.*统计, tab, 1 of 4.*'
+- takeScreenshot: 14-default-event
+
+# —— 还原：统计右移一格，默认页回时间轴 ——
+- tapOn: '.*设置, tab.*'
+- scrollUntilVisible:
+    element:
+      text: '底部导航'
+    direction: DOWN
+- tapOn: '把「统计」右移'
+- scrollUntilVisible:
+    element:
+      text: '默认打开「时间轴」'
+    direction: DOWN
+- tapOn: '默认打开「时间轴」'
+
+# —— 再冷启动：顺序与默认页都回到初始值 ——
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '筛选'
+    timeout: 120000
+- assertVisible: '.*时间轴, tab, 1 of 4.*'
+- takeScreenshot: 14-restored

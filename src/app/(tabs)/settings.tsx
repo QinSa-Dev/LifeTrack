@@ -25,6 +25,8 @@ import {
   parseTimelineViewMode,
   type TimelineViewMode,
 } from '@/features/records/timelineView';
+import { NavigationSettingsCard } from '@/features/navigation/NavigationSettingsCard';
+import { useNavigationPreferences } from '@/features/navigation/NavigationPreferencesProvider';
 import type { BackupFile, ImportSummary } from '@/domain/backup';
 import type { MetaEntry } from '@/repositories';
 import {
@@ -65,6 +67,11 @@ function describeSummary(summary: ImportSummary): string {
 
 export default function SettingsScreen() {
   const { db, databasePath, migration } = useReadyDatabase();
+  const {
+    preferences: navigationPreferences,
+    error: navigationError,
+    update: updateNavigationPreferences,
+  } = useNavigationPreferences();
   const [diagnostics, setDiagnostics] = useState<Diagnostics>({
     loading: true,
     error: null,
@@ -272,6 +279,13 @@ export default function SettingsScreen() {
           </AppText>
         ) : null}
       </Card>
+
+      <NavigationSettingsCard
+        preferences={navigationPreferences}
+        error={navigationError}
+        onChange={updateNavigationPreferences}
+        style={styles.spaced}
+      />
 
       <Card title="备份与恢复" style={styles.spaced}>
         <View style={styles.buttonRow}>

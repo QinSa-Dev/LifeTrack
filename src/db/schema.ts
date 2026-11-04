@@ -29,6 +29,11 @@ export const META_KEYS = {
    * 只影响预测怎么算，不改库里的事实，同样存在这里（零迁移）。
    */
   predictionWindow: 'app.prediction_window',
+  /**
+   * 底部导航偏好：四个标签的顺序与默认打开的那一页（一段 JSON，
+   * 见 `features/navigation/navigationPreferences.ts`）。只影响怎么进入应用，零迁移。
+   */
+  navigation: 'app.navigation',
 } as const;
 
 /**
