@@ -1,6 +1,7 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppText, Button, Card, EmptyState } from '@/components';
@@ -65,6 +66,8 @@ export default function TimelineScreen() {
   const [repeatingId, setRepeatingId] = useState<string | null>(null);
 
   const { filter } = query;
+  const filterActive = isFilterActive(filter);
+  const listRef = useRef<FlatList<TimelineItem>>(null);
 
   const load = useCallback(
     (showSpinner: boolean) => {
@@ -244,12 +247,22 @@ export default function TimelineScreen() {
     [recordGroups, orderedRecords, viewMode],
   );
 
-  const filterActive = isFilterActive(filter);
   // 筛选与排序都还是默认值时，页头不用多写一行「当前在看什么」
   const queryIsDefault = !filterActive && query.sort === DEFAULT_TIMELINE_SORT;
 
   const openDetail = (record: EventRecord) =>
     router.push({ pathname: '/records/[id]', params: { id: record.id } });
+
+  const togglePanel = useCallback(() => {
+    setPanelOpen((open) => !open);
+  }, []);
+
+  // 面板开在列表顶部；如果此时已经滚到下面，先回顶部，免得「点了筛选却什么也没出现」
+  useEffect(() => {
+    if (panelOpen) {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    }
+  }, [panelOpen]);
 
   const renderRecordRow = (record: EventRecord, divider: boolean) => (
     <RecordRow
@@ -262,9 +275,79 @@ export default function TimelineScreen() {
     />
   );
 
+  const filterOn = panelOpen || filterActive;
+
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
+      {/*
+        工具条：条数（信息）在左，筛选 / 回收站（工具）在右。
+        它和卡片列表之间隔着一层浅灰底 + 一条分隔线——工具不混进正文，滚动时也不会跑掉。
+      */}
+      <View style={styles.toolbar}>
+        <AppText variant="caption" color={palette.textMuted} numberOfLines={1} style={styles.toolbarCount}>
+          {records.length === 0
+            ? ''
+            : viewMode === 'merged'
+              ? `${filterActive ? '筛出' : '最近'} ${records.length} 条 · ${recordGroups.length} 个事件`
+              : `${filterActive ? '筛出' : '最近'} ${records.length} 条`}
+        </AppText>
+        <View style={styles.toolbarActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="筛选"
+            accessibilityState={{ expanded: panelOpen, selected: filterOn }}
+            onPress={togglePanel}
+            style={({ pressed }) => [
+              styles.toolButton,
+              filterOn ? styles.toolButtonActive : null,
+              pressed ? styles.toolButtonPressed : null,
+            ]}
+          >
+            <Ionicons
+              name={filterOn ? 'funnel' : 'funnel-outline'}
+              size={15}
+              color={filterOn ? palette.primary : palette.textMuted}
+            />
+            <AppText variant="caption" color={filterOn ? palette.primary : palette.textMuted}>
+              筛选
+            </AppText>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="回收站"
+            onPress={() => router.push('/records/deleted')}
+            style={({ pressed }) => [styles.toolButton, pressed ? styles.toolButtonPressed : null]}
+          >
+            <Ionicons name="trash-outline" size={15} color={palette.textMuted} />
+            <AppText variant="caption" color={palette.textMuted}>
+              回收站
+            </AppText>
+          </Pressable>
+        </View>
+      </View>
+
+      {queryIsDefault ? null : (
+        <View style={styles.queryBar}>
+          <View style={styles.queryChip}>
+            <AppText variant="caption" color={palette.primary} numberOfLines={1}>
+              {describeTimelineQuery(query, selectedGroupName(filter, groups))}
+            </AppText>
+          </View>
+          <Button
+            label={filterActive ? '清空筛选' : '还原排序'}
+            tone="secondary"
+            size="sm"
+            onPress={() =>
+              setQuery(
+                filterActive ? { ...query, filter: { name: '' } } : { ...query, sort: DEFAULT_TIMELINE_SORT },
+              )
+            }
+          />
+        </View>
+      )}
+
       <FlatList
+        ref={listRef}
         data={items}
         keyExtractor={(item) => (item.type === 'group' ? item.group.definitionId : item.record.id)}
         renderItem={({ item }) => (
@@ -296,52 +379,7 @@ export default function TimelineScreen() {
               </Card>
             ) : null}
 
-            <View style={styles.headerRow}>
-              <AppText variant="caption" color={palette.textMuted} style={styles.headerHint}>
-                {records.length > 0
-                  ? viewMode === 'merged'
-                    ? `${filterActive ? '筛出' : '最近'} ${records.length} 条，合并为 ${recordGroups.length} 个事件（最多 ${RECENT_LIMIT} 条）`
-                    : `${filterActive ? '筛出' : '最近'} ${records.length} 条（最多 ${RECENT_LIMIT} 条）`
-                  : filterActive
-                    ? '没有符合筛选的记录'
-                    : '软删除的记录会进回收站'}
-              </AppText>
-              <Button label="筛选" tone="secondary" size="sm" onPress={() => setPanelOpen((open) => !open)} />
-              <Button
-                label="回收站"
-                tone="secondary"
-                size="sm"
-                onPress={() => router.push('/records/deleted')}
-              />
-            </View>
-
-            {queryIsDefault ? null : (
-              <View style={styles.queryRow}>
-                <AppText variant="caption" color={palette.textMuted} style={styles.headerHint}>
-                  {describeTimelineQuery(query, selectedGroupName(filter, groups))}
-                </AppText>
-                <Button
-                  label={filterActive ? '清空筛选' : '还原排序'}
-                  tone="secondary"
-                  size="sm"
-                  onPress={() =>
-                    setQuery(
-                      filterActive
-                        ? { ...query, filter: { name: '' } }
-                        : { ...query, sort: DEFAULT_TIMELINE_SORT },
-                    )
-                  }
-                />
-              </View>
-            )}
-
             {panelOpen ? <TimelineQueryPanel query={query} groups={groups} onChange={setQuery} /> : null}
-
-            <AppText variant="caption" color={palette.textMuted} style={styles.tapHint}>
-              {viewMode === 'merged'
-                ? '点行就地展开逐条，点【+1】按同样的取值再记一条（显示方式可在「设置」里改）'
-                : '点行看详情，点【+1】按同样的取值再记一条（显示方式可在「设置」里改）'}
-            </AppText>
           </View>
         }
         ListEmptyComponent={
@@ -350,7 +388,7 @@ export default function TimelineScreen() {
               <ActivityIndicator color={palette.primary} />
             </View>
           ) : filterActive ? (
-            <EmptyState title="没有符合筛选的记录" description="换个条件，或点「清空筛选」" />
+            <EmptyState title="没有符合筛选的记录" />
           ) : (
             <EmptyState title="还没有任何记录" />
           )
@@ -379,26 +417,58 @@ const styles = StyleSheet.create({
   spaced: {
     marginTop: spacing.md,
   },
-  headerRow: {
+  toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.sm,
-    marginTop: spacing.md,
-    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    backgroundColor: palette.surfaceMuted,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.border,
   },
-  headerHint: {
+  toolbarCount: {
     flexShrink: 1,
   },
-  queryRow: {
+  toolbarActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-    marginBottom: spacing.sm,
+    gap: spacing.xs,
   },
-  tapHint: {
-    marginBottom: spacing.sm,
+  toolButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    height: 30,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+  },
+  toolButtonActive: {
+    backgroundColor: palette.primarySoft,
+    borderColor: palette.primary,
+  },
+  toolButtonPressed: {
+    opacity: 0.6,
+  },
+  queryBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.border,
+  },
+  queryChip: {
+    flexShrink: 1,
+    backgroundColor: palette.primarySoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
   },
   itemCard: {
     backgroundColor: palette.surface,

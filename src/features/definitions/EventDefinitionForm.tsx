@@ -337,7 +337,7 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
         </Card>
       ) : null}
 
-      <Card title="分组" subtitle="分组用于归类" style={styles.spaced}>
+      <Card title="分组" style={styles.spaced}>
         <View style={styles.chipRow}>
           <Chip label="未分组" selected={groupId === undefined} onPress={() => setGroupId(undefined)} />
           {groups.map((group) => (
@@ -358,7 +358,7 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
       </Card>
 
       {kind === 'counter' ? (
-        <Card title="自定义字段" subtitle="带类型的输入项，记录时逐个选值" style={styles.spaced}>
+        <Card title="自定义字段" style={styles.spaced}>
           {fields.length === 0 ? (
             <AppText variant="caption" color={palette.textMuted}>
               例如「时段」（单选）、「起床时间」（时间点）
@@ -434,7 +434,7 @@ export function EventDefinitionForm({ initial, submitLabel, onSubmit }: EventDef
       ) : null}
 
       {kind === 'counter' ? (
-        <Card title="快捷选项" subtitle="一键记录「属性 + 取值」" style={styles.spaced}>
+        <Card title="快捷选项" style={styles.spaced}>
           {options.length === 0 ? (
             <AppText variant="caption" color={palette.textMuted}>
               添加后记录页会多出一排胶囊

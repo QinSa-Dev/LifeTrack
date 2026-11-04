@@ -248,7 +248,7 @@ export default function DefinitionsScreen() {
   };
 
   return (
-    <Screen scroll contentStyle={styles.content}>
+    <Screen scroll edges={['left', 'right']} contentStyle={styles.content}>
       <View style={styles.actions}>
         <Button label="+ 新建事件" onPress={() => router.push('/events/new')} style={styles.grow} />
         <Button
@@ -257,9 +257,6 @@ export default function DefinitionsScreen() {
           onPress={() => setGroupsOpen((open) => !open)}
         />
       </View>
-      <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
-        计数型点行内【+1】直接记一条；点行进内页看详情、改定义。
-      </AppText>
 
       {groupsOpen ? <GroupManager groups={groups} onChanged={reloadGroups} /> : null}
 
@@ -276,7 +273,7 @@ export default function DefinitionsScreen() {
           <ActivityIndicator color={palette.primary} />
         </View>
       ) : definitions.length === 0 ? (
-        <EmptyState title="尚未创建事件定义" description="点上方「新建事件」开始" />
+        <EmptyState title="尚未创建事件定义" />
       ) : (
         <>
           <Card title="事件" subtitle={`${active.length} 个进行中`} style={styles.spaced}>
@@ -307,9 +304,6 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     gap: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  hint: {
     marginBottom: spacing.md,
   },
   grow: {

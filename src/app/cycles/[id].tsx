@@ -17,6 +17,7 @@ import {
 import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/features/cycles/predictionWindow';
 import { SymptomStatsCard } from '@/features/cycles/SymptomStatsCard';
 import { localDateText } from '@/features/common/datetime';
+import { useGoBack } from '@/features/common/useGoBack';
 import {
   CycleEntryRepository,
   CycleInstanceRepository,
@@ -42,6 +43,7 @@ function maxIsoDate(a: string, b: string): string {
  */
 export default function CycleEventScreen() {
   const router = useRouter();
+  const goBack = useGoBack();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { db } = useReadyDatabase();
 
@@ -100,8 +102,7 @@ export default function CycleEventScreen() {
 
   if (definition === null) {
     return (
-      <Screen scroll contentStyle={styles.content}>
-        <Header title="周期" onBack={() => router.back()} />
+      <Screen scroll contentStyle={styles.content} header={<Header title="周期" onBack={goBack} />}>
         <EmptyState
           title="找不到这个周期事件"
           description="它可能已经被删除。"
@@ -113,8 +114,11 @@ export default function CycleEventScreen() {
 
   if (definition.kind !== 'cycle') {
     return (
-      <Screen scroll contentStyle={styles.content}>
-        <Header title={definition.name} onBack={() => router.back()} />
+      <Screen
+        scroll
+        contentStyle={styles.content}
+        header={<Header title={definition.name} onBack={goBack} />}
+      >
         <Card title="这不是周期型事件" style={styles.spaced}>
           <AppText variant="body" color={palette.textMuted}>
             这不是周期型事件，去记录页记一条。
@@ -172,7 +176,7 @@ export default function CycleEventScreen() {
             setError(null);
             new EventDefinitionRepository(db)
               .remove(definition.id)
-              .then(() => router.back())
+              .then(goBack)
               .catch((cause: unknown) => {
                 setError(cause instanceof Error ? cause.message : String(cause));
                 setBusy(false);
@@ -227,19 +231,23 @@ export default function CycleEventScreen() {
   };
 
   return (
-    <Screen scroll contentStyle={styles.content}>
-      <Header
-        title={definition.name}
-        onBack={() => router.back()}
-        right={
-          <Button
-            label={editing ? '收起编辑' : '编辑定义'}
-            tone="secondary"
-            onPress={() => setEditing((value) => !value)}
-          />
-        }
-      />
-
+    <Screen
+      scroll
+      contentStyle={styles.content}
+      header={
+        <Header
+          title={definition.name}
+          onBack={goBack}
+          right={
+            <Button
+              label={editing ? '收起编辑' : '编辑定义'}
+              tone="secondary"
+              onPress={() => setEditing((value) => !value)}
+            />
+          }
+        />
+      }
+    >
       {definition.isArchived ? (
         <Card title="已归档" style={styles.spaced}>
           <AppText variant="body" color={palette.warning}>
@@ -277,9 +285,6 @@ export default function CycleEventScreen() {
           <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
             {describePrediction(prediction)}
           </AppText>
-          <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-            预测窗口在「设置」里改。
-          </AppText>
         </Card>
       )}
 
@@ -309,7 +314,7 @@ export default function CycleEventScreen() {
       >
         {instances.length === 0 ? (
           <AppText variant="caption" color={palette.textMuted}>
-            还没有周期。在下方填入开始日。
+            还没有周期。
           </AppText>
         ) : (
           instances.map((instance) => {
@@ -347,7 +352,7 @@ export default function CycleEventScreen() {
       </Card>
 
       <View style={styles.spaced}>
-        <SymptomStatsCard entries={entries} emptyHint="点开一段周期，在月视图上点一天就能记" />
+        <SymptomStatsCard entries={entries} />
       </View>
 
       <Card title="状态与删除" subtitle="归档可随时取消；永久删除需二次确认" style={styles.spaced}>

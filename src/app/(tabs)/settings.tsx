@@ -230,14 +230,14 @@ export default function SettingsScreen() {
       : `${diagnostics.migration.from} → ${diagnostics.migration.to}（应用 v${diagnostics.migration.applied.join(', v')}）`;
 
   return (
-    <Screen scroll contentStyle={{ paddingTop: spacing.lg }}>
+    <Screen scroll edges={['left', 'right']} contentStyle={{ paddingTop: spacing.lg }}>
       <Card title="应用信息">
         <Row label="应用版本" value={version} />
         <Row label="Expo SDK" value={sdkVersion} />
         <Row label="运行环境" value={runtime} />
       </Card>
 
-      <Card title="偏好设置" subtitle="只影响怎么看，不影响存了什么" style={styles.spaced}>
+      <Card title="偏好设置" style={styles.spaced}>
         <AppText variant="label" color={palette.textMuted}>
           时间轴显示
         </AppText>
@@ -251,9 +251,6 @@ export default function SettingsScreen() {
             />
           ))}
         </View>
-        <AppText variant="caption" color={palette.textMuted} style={styles.chipHint}>
-          逐条：一行一条；合并：一个事件一行。
-        </AppText>
 
         <AppText variant="label" color={palette.textMuted} style={styles.chipLabel}>
           周期预测窗口
@@ -268,9 +265,6 @@ export default function SettingsScreen() {
             />
           ))}
         </View>
-        <AppText variant="caption" color={palette.textMuted} style={styles.chipHint}>
-          按最近几段「实际间隔」取平均来预测。
-        </AppText>
 
         {preferenceError ? (
           <AppText variant="caption" color={palette.danger} style={styles.chipHint}>
@@ -279,11 +273,7 @@ export default function SettingsScreen() {
         ) : null}
       </Card>
 
-      <Card
-        title="备份与恢复"
-        subtitle="导出 JSON 备份 / 记录表格；导入时按 id 合并，不删本地数据"
-        style={styles.spaced}
-      >
+      <Card title="备份与恢复" style={styles.spaced}>
         <View style={styles.buttonRow}>
           <Button
             label="导出 JSON 备份"
@@ -306,11 +296,11 @@ export default function SettingsScreen() {
           disabled={backupBusy}
           style={styles.spacedSmall}
         />
-        <AppText variant="caption" color={palette.textMuted} style={styles.spacedSmall}>
-          {backupBusy
-            ? '处理中…'
-            : (backupMessage ?? '导入只会合并：本地独有的数据一定保留；非法备份整体拒绝。')}
-        </AppText>
+        {backupBusy || backupMessage ? (
+          <AppText variant="caption" color={palette.textMuted} style={styles.spacedSmall}>
+            {backupBusy ? '处理中…' : backupMessage}
+          </AppText>
+        ) : null}
       </Card>
 
       <Card title="本地数据库" subtitle="SQLite（expo-sqlite）" style={styles.spaced}>
@@ -332,10 +322,6 @@ export default function SettingsScreen() {
         ) : (
           diagnostics.entries.map((entry) => <Row key={entry.key} label={entry.key} value={entry.value} />)
         )}
-      </Card>
-
-      <Card title="数据安全约定" style={styles.spaced}>
-        <AppText color={palette.textMuted}>迁移失败会拒绝启动并保留原数据文件，不会重建数据库。</AppText>
       </Card>
     </Screen>
   );

@@ -1,4 +1,4 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
@@ -6,6 +6,7 @@ import { AppText, Badge, Button, Card, EmptyState, Header, Screen, TextField } f
 import { useReadyDatabase } from '@/db';
 import { attributeText, describeFieldValue, recordAttributes, type EventRecord } from '@/domain/models';
 import { localDateText, localTimeText, parseLocalDateTime } from '@/features/common/datetime';
+import { useGoBack } from '@/features/common/useGoBack';
 import { formatFullTime, formatRecordValue, isBackfilled, sourceLabel } from '@/features/records/format';
 import { EventRecordRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
@@ -32,7 +33,7 @@ function DetailItem({ label, value, mono = false }: { label: string; value: stri
  * 归档甚至被永久删除，这一页显示的都还是记录当时的样子（见领域规则「历史不可篡改」）。
  */
 export default function RecordDetailScreen() {
-  const router = useRouter();
+  const goBack = useGoBack();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { db } = useReadyDatabase();
 
@@ -166,8 +167,7 @@ export default function RecordDetailScreen() {
 
   if (record === null) {
     return (
-      <Screen scroll contentStyle={styles.content}>
-        <Header title="记录" onBack={() => router.back()} />
+      <Screen scroll contentStyle={styles.content} header={<Header title="记录" onBack={goBack} />}>
         <EmptyState
           title="找不到这条记录"
           description="它可能已经被永久删除。"
@@ -185,9 +185,11 @@ export default function RecordDetailScreen() {
       : `数量${recordAttributeText ? `（${recordAttributeText}）` : ''}`;
 
   return (
-    <Screen scroll contentStyle={styles.content}>
-      <Header title={record.snapshot.name} onBack={() => router.back()} />
-
+    <Screen
+      scroll
+      contentStyle={styles.content}
+      header={<Header title={record.snapshot.name} onBack={goBack} />}
+    >
       {error ? (
         <Card title="操作失败" style={styles.spaced}>
           <AppText variant="body" color={palette.danger}>
@@ -210,14 +212,11 @@ export default function RecordDetailScreen() {
             <Badge label="已删除" tone="warning" />
             <Badge label="在回收站里" />
           </View>
-          <AppText variant="body" color={palette.textMuted}>
-            下面的「更多操作」里可以撤销删除。
-          </AppText>
         </Card>
       ) : null}
 
       {editing ? (
-        <Card title="修改这条记录" subtitle="只改取值 / 时间 / 备注" style={styles.spaced}>
+        <Card title="修改这条记录" style={styles.spaced}>
           <TextField
             label={valueLabel}
             value={valueText}
@@ -295,7 +294,7 @@ export default function RecordDetailScreen() {
         浮球正好压住屏幕右上角——实测点那个位置会打开 Expo Go 自己的面板。放到底部既躲开了它，
         也让删除这类低频操作离阅读位置远一点。
       */}
-      <Card title="更多操作" subtitle={deleted ? '这条记录已删除' : '改 / 删都在这里'} style={styles.spaced}>
+      <Card title="更多操作" style={styles.spaced}>
         {deleted ? (
           <Button
             label={busy ? '撤销中…' : '撤销删除'}

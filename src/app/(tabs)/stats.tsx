@@ -273,7 +273,7 @@ export default function StatsScreen() {
   const hasCycleData = !loading && cycleEntries.length > 0;
 
   return (
-    <Screen scroll contentStyle={styles.content}>
+    <Screen scroll edges={['left', 'right']} contentStyle={styles.content}>
       {error ? (
         <Card title="读取失败" style={styles.spaced}>
           <AppText variant="body" color={palette.danger}>
@@ -287,7 +287,7 @@ export default function StatsScreen() {
           <ActivityIndicator color={palette.primary} />
         </View>
       ) : !hasData && !hasCycleData ? (
-        <EmptyState title="还没有可统计的数据" description="先到「事件」标签记几次" />
+        <EmptyState title="还没有可统计的数据" />
       ) : (
         <>
           {hasData ? (
@@ -379,10 +379,7 @@ export default function StatsScreen() {
                 </View>
                 <TrendBars periods={trendPeriods} valueOf={trendValueOf} />
 
-                <AppText variant="label" color={palette.textMuted} style={styles.compareLabel}>
-                  对比（与上图同一窗口）
-                </AppText>
-                <AppText variant="caption" color={palette.textMuted}>
+                <AppText variant="caption" color={palette.textMuted} style={styles.compareLabel}>
                   {comparisonText}
                 </AppText>
                 <AppText variant="caption" color={palette.textMuted} style={styles.range}>
@@ -391,11 +388,7 @@ export default function StatsScreen() {
                 </AppText>
               </Card>
 
-              <Card
-                title="按事件统计"
-                subtitle={`累计 ${definitions.length} 个事件，按条数排序；行内变化是上面窗口的对比`}
-                style={styles.spaced}
-              >
+              <Card title="按事件统计" subtitle={`累计 ${definitions.length} 个事件`} style={styles.spaced}>
                 {hasData
                   ? definitions.map((total) => {
                       const change = changeById.get(total.definitionId);

@@ -1,10 +1,11 @@
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
 import { AppText, Button, Card, EmptyState, Header, ListRow, Screen } from '@/components';
 import { useReadyDatabase } from '@/db';
 import type { DeletedCycleEntry, EventRecord } from '@/domain/models';
+import { useGoBack } from '@/features/common/useGoBack';
 import { formatOccurredAt, formatRecordValue, sourceLabel } from '@/features/records/format';
 import { CycleEntryRepository, EventRecordRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
@@ -33,7 +34,7 @@ function deletedEntrySubtitle(item: DeletedCycleEntry): string {
  * 它们共用同一个页面而不是各做一个，是因为对用户来说「删了的东西在回收站」是一件事。
  */
 export default function DeletedRecordsScreen() {
-  const router = useRouter();
+  const goBack = useGoBack();
   const { db } = useReadyDatabase();
 
   const [records, setRecords] = useState<EventRecord[]>([]);
@@ -124,13 +125,7 @@ export default function DeletedRecordsScreen() {
   const empty = records.length === 0 && entries.length === 0;
 
   return (
-    <Screen scroll contentStyle={styles.content}>
-      <Header title="回收站" onBack={() => router.back()} />
-
-      <AppText variant="caption" color={palette.textMuted} style={styles.hint}>
-        删除的记录会先到这里；永久删除不可撤销。
-      </AppText>
-
+    <Screen scroll contentStyle={styles.content} header={<Header title="回收站" onBack={goBack} />}>
       {error ? (
         <Card title="操作失败" style={styles.spaced}>
           <AppText variant="body" color={palette.danger}>
@@ -144,15 +139,11 @@ export default function DeletedRecordsScreen() {
           <ActivityIndicator color={palette.primary} />
         </View>
       ) : empty ? (
-        <EmptyState title="回收站是空的" description="删除的记录会先到这里" />
+        <EmptyState title="回收站是空的" />
       ) : (
         <>
           {records.length > 0 ? (
-            <Card
-              title="已删除的记录"
-              subtitle={`${records.length} 条，按删除时间倒序`}
-              style={styles.spaced}
-            >
+            <Card title="已删除的记录" subtitle={`${records.length} 条`} style={styles.spaced}>
               {records.map((record) => (
                 <ListRow
                   key={record.id}
@@ -183,11 +174,7 @@ export default function DeletedRecordsScreen() {
           ) : null}
 
           {entries.length > 0 ? (
-            <Card
-              title="已删除的周期记录"
-              subtitle={`${entries.length} 条，按删除时间倒序`}
-              style={styles.spaced}
-            >
+            <Card title="已删除的周期记录" subtitle={`${entries.length} 条`} style={styles.spaced}>
               {entries.map((item) => (
                 <ListRow
                   key={item.entry.id}
@@ -213,9 +200,6 @@ export default function DeletedRecordsScreen() {
                   }
                 />
               ))}
-              <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-                恢复要求这一天仍在周期的区间内；被拒绝就改回边界，或彻底删除它。
-              </AppText>
             </Card>
           ) : null}
         </>
@@ -228,13 +212,7 @@ const styles = StyleSheet.create({
   content: {
     paddingTop: spacing.md,
   },
-  hint: {
-    marginBottom: spacing.sm,
-  },
   spaced: {
-    marginTop: spacing.md,
-  },
-  spacedTop: {
     marginTop: spacing.md,
   },
   loading: {

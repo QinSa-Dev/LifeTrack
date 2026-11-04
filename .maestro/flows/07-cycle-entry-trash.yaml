@@ -5,12 +5,15 @@
 #   2. 撤销能把它找回来（软删除 → restore）；
 #   3. 不撤销的话它落在回收站的「已删除的周期记录」区，那里能恢复，也能永久删除（原生二次确认）。
 #
-# 自产自销：只动本流程自己刚记的那一天（定义「Maestro周期」+ 它的一段进行中周期）。
+# 自产自销：只动本流程自己刚记的那一天（专用定义「Maestro软删除」+ 它的一段进行中周期）。
+# **不要和 05 / 08 共用「Maestro周期」**：05 会故意留下一条「今天」的记录（累加），
+# 共用时「1 条 / 还没有记录」这类断言会随跑过哪些流程而变化。07 需要干净的计数，
+# 所以自建一个名字不同的定义（也不要叫「Maestro周期…」，否则 `.*Maestro周期.*` 会撞车）。
 # 注意：回收站里**还有使用者自己软删除的事件记录**，所以周期区的按钮不能用 index 定位，
 # 要用相对选择器 `below: 已删除的周期记录` 消歧——这是「测试不动用户数据」的具体做法。
 #
 # 前提与副作用同 05：运行日期要晚于 2026-10-05（这样「今天」一定落在 2026-10-01 起的区间内）；
-# 会留下定义「Maestro周期」与一段进行中的周期（但记录会被本流程删干净）。
+# 会留下定义「Maestro软删除」与一段进行中的周期（但记录会被本流程删干净）。
 appId: host.exp.Exponent
 name: 07 周期 · 记录软删除 / 撤销 / 回收站
 tags:
@@ -23,18 +26,18 @@ tags:
     visible: '时间轴, tab, 1 of 4'
     timeout: 120000
 
-# —— 准备：一处「Maestro周期」+ 一段进行中的周期（与 05 同一套做法）——
+# —— 准备：一处「Maestro软删除」+ 一段进行中的周期（与 05 同一套做法）——
 # 周期是事件的一种类型：在「事件」页新建一个周期型事件
 - tapOn: '.*事件, tab.*'
 - assertVisible: '+ 新建事件'
 - runFlow:
     when:
-      notVisible: '.*Maestro周期.*'
+      notVisible: '.*Maestro软删除.*'
     commands:
       - tapOn: '+ 新建事件'
       - assertVisible: '例如：喝水'
       - tapOn: '例如：喝水'
-      - inputText: 'Maestro周期'
+      - inputText: 'Maestro软删除'
       - pressKey: Enter
       # 类型选「周期」
       - tapOn: '周期（有开始与结束）'
@@ -43,12 +46,12 @@ tags:
             text: '创建'
           direction: DOWN
       - tapOn: '创建'
-      - assertVisible: '.*Maestro周期.*'
+      - assertVisible: '.*Maestro软删除.*'
 - scrollUntilVisible:
     element:
-      text: '.*Maestro周期.*'
+      text: '.*Maestro软删除.*'
     direction: DOWN
-- tapOn: '.*Maestro周期.*'
+- tapOn: '.*Maestro软删除.*'
 - assertVisible: '定义信息'
 - runFlow:
     when:
@@ -121,7 +124,7 @@ tags:
 - tapOn: '.*时间轴, tab.*'
 - tapOn: '回收站'
 - assertVisible: '已删除的周期记录'
-- assertVisible: '.*Maestro周期.*'
+- assertVisible: '.*Maestro软删除.*'
 - takeScreenshot: 07-trash-cycle-entry
 - tapOn:
     text: '恢复'
@@ -140,9 +143,9 @@ tags:
 - tapOn: '.*事件, tab.*'
 - scrollUntilVisible:
     element:
-      text: '.*Maestro周期.*'
+      text: '.*Maestro软删除.*'
     direction: DOWN
-- tapOn: '.*Maestro周期.*'
+- tapOn: '.*Maestro软删除.*'
 - runFlow:
     when:
       visible: '.*~ 进行中.*'

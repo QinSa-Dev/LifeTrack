@@ -12,6 +12,7 @@ import {
   type RecordSource,
 } from '@/domain/models';
 import { localDateText, localTimeText, parseLocalDateTime, shiftLocalDays } from '@/features/common/datetime';
+import { useGoBack } from '@/features/common/useGoBack';
 import { FieldValuePicker } from '@/features/records/FieldValuePicker';
 import { describeRecord, formatOccurredAt, sourceLabel } from '@/features/records/format';
 import { RecordRow } from '@/features/records/RecordRow';
@@ -39,6 +40,7 @@ interface Flash {
 
 export default function RecordScreen() {
   const router = useRouter();
+  const goBack = useGoBack();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { db } = useReadyDatabase();
 
@@ -206,8 +208,7 @@ export default function RecordScreen() {
 
   if (definition === null) {
     return (
-      <Screen scroll contentStyle={styles.content}>
-        <Header title="记录" onBack={() => router.back()} />
+      <Screen scroll contentStyle={styles.content} header={<Header title="记录" onBack={goBack} />}>
         <EmptyState title="找不到这个事件" description="它可能已经被删除。" footnote={error ?? undefined} />
       </Screen>
     );
@@ -232,19 +233,23 @@ export default function RecordScreen() {
   };
 
   return (
-    <Screen scroll contentStyle={styles.content}>
-      <Header
-        title={definition.name}
-        onBack={() => router.back()}
-        right={
-          <Button
-            label="编辑定义"
-            tone="secondary"
-            onPress={() => router.push({ pathname: '/events/[id]', params: { id: definition.id } })}
-          />
-        }
-      />
-
+    <Screen
+      scroll
+      contentStyle={styles.content}
+      header={
+        <Header
+          title={definition.name}
+          onBack={goBack}
+          right={
+            <Button
+              label="编辑定义"
+              tone="secondary"
+              onPress={() => router.push({ pathname: '/events/[id]', params: { id: definition.id } })}
+            />
+          }
+        />
+      }
+    >
       {definition.kind === 'cycle' ? (
         <Card title="这是周期型事件" style={styles.spaced}>
           <AppText variant="body" color={palette.textMuted}>
@@ -275,7 +280,7 @@ export default function RecordScreen() {
       ) : null}
 
       {!archived && definition.kind === 'counter' && definition.quickOptions.length > 0 ? (
-        <Card title="快捷记录" subtitle="点一下记一条" style={styles.spaced}>
+        <Card title="快捷记录" style={styles.spaced}>
           <View style={styles.chipRow}>
             {definition.quickOptions.map((option) => (
               <Chip
@@ -299,7 +304,7 @@ export default function RecordScreen() {
           {definition.fields.length > 0 ? (
             <>
               <AppText variant="label" color={palette.textMuted} style={styles.fieldLabel}>
-                字段（记录本次选的值）
+                字段
               </AppText>
               {definition.fields.map((field) => (
                 <FieldValuePicker
@@ -314,7 +319,7 @@ export default function RecordScreen() {
           {definition.attributes.length > 0 ? (
             <>
               <AppText variant="label" color={palette.textMuted} style={styles.fieldLabel}>
-                属性（可多选，不选就只记数量）
+                属性（可选）
               </AppText>
               <View style={styles.chipRow}>
                 {definition.attributes.map((attribute) => (
@@ -344,9 +349,6 @@ export default function RecordScreen() {
 
           <View style={styles.toggleRow}>
             <Chip label="补录时间" selected={backfill} onPress={() => setBackfill((value) => !value)} />
-            <AppText variant="caption" color={palette.textMuted} style={styles.toggleHint}>
-              开启后可填写过去发生的时间
-            </AppText>
           </View>
 
           {backfill ? (
@@ -452,8 +454,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     marginBottom: spacing.md,
-  },
-  toggleHint: {
-    flexShrink: 1,
   },
 });

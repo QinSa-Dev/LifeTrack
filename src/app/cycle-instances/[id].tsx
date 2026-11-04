@@ -1,4 +1,4 @@
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
@@ -24,6 +24,7 @@ import {
 } from '@/domain/cycles';
 import type { CycleEntry, CycleInstance, EventDefinition } from '@/domain/models';
 import { localDateText } from '@/features/common/datetime';
+import { useGoBack } from '@/features/common/useGoBack';
 import {
   buildMonthGrid,
   clampMonthToRange,
@@ -83,7 +84,7 @@ function clampDate(date: string, startDate: string, endDate?: string): string {
  * - 月视图（`MonthCalendar`）点一天与点列表行是**同一个入口**：都填进同一个表单。
  */
 export default function CycleInstanceScreen() {
-  const router = useRouter();
+  const goBack = useGoBack();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { db } = useReadyDatabase();
 
@@ -330,7 +331,7 @@ export default function CycleInstanceScreen() {
             setError(null);
             new CycleInstanceRepository(db)
               .remove(instance.id)
-              .then(() => router.back())
+              .then(goBack)
               .catch((cause: unknown) => {
                 setError(cause instanceof Error ? cause.message : String(cause));
                 setDeletingInstance(false);
@@ -398,8 +399,7 @@ export default function CycleInstanceScreen() {
 
   if (instance === null) {
     return (
-      <Screen scroll contentStyle={styles.content}>
-        <Header title="周期记录" onBack={() => router.back()} />
+      <Screen scroll contentStyle={styles.content} header={<Header title="周期记录" onBack={goBack} />}>
         <EmptyState title="找不到这段周期" description="它可能已经被删除。" footnote={error ?? undefined} />
       </Screen>
     );
@@ -420,13 +420,17 @@ export default function CycleInstanceScreen() {
   const selectedDate = isValidIsoDate(form.date) ? form.date : undefined;
 
   return (
-    <Screen scroll contentStyle={styles.content}>
-      <Header
-        title={definition?.name ?? '周期记录'}
-        onBack={() => router.back()}
-        right={ongoing ? <Badge label="进行中" tone="success" /> : undefined}
-      />
-
+    <Screen
+      scroll
+      contentStyle={styles.content}
+      header={
+        <Header
+          title={definition?.name ?? '周期记录'}
+          onBack={goBack}
+          right={ongoing ? <Badge label="进行中" tone="success" /> : undefined}
+        />
+      }
+    >
       {flash ? (
         <Card style={styles.spaced}>
           <AppText variant="body" color={palette.success}>
@@ -459,7 +463,6 @@ export default function CycleInstanceScreen() {
           placeholder="2026-10-05"
           autoCapitalize="none"
           autoCorrect={false}
-          hint="越界会立刻提示，保存也会被拒绝。"
         />
         <View style={styles.actions}>
           <Button
@@ -495,7 +498,7 @@ export default function CycleInstanceScreen() {
         ) : null}
       </Card>
 
-      <Card title="月视图" subtitle="点一天填进下方表单" style={styles.spaced}>
+      <Card title="月视图" style={styles.spaced}>
         {month === '' ? (
           <ActivityIndicator color={palette.primary} />
         ) : (
@@ -521,7 +524,7 @@ export default function CycleInstanceScreen() {
       <Card title="每日记录" subtitle={`${entries.length} 条`} style={styles.spaced}>
         {entries.length === 0 ? (
           <AppText variant="caption" color={palette.textMuted}>
-            还没有记录。在下方选一天、填阶段与症状。
+            还没有记录。
           </AppText>
         ) : (
           entries.map((entry) => {
@@ -550,16 +553,11 @@ export default function CycleInstanceScreen() {
             );
           })
         )}
-        {entries.length > 0 ? (
-          <AppText variant="caption" color={palette.textMuted} style={styles.spacedTop}>
-            点行填进下方表单；删除是软删除，可在「时间轴 → 回收站」找回。
-          </AppText>
-        ) : null}
       </Card>
 
       {undoTarget ? (
         <UndoBar
-          message={`已删除 ${undoTarget.date} 的记录（可在「时间轴 → 回收站」找回）`}
+          message={`已删除 ${undoTarget.date} 的记录`}
           onUndo={undoRemoveEntry}
           onDismiss={() => setUndoTarget(null)}
           busy={restoring}

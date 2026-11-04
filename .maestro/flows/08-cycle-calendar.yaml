@@ -70,11 +70,18 @@ tags:
       - tapOn: '开始新周期'
 - assertVisible: '周期区间'
 
-# —— 月视图：默认停在今天所在的月，2026-10-02 这一格还没有记录 ——
+# —— 月视图：默认停在今天所在的月 → 往回翻到 2026 年 10 月（10-02 在这一屏）——
 - scrollUntilVisible:
     element:
       text: '月视图'
     direction: DOWN
+# 不能写死「点几次」：要翻几个月取决于跑流程的日子（2026-10 是写死的测试日期）。
+# 今天一定晚于 2026-10-05（各流程的前提），所以只会用到「上个月」。
+- repeat:
+    while:
+      notVisible: '2026 年 10 月'
+    commands:
+      - tapOn: '‹ 上个月'
 - assertVisible: '2026 年 10 月'
 - assertVisible: '.*日历 2026-10-02，无记录.*'
 - takeScreenshot: 08-calendar
@@ -148,11 +155,17 @@ tags:
     text: '删除'
     below:
       text: '每日记录'
-# 月视图在列表上方，先滚回去再断言（也在核对软删除之后格子确实变回了「无记录」）
+# 月视图在列表上方，先滚回去再断言（也在核对软删除之后格子确实变回了「无记录」）。
+# 注意：这一页是**重新进入**的，月视图默认又回到今天所在的月（11 月），要再翻回 10 月。
 - scrollUntilVisible:
     element:
       text: '月视图'
     direction: UP
+- repeat:
+    while:
+      notVisible: '2026 年 10 月'
+    commands:
+      - tapOn: '‹ 上个月'
 - assertVisible: '.*日历 2026-10-02，无记录.*'
 # 页头的「返回」也要先滚回视野：这一步页面刚滚过
 - scrollUntilVisible:

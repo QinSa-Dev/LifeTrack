@@ -1,16 +1,17 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 
 import { AppText, Button, Card, EmptyState, Header, Screen } from '@/components';
 import { useReadyDatabase } from '@/db';
 import type { EventDefinition } from '@/domain/models';
+import { useGoBack } from '@/features/common/useGoBack';
 import { EventDefinitionForm } from '@/features/definitions/EventDefinitionForm';
 import { EventDefinitionRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
 
 export default function EditEventScreen() {
-  const router = useRouter();
+  const goBack = useGoBack();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { db } = useReadyDatabase();
 
@@ -79,7 +80,7 @@ export default function EditEventScreen() {
             setError(null);
             new EventDefinitionRepository(db)
               .remove(definition.id)
-              .then(() => router.back())
+              .then(goBack)
               .catch((cause: unknown) => {
                 setError(cause instanceof Error ? cause.message : String(cause));
                 setBusy(false);
@@ -100,33 +101,36 @@ export default function EditEventScreen() {
 
   if (definition === null) {
     return (
-      <Screen scroll contentStyle={styles.content}>
-        <Header title="编辑事件" onBack={() => router.back()} />
+      <Screen scroll contentStyle={styles.content} header={<Header title="编辑事件" onBack={goBack} />}>
         <EmptyState title="找不到这个事件" description="它可能已经被删除。" footnote={error ?? undefined} />
       </Screen>
     );
   }
 
   return (
-    <Screen scroll contentStyle={styles.content}>
-      <Header
-        title="编辑事件"
-        onBack={() => router.back()}
-        right={
-          definition.isArchived ? (
-            <AppText variant="label" color={palette.warning}>
-              已归档
-            </AppText>
-          ) : undefined
-        }
-      />
-
+    <Screen
+      scroll
+      contentStyle={styles.content}
+      header={
+        <Header
+          title="编辑事件"
+          onBack={goBack}
+          right={
+            definition.isArchived ? (
+              <AppText variant="label" color={palette.warning}>
+                已归档
+              </AppText>
+            ) : undefined
+          }
+        />
+      }
+    >
       <EventDefinitionForm
         initial={definition}
         submitLabel="保存修改"
         onSubmit={async (draft) => {
           await new EventDefinitionRepository(db).update(definition.id, draft);
-          router.back();
+          goBack();
         }}
       />
 
