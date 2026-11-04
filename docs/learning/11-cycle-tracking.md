@@ -33,7 +33,7 @@
 2. **同一定义的周期实例不重叠**——否则「这是第几天」会含糊（见第 3.4 节）。
 3. **一天一条**——用 `UNIQUE(instance_id, date)` + UPSERT 从结构上保证（见第 3.5 节）。
 
-**后来补的增强**（本文档已同步，见第 4.2、4.8、4.11、4.12 节）：
+**后来补的增强**（本文档已同步，见第 4.2、4.8、4.10–4.12、4.14 节）：
 
 - 预测不再只看配置值：改成「最近若干段实际间隔的平均」，并把**依据**（算出来的 / 按配置推的）显示出来。
 - 预测的**窗口可调**：默认「最近 3 段」，可在「设置 → 偏好设置」里改成 1 / 3 / 5 段（第 4.11 节）。
@@ -41,6 +41,8 @@
   因此删掉了仓储里那个重复的只读查询 `listOutsideEntryDates`（规则只留一份）。
 - **重叠也提前提示**：改边界时若压到同一定义的另一段周期，保存前就点名是哪一段（第 4.12 节）。
 - **月视图（可点选的日历）**：实例页多了一张「月视图」卡片，点某一天 = 把那一天填进同一个表单（第 4.10 节）。
+- **自动循环的启动懒补齐**：打开 App 时把漏掉的后续段落补到今天；不生成第一段、只追加、
+  进行中停手，水位存 `app_meta`（第 4.14 节）。
 
 **当时明确不做、后来又做的**：日历式可点选的月视图（第 4.10 节）；按症状统计挂在统计侧，
 见 [12 统计](./12-statistics.md) 3.12 节。
@@ -60,6 +62,8 @@
 | `src/features/common/datetime.ts` | 功能组件 | 从 `features/records/datetime.ts` **移动**过来（周期也要用「今天」） |
 | `src/features/cycles/labels.ts` | 功能组件 | **新增**：文案与症状文本解析；后来 `describeLatestCycle` 接受窗口参数、新增 `describeOverlap`（重叠预演的文案） |
 | `src/features/cycles/predictionWindow.ts` | 功能组件 | **后来新增**：预测窗口这个**纯偏好**的取值选项 / 默认值 / 解析 / 文案（存 `app_meta`，**零迁移**；第 4.11 节） |
+| `src/features/cycles/autoFill.ts` | 功能组件 | **后来新增**：自动循环懒补齐的纯计划（`planAutoCycleFill`）+ 水位键 / 解析（第 4.14 节） |
+| `src/features/cycles/fillAutoCycles.ts` | 功能组件 | **后来新增**：把计划落库（`fillAutoCycles`），并以只增不减的方式推水位（`rememberAutoFillHorizon`） |
 | `src/features/cycles/CycleDefinitionForm.tsx` | 功能组件 | **新增**：新建 / 编辑周期定义共用表单 |
 | `src/app/(tabs)/cycles.tsx` | 页面 | **新增**：周期标签页（定义列表）；副标题里的预测按设置的窗口算 |
 | `src/app/cycles/new.tsx`、`src/app/cycles/[id].tsx` | 页面 | **新增**：新建定义 / 定义详情（周期列表、开始新周期、归档、删除） |
@@ -74,6 +78,10 @@
 > `src/app/cycles/new.tsx` 都不在了，`src/app/(tabs)/cycles.tsx` 也换成
 > `src/app/(tabs)/definitions.tsx`（底部由四标签变**四标签：时间轴 / 统计 / 事件 / 设置**）。
 > 上表保留的是这一项当时的样子。
+>
+> 第 4.14 节又新增了 `autoFill.ts` / `fillAutoCycles.ts`，并在 `DatabaseGate` 的启动任务里
+> 挂上懒补齐、在 `cycles/[id].tsx` 里顺手推水位；`cycle_instances` / `cycle_entries` 两张表
+> 与它们的区间 / 重叠 / 一天一条规则都没有变。
 
 ## 3. 相关技术概念
 
@@ -789,9 +797,8 @@ export const CYCLE_MODE_HINTS = {
   `/cycles/[id]` 里对 `kind !== 'cycle'` 的定义会兜底提示「这不是周期型事件」并给「去记录页」；
 - 新建事件时把类型点成「周期（有开始与结束）」，表单换成周期字段——**做法（自动循环 / 手动标记）
   各带一句上表的说明**；
-- **自动循环本轮只做「配置 + 生成下一段」**：内页出现「生成这一段」，点它用 `predictNextCycle`
-  算出下一段的开始 / 结束日一起写入，之后仍可手改；**不做后台自动写库**
-  （「到时间自动开始结束」这句说明是产品意图，实现留待以后）。
+- **自动循环当时只做「配置 + 生成下一段」**：内页出现「生成这一段」，点它按配置的周期长度
+  算出下一段的开始 / 结束日一起写入，之后仍可手改；**启动时懒补齐是后来补的**（第 4.14 节）。
 - 历史记录类型 `RecordKind` 仍保留 `counter` / `quantity`：老周期记录不受影响，
   本节只动了「定义」。
 
@@ -799,6 +806,164 @@ export const CYCLE_MODE_HINTS = {
 `EventDefinitionRepository` 建周期型定义（辅助函数 `createCycle`）；`migrations-test.ts` 的 v6 块
 覆盖「周期实例外键级联到 `event_definitions`」与「从 v5 升级时周期定义 / 实例 / 记录一条不少」；
 端到端 `05` / `07` / `08` / `10` 都改成「事件页 → 新建事件 → 类型选周期」。
+
+### 4.14 自动循环的「启动懒补齐」：只追加，不猜
+
+> 4.13 里的自动循环只有「配置 + 生成下一段」，4.13 末尾那句「到时间自动开始、自动结束」
+> 当时只是产品意图。这一节补上「打开 App 时按规律把漏掉的后续补上」。
+> **无新增迁移**：状态只用 `app_meta`。
+
+#### 为什么不是「后台定时任务」
+
+这是本地优先、没有服务端推送的 App：App 没打开时，没有任何代码在跑。所以「自动」只能落在
+**打开 App 的那一下**——启动时算一次、补一次，代价是「补」的时间点取决于用户下次打开，
+而不是精确到当天零点。对周期这种以「天」为粒度的功能，这个误差可以接受。
+
+#### 六条规则（先想清楚，再写库）
+
+1. **不生成第一段**：没有任何周期实例时停手。第一段仍由用户点「生成这一段」——
+   只是建了个定义就凭空开始一段周期，太意外。
+2. **只追加在最后一段之后**：从 `latest.startDate + averageCycleLengthDays` 接，
+   不从中间补洞，也不改任何已有段落的边界。
+3. **进行中的一段挡住补齐**：`endDate` 为空 = 进行中，不知道用户想让它哪天结束，
+   不替用户决定（手动型、以及自动型没配持续天数时都会是这种状态）。
+4. **补到今天为止**：候选开始日 ≤ 今天才落库；配置了持续天数时，一段的结束日 =
+   开始日 + 持续天数 - 1，最后一段盖住今天、或下一段开始日还在未来，就停。
+5. **幂等**：下一段永远从「最后一段的开始日 + 周期长度」算；没到 12 段上限时，
+   补完之后下次启动算出来的开始日必然在未来，不会重复。另有一条**只增不减的水位**（见下），
+   防止用户删掉自动补出的那段之后，下次启动又把它补回来。
+6. **不猜**：没有周期长度、定义已归档、区间会重叠（例如周期长度 ≤ 持续天数，
+   或用户手动插了一段）时都停下，不硬塞；每条定义每次启动最多补 **12 段**。
+
+#### 纯函数：计划与写库分开
+
+`src/features/cycles/autoFill.ts` 只算「这次要新建哪几段」，不碰数据库：
+
+```ts
+export function planAutoCycleFill(
+  definition: AutoFillDefinitionView,   // cycleMode / 两个长度 / isArchived
+  instances: readonly CycleInstance[],
+  today: IsoDate,
+  horizon?: IsoDate,                    // 已经补到哪一段的开始日
+  limit: number = AUTO_FILL_LIMIT,      // 默认 12
+): AutoFillPlan {
+  // 依次挡掉：不是自动型 / 已归档 / 没有第一段 / 最后一段进行中 / 没有周期长度
+  // 然后从 latest.startDate + interval 开始循环：
+  //   来到水位 → 停；来到未来 → 停；到上限 → 停；
+  //   和已有或本次计划中的区间重叠 → 停；
+  //   其余 push，配了持续天数就继续，没配就只放一段进行中的
+}
+```
+
+返回的 `reason`（`future` / `filled` / `horizon` / `overlap` / `limit` …）界面目前不展示，
+但测试与排查时能一眼看出「是补完了还是被什么挡住了」。
+
+#### 水位：为什么需要 `app_meta`
+
+幂等本身靠「从最后一段往后算」就够了，但它有一个洞：**用户删掉自动补出的那一段之后，
+最后一段退回上一段，下次启动又会把它补回来**——用户会以为「删不掉」。
+
+所以每条定义在 `app_meta` 里存一条水位：
+
+```ts
+autoFillHorizonKey(definitionId) // => `app.cycle_auto_filled.${definitionId}`
+```
+
+- 补出一段就把水位推到它的**开始日**；
+- 水位**只增不减**（`rememberAutoFillHorizon`）：手动补一段更早的周期，不会把水位退回去；
+- 用户在周期页点「生成这一段」或「开始新周期」时，也走同一个函数推水位（**第一段除外**，见下一条）——
+  所以「提前生成」的段落被删掉后，同样不会被启动补齐复活；
+- **第一段不写水位**：删掉它之后没有实例，懒补齐本来就不会凭空生成第一段；不写水位反而允许
+  用户先把第一段改到更早的日期，再靠启动补齐把漏掉的后续接上（这里踩过一次：
+  先按今天生成第一段、再改到过去，如果第一段也写了今天的水位，补齐就会被自己挡住）；
+- 读不懂（手改坏了 / 空串）就当没补过（`parseAutoFillHorizon`）——宁可多补一次，
+  不要因为一个脏值把自动循环卡死。
+
+> 代价：`app_meta` **不进备份**（它本来是安装时间 / 启动次数这类本机信息）。
+> 换机导入后水位从零开始，极端情况下「删掉自动段之后又换了设备」可能让它被补回。
+> 这是有意的取舍：为了一个防误删的水位去改备份格式，收益不抵成本。
+
+#### 写库：按定义隔离，失败不阻断启动
+
+`src/features/cycles/fillAutoCycles.ts` 负责把计划落库：
+
+```ts
+const autoDefinitions = (await new EventDefinitionRepository(db).list()) // 已排除归档
+  .filter((definition) => definition.kind === 'cycle' && definition.cycleMode === 'auto');
+for (const definition of autoDefinitions) {
+  try {
+    const existing = await instances.list({ definitionId });
+    const horizon = parseAutoFillHorizon(await meta.get(autoFillHorizonKey(definition.id)));
+    const plan = planAutoCycleFill(definition, existing, today, horizon, limit);
+    for (const segment of plan.segments) {
+      await instances.create({ definitionId, ...segment });
+      await rememberAutoFillHorizon(db, definition.id, segment.startDate);
+    }
+  } catch (cause) {
+    failures.push({ definitionId, name, message }); // 坏一条不影响其它条
+  }
+}
+```
+
+`DatabaseGate` 把它挂在启动任务链的末尾（记账 → 新库模板事件 → 懒补齐）：
+
+```ts
+repository
+  .ensureInstalledAt()
+  .then(() => repository.incrementLaunchCount())
+  .then(() => seedStarterDefinitions(...))
+  .then(() => fillAutoCycles(connection.db, localDateText(new Date())))
+  .then((outcome) => {
+    if (outcome.failures.length > 0) setBootWarning(...); // 黄色横幅，不阻断
+  });
+```
+
+注意它**没有等待渲染**：门禁放行后页面先出来，补齐在后台写。通常几毫秒就完成；
+如果用户正好在补齐完成前打开周期页，页面聚焦时的那次读取可能早一拍，切走再回来即可看到。
+（真要彻底消除，就得把「补齐」也挡在门禁之前，代价是每次启动都可能多等一次写库；不值得。）
+
+#### 「自动结束」为什么不需要一个任务
+
+自动型配了持续天数时，**创建那一段就把 `endDate` 写好了**（开始日 + 持续天数 - 1）。
+所以「到时间自动结束」是数据本身的事实，不需要后台去改一行：过了结束日，它自然不再是
+「今天所在的段」，下一段也可以在后续启动时继续补。真正会一直是「进行中」的只有两种：
+
+- 自动型但**没配持续天数**：不知道一段该多长，只补一段进行中的，之后必须用户自己结束；
+- 手动型、或用户在自动型里点了「开始新周期」：本来就是用户管开始 / 结束。
+
+这两种都命中规则 3（进行中停手），不会替用户乱补。
+
+#### 验证
+
+`autoFill-test.ts` 覆盖纯函数：不生成第一段、进行中停手、没有周期长度不猜、补到今天的多段、
+盖住今天就停、没配持续天数只补一段、水位挡住 / 水位在候选之前照常补、上限、区间重叠、
+中间被手动插入、水位键与脏值解析。
+
+`fillAutoCycles-test.ts` 用真实内存 SQLite 覆盖写库：多段补齐、再启动幂等、删掉最后一段
+不被补回、没有第一段不动、进行中挡住、手动型 / 已归档不参与、水位只增不减、坏数据只记在
+它自己名下（另一条定义照常补）。
+
+端到端也覆盖了：`.maestro/flows/12-cycle-auto-fill.yaml` 用 `evalScript` 算相对日期
+（今天 / 明天 / 21 天前 / 20 天前），建一条自动循环定义（间隔 7 天 / 持续 2 天）→ 生成第一段
+→ 改到 21 天前 → **冷启动** → `共 4 段` 且能看到 `今天 ~ 明天` → **再冷启动一次仍是 4 段**。
+**整套 13/13 通过（9m47s；`12` 1m15s / 单跑 59.7s）**（iPhone 16e / iOS 26.3 / Expo Go），
+跑完读库：4 段、水位 = 今天。用相对日期而不是写死日期，是为了不随日历漂移；定义名带时间戳，
+所以可以重复跑。
+
+第一遍 13 条是 **11/13**：`05` / `08` 点定义行时落到屏幕底部的 `统计` 标签（列表最后一行被
+tab bar 盖住，`scrollUntilVisible` 仍判它可见），给 `05` / `08` / `12` 的定义行滚动加
+`centerElement: true` 后整跑 **13/13**。这两处是流程漂移，**App 代码没改**。
+
+另外手工核对过「删掉最后一段后冷启动没有复活」（水位兜底）；这条由仓储单测
+（`fillAutoCycles-test` 的「删掉自动补出的最后一段后…」）与一次读库核对覆盖，流程 12 不测删除。
+
+#### 已知边界
+
+- 周期长度 ≤ 持续天数（区间必然重叠）时，补齐会**静默停下**（`reason: 'overlap'`），
+  界面不会弹警告；这是「不硬塞」的直接后果。要改的话，应该在定义表单里就拦住这个组合。
+- 一次最多 12 段：很久没打开且周期很短时，需要多启动几次才追平。
+- `app_meta` 水位不进备份（见上）。
+- 只在 iOS 模拟器上冷启动验证过；Android / 真机、以及组件级交互仍没有自动化。
 
 ## 6. 如何验证
 
@@ -840,6 +1005,21 @@ maestro test .maestro/flows      # 11/11 通过，6m47s（周期流程改成在�
 上原样整跑一遍：**11/11 通过，7m20s**（见 [08 事件定义](./08-event-definitions.md) 第 9.6 节、
 `.maestro/README.md` 的「跑完之后怎么核对」）。
 
+「自动循环懒补齐」（第 4.14 节，无迁移）之后重跑：
+
+```bash
+npm test    # 34 个套件 / 542 个用例通过（新增 autoFill / fillAutoCycles 两组）
+npx expo export --platform ios   # 通过（js bundle 3.2MB，没有新增原生依赖）
+maestro test .maestro/flows/12-cycle-auto-fill.yaml   # 单跑 59.7s
+maestro test .maestro/flows                            # 13/13，9m47s
+```
+
+这次新增了第 13 条流程 `12`（用 `evalScript` 算相对日期，避开「今天」漂移），整套 **13/13 通过**。
+第一遍是 **11/13**：`05` / `08` 点定义行时落到屏幕底部的 `统计` 标签（最后一行被 tab bar 盖住，
+`scrollUntilVisible` 仍判可见），给 `05` / `08` / `12` 的定义行滚动加 `centerElement: true` 后
+再整跑通过——**这是流程漂移，App 代码没改**。「删掉最后一段不复活」用「造库 + 冷启动 + 读库核对」
+单独手工核对过（见 4.14 的「验证」）。
+
 其中与周期直接相关的用例：
 
 - `src/domain/__tests__/dates-test.ts`：格式、闰年、2 月 31 日、跨月跨年、闭区间、进行中只约束下界；
@@ -855,6 +1035,12 @@ maestro test .maestro/flows      # 11/11 通过，6m47s（周期流程改成在�
   `describeOverlap` 带出撞上的那一段区间。
 - `src/features/cycles/__tests__/predictionWindow-test.ts`：选项是 `1 / 3 / 5`、默认 3、
   `parsePredictionWindow` 认识三种取值且不认识的一律回退、`describePredictionWindow` 的措辞。
+- `src/features/cycles/__tests__/autoFill-test.ts`：懒补齐的纯计划——不生成第一段、进行中停手、
+  没有周期长度不猜、一次补到今天的多段、盖住今天就停、没配持续天数只补一段、水位挡住 /
+  水位在候选之前照常补、上限、区间重叠、中间被手动插入；以及水位键与脏值解析。
+- `src/features/cycles/__tests__/fillAutoCycles-test.ts`：真实内存 SQLite 上的写库——多段补齐、
+  再启动幂等、删掉最后一段不被补回、没有第一段不动、进行中挡住、手动型 / 已归档不参与、
+  水位只增不减、坏数据只记在它自己名下（另一条定义照常补）。
 - `src/db/__tests__/migrations-test.ts`：v4 三表存在、两项 `CHECK`、`UNIQUE(instance_id, date)`、
   外键生效、级联删除、「记录与实例独立」；v1 升级只跑 v2 之后的迁移且旧数据不丢；
   v5 加上 `deleted_at` 列（可空、旧行为 NULL）、从 v4 旧库升级后老记录都在且都视为未删除；
@@ -904,6 +1090,9 @@ expect((await entries.listByInstance(created.id)).map((entry) => entry.date)).to
 - **「设置里改窗口 → 预测文案跟着变」也只有端到端覆盖**（Maestro `10`）：窗口的解析与文案是纯函数、
   有单测，但「在设置里点一下、切回周期页就不一样了」这条**跨页面 + 聚焦时重读**的链路，
   靠的是真机界面断言，没有组件级验证。
+- **启动懒补齐的流程 `12` 已在整套 13/13 里**（9m47s）：它用 `evalScript` 算相对日期，
+  避开了固定日期的漂移，代价是流程依赖设备时区与脚本里的日期算法一致。
+  「删掉最后一段不复活」没有进流程，只有仓储单测 + 一次手工读库核对。iOS 真机 / Android 也没跑。
 - **没有并发测试**：`withExclusiveTransactionAsync` 的行为在真实设备上与测试环境可能不同。
 
 ## 7. 常见问题与排查
