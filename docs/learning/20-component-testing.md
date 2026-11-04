@@ -155,7 +155,7 @@ Cannot find module 'expo-asset' from 'node_modules/expo-font/build/FontLoader.js
 ## 5. 怎么跑
 
 ```bash
-npm test                                  # 全部：39 个套件 / 572 个用例
+npm test                                  # 全部：41 个套件 / 586 个用例
 npm test -- src/components/__tests__      # 只跑组件测试
 npm run verify                            # typecheck + lint + test
 npm run format:check                      # 提交前
