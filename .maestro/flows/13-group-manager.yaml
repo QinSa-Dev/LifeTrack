@@ -1,0 +1,65 @@
+# 写入路径 13：分组管理（新建 / 改名 / 删除）—— 就地在「事件」页展开的卡片。
+#
+# 覆盖：
+#   1. 事件页顶部「分组」**就地展开**一张分组管理卡（按钮同时变成「收起分组」，不是跳页）；
+#   2. 新建：输入名称 → 回车即添加，列表里出现这一行；
+#   3. 改名：行内「改名」→ 预填名称 → 清空重填 → 回车保存，新名字出现在列表里
+#      （颜色与排序不应丢：`renameGroupInput` 会带全字段；界面新建的分组恒为无颜色 / 排序 0，
+#       所以这一条由纯函数单测钉住，流程读库只确认那一行还在、名字对）；
+#   4. 删除：行内「删除」→ 原生二次确认（弹窗点名「删除「…」」）→ 确认后那一行消失。
+#
+# 自产自销：本流程只动自己新建的「Maestro分组」，删除也由本流程完成，净值 0。
+# **行内按钮的可见文字都是「改名 / 删除」**，屏幕上同名按钮一多，全文匹配会撞车；
+# 所以 `GroupManager` 给它们加了带分组名的无障碍名字（`改名「…」` / `删除「…」`，
+# 读屏同样受益）。弹窗的确认按钮仍是「删除」，与行内那些「删除「…」」不同名。
+appId: host.exp.Exponent
+name: 13 分组 · 新建 / 改名 / 删除（就地展开）
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '时间轴, tab, 1 of 4'
+    timeout: 120000
+- tapOn: '.*事件, tab.*'
+- assertVisible: '+ 新建事件'
+
+# —— 就地展开 / 收起 ——
+- tapOn: '分组'
+- assertVisible: '新建分组'
+- assertVisible: '收起分组'
+- takeScreenshot: 13-group-open
+
+# —— 新建：输入名称后回车即添加 ——
+- tapOn: '例如：健康'
+- inputText: 'Maestro分组'
+- pressKey: Enter
+- assertVisible: 'Maestro分组'
+- takeScreenshot: 13-group-created
+
+# —— 改名：按钮的无障碍名字带分组名，屏幕上同名按钮多也不会点错 ——
+- tapOn: '改名「Maestro分组」'
+- assertVisible: '分组名称'
+# 输入框有预填值：点右侧让光标落到末尾，再往回删（同 02 的日期框）
+- tapOn:
+    text: 'Maestro分组'
+    point: 95%, 50%
+- eraseText: 20
+- inputText: 'Maestro分组改名'
+- pressKey: Enter
+- assertVisible: 'Maestro分组改名'
+- assertNotVisible: 'Maestro分组'
+- takeScreenshot: 13-group-renamed
+
+# —— 删除：行内「删除「…」」→ 二次确认点「删除」（与行内文案不同名）——
+- tapOn: '删除「Maestro分组改名」'
+- assertVisible: '删除分组'
+- assertVisible: '.*删除「Maestro分组改名」不会删除事件.*'
+- takeScreenshot: 13-group-confirm
+- tapOn: '删除'
+- assertNotVisible: 'Maestro分组改名'
+# 卡片还在（只是删了其中一行），按钮仍是「收起分组」
+- assertVisible: '收起分组'
+- takeScreenshot: 13-group-deleted
