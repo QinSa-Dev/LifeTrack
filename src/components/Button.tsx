@@ -15,6 +15,11 @@ export interface ButtonProps {
   size?: ButtonSize;
   disabled?: boolean;
   testID?: string;
+  /**
+   * 读屏时念出来的名字。可见文字保持不变，只在需要补充上下文时才传
+   * （例如列表行里的「改名 / 删除」要说清是哪一行）。
+   */
+  accessibilityLabel?: string;
   style?: ViewStyle;
 }
 
@@ -44,6 +49,7 @@ export function Button({
   size = 'md',
   disabled = false,
   testID,
+  accessibilityLabel,
   style,
 }: ButtonProps) {
   const colors = TONES[tone];
@@ -52,6 +58,7 @@ export function Button({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}

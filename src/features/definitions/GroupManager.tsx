@@ -139,8 +139,15 @@ export function GroupManager({ groups, onChanged }: GroupManagerProps) {
               title={group.name}
               right={
                 <>
+                  {/*
+                    一行一个「改名 / 删除」，可见文字必然重复。读屏与端到端都要知道
+                    「点的是哪个分组」，所以无障碍名字补上分组名（可见文字不动，和 README 里
+                    「【+1】是通用标识」是同一类取舍）。删除确认框的按钮仍是「删除」，
+                    与这里的「删除「…」」不同名。
+                  */}
                   <Button
                     label="改名"
+                    accessibilityLabel={`改名「${group.name}」`}
                     tone="secondary"
                     size="sm"
                     onPress={() => startEdit(group)}
@@ -148,6 +155,7 @@ export function GroupManager({ groups, onChanged }: GroupManagerProps) {
                   />
                   <Button
                     label="删除"
+                    accessibilityLabel={`删除「${group.name}」`}
                     tone="danger"
                     size="sm"
                     onPress={() => confirmRemove(group)}
