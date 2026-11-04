@@ -1,0 +1,122 @@
+appId: host.exp.Exponent
+name: 12 周期 · 自动循环启动懒补齐
+---
+# 步骤：
+#   建一条自动循环定义（间隔 7 天 / 持续 2 天）→ 生成第一段（今天）→ 把第一段改到 21 天前
+#   → 冷启动（启动时补齐）→ 应多出 14 天前 / 7 天前 / 今天三段，共 4 段
+#   → 再冷启动一次 → 仍是 4 段（幂等）
+#
+# 为什么用相对日期（evalScript 算今天 / 明天 / 21 天前）：这个功能依赖「今天」与历史段落的
+# 关系，写死日期会随日历漂移。定义名也带时间戳，所以可以重复跑、每次互不干扰。
+#
+# 为什么第一段不写水位：见 docs/learning/11 的 4.14 节——否则「生成在今天、再改到过去」
+# 会被自己的水位挡住，补不齐。这条流程也顺带钉住那个行为。
+#
+# 副作用：留下一个 `Maestro自动补齐<时间戳>` 定义 + 4 段周期；收尾 SQL 见 .maestro/README.md。
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '.*时间轴, tab.*'
+    timeout: 120000
+
+# 相对日期：今天 / 明天 / 21 天前 / 20 天前
+- evalScript: ${(() => { const f = (x) => x.getFullYear() + '-' + ('0' + (x.getMonth() + 1)).slice(-2) + '-' + ('0' + x.getDate()).slice(-2); const d = (n) => f(new Date(Date.now() + n * 86400000)); output.today = d(0); output.tomorrow = d(1); output.past21 = d(-21); output.past20 = d(-20); output.name = 'Maestro自动补齐' + Date.now(); })()}
+
+# —— 建定义：自动循环，间隔 7 天，持续 2 天 ——
+- tapOn: '.*事件, tab.*'
+- assertVisible: '+ 新建事件'
+- tapOn: '+ 新建事件'
+- assertVisible: '例如：喝水'
+- tapOn: '例如：喝水'
+- inputText: '${output.name}'
+- pressKey: Enter
+- tapOn: '周期（有开始与结束）'
+- tapOn: '自动循环'
+- tapOn: '例如：28'
+- inputText: '7'
+- pressKey: Enter
+- tapOn: '例如：5'
+- inputText: '2'
+- pressKey: Enter
+- scrollUntilVisible:
+    element:
+      text: '创建'
+    direction: DOWN
+- tapOn: '创建'
+- scrollUntilVisible:
+    element:
+      text: '.*${output.name}.*'
+    direction: DOWN
+    centerElement: true
+- tapOn: '.*${output.name}.*'
+- assertVisible: '定义信息'
+
+# —— 第一段：今天生成，再改到 21 天前 ——
+- scrollUntilVisible:
+    element:
+      text: '生成这一段'
+    direction: DOWN
+- tapOn: '生成这一段'
+- assertVisible: '周期区间'
+- tapOn: '${output.today}'
+- eraseText: 12
+- inputText: '${output.past21}'
+- pressKey: Enter
+- scrollUntilVisible:
+    element:
+      text: '结束日期（留空表示进行中）'
+    direction: UP
+- tapOn: '${output.tomorrow}'
+- eraseText: 12
+- inputText: '${output.past20}'
+- pressKey: Enter
+- tapOn: '保存边界'
+- assertVisible: '.*${output.past21}.*'
+- takeScreenshot: 12-first-segment-edited
+
+# 回事件页：实例页 → 定义页 → 事件页
+- tapOn: '返回'
+- tapOn: '返回'
+
+# —— 冷启动：启动时应补出 14 天前 / 7 天前 / 今天三段 ——
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '.*时间轴, tab.*'
+    timeout: 120000
+- tapOn: '.*事件, tab.*'
+- scrollUntilVisible:
+    element:
+      text: '.*${output.name}.*'
+    direction: DOWN
+    centerElement: true
+- tapOn: '.*${output.name}.*'
+- extendedWaitUntil:
+    visible: '共 4 段'
+    timeout: 15000
+- scrollUntilVisible:
+    element:
+      text: '.*${output.today} ~ ${output.tomorrow}.*'
+    direction: DOWN
+- assertVisible: '.*${output.today} ~ ${output.tomorrow}.*'
+- takeScreenshot: 12-auto-filled
+
+# —— 再冷启动一次：幂等，仍是 4 段 ——
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '.*时间轴, tab.*'
+    timeout: 120000
+- tapOn: '.*事件, tab.*'
+- scrollUntilVisible:
+    element:
+      text: '.*${output.name}.*'
+    direction: DOWN
+    centerElement: true
+- tapOn: '.*${output.name}.*'
+- extendedWaitUntil:
+    visible: '共 4 段'
+    timeout: 15000

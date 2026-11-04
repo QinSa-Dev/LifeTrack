@@ -6,7 +6,7 @@ import { AppText, Badge, Button, Card, EmptyState, Header, ListRow, Screen, Text
 import { META_KEYS, useReadyDatabase } from '@/db';
 import { addDays } from '@/domain/dates';
 import { instanceLengthDays, latestInstance, nextAutoCycleSegment, predictNextCycle } from '@/domain/cycles';
-import type { CycleEntry, CycleInstance, EventDefinition } from '@/domain/models';
+import type { CycleEntry, CycleInstance, EventDefinition, IsoDate } from '@/domain/models';
 import { EventDefinitionForm } from '@/features/definitions/EventDefinitionForm';
 import {
   CYCLE_MODE_HINTS,
@@ -14,6 +14,7 @@ import {
   describeCycleDefinition,
   describePrediction,
 } from '@/features/cycles/labels';
+import { rememberAutoFillHorizon } from '@/features/cycles/fillAutoCycles';
 import { DEFAULT_PREDICTION_WINDOW_SETTING, parsePredictionWindow } from '@/features/cycles/predictionWindow';
 import { SymptomStatsCard } from '@/features/cycles/SymptomStatsCard';
 import { localDateText } from '@/features/common/datetime';
@@ -38,8 +39,8 @@ function maxIsoDate(a: string, b: string): string {
  *
  * 两种做法各有一套入口：
  * - 手动标记：自己填开始日点「开始新周期」，结束在某一段里点；
- * - 自动循环：按配置好的规律算出下一段，点「生成这一段」把它落库
- *   （本轮只做「配置 + 生成下一段」，不做后台自动写库）。
+ * - 自动循环：按配置好的规律算下一段。启动时会把漏掉的后续段落补到今天
+ *   （`fillAutoCycles`），这里也能点「生成这一段」提前生成。
  */
 export default function CycleEventScreen() {
   const router = useRouter();
@@ -191,15 +192,31 @@ export default function CycleEventScreen() {
     router.push({ pathname: '/cycle-instances/[id]', params: { id: instance.id } });
   };
 
+  /** 自动型：记下「已经生成到哪一段」，删掉它之后下次启动不会又被补回来。 */
+  const rememberAutoFill = (startDate: IsoDate) => {
+    if (cycleMode !== 'auto') {
+      return;
+    }
+    rememberAutoFillHorizon(db, definition.id, startDate).catch(() => undefined);
+  };
+
   const startNewCycle = () => {
     if (busy) {
       return;
     }
     setBusy(true);
     setError(null);
+    const isFirstCycle = instances.length === 0;
     new CycleInstanceRepository(db)
       .create({ definitionId: definition.id, startDate: newStart })
-      .then(openInstance)
+      .then((instance) => {
+        // 第一段不写水位：删掉它之后没有实例，懒补齐本来也不会凭空生成第一段；
+        // 不写水位反而允许「先把第一段改到更早，再靠启动补齐把后续接上」。
+        if (!isFirstCycle) {
+          rememberAutoFill(instance.startDate);
+        }
+        openInstance(instance);
+      })
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause));
       })
@@ -221,7 +238,13 @@ export default function CycleEventScreen() {
         startDate: autoSegment.startDate,
         endDate: autoSegment.endDate,
       })
-      .then(openInstance)
+      .then((instance) => {
+        // 第一段（basis === 'first'）不写水位，理由同「开始新周期」。
+        if (autoSegment.basis === 'scheduled') {
+          rememberAutoFill(instance.startDate);
+        }
+        openInstance(instance);
+      })
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause));
       })
@@ -289,7 +312,7 @@ export default function CycleEventScreen() {
       )}
 
       {cycleMode === 'auto' ? (
-        <Card title="自动循环：生成下一段" subtitle="算出下一段，由你确认" style={styles.spaced}>
+        <Card title="自动循环：生成下一段" subtitle="到期自动补，也可现在生成" style={styles.spaced}>
           <AppText variant="body" color={palette.textMuted}>
             {describeAutoSegment(autoSegment)}
           </AppText>

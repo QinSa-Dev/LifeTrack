@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
+import { fillAutoCycles } from '@/features/cycles/fillAutoCycles';
+import { localDateText } from '@/features/common/datetime';
 import { seedStarterDefinitions } from '@/features/definitions/starterDefinitions';
 import { MetaRepository } from '@/repositories';
 import { palette, spacing } from '@/theme';
@@ -22,9 +24,10 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
 
   /*
     启动时该做的事：① 记账（安装时间 / 启动次数，写 app_meta）；
-    ② **只在数据库刚创建时**内置一个参考模板事件（见 features/definitions/starterDefinitions.ts）。
+    ② **只在数据库刚创建时**内置一个参考模板事件（见 features/definitions/starterDefinitions.ts）；
+    ③ 把自动循环事件漏掉的后续段落补到今天（见 features/cycles/fillAutoCycles.ts）。
 
-    两件事都属于「便利」，失败**不阻断启动**，只在顶部挂一条黄色警告横幅。
+    三件事都属于「便利」，失败**不阻断启动**，只在顶部挂一条黄色警告横幅。
   */
   useEffect(() => {
     if (status !== 'ready' || !connection) {
@@ -36,6 +39,13 @@ export function DatabaseGate({ children }: { children: ReactNode }) {
       .ensureInstalledAt()
       .then(() => repository.incrementLaunchCount())
       .then(() => seedStarterDefinitions(connection.db, { freshDatabase: connection.migration.from === 0 }))
+      .then(() => fillAutoCycles(connection.db, localDateText(new Date())))
+      .then((outcome) => {
+        const failure = outcome.failures[0];
+        if (!cancelled && failure !== undefined) {
+          setBootWarning(`自动补齐周期「${failure.name}」失败：${failure.message}`);
+        }
+      })
       .catch((cause: unknown) => {
         if (!cancelled) {
           setBootWarning(cause instanceof Error ? cause.message : String(cause));
