@@ -419,6 +419,63 @@ async update(id: string, input: EventRecordEditInput): Promise<EventRecord> {
 于是抽了一个子流程 `use-expanded-view.yaml`，先绕到设置里钉成「逐条」再回来。
 （第 6 节的验证清单、`09` 的合并断言都据此更新过。）
 
+### 4.10 工具条搬出列表：条数 / 筛选 / 回收站要一直点得到
+
+筛选项、排序、回收站原先都长在 `FlatList` 的 `ListHeaderComponent` 里——**它们会跟着列表滚走**。
+列表一长，想换个筛选得先滚回顶部；滚到一半点「筛选」，面板却在上面看不见，像点了没反应。
+
+现在拆成两层：
+
+- **工具条**（`styles.toolbar`）在 `FlatList` **外面**：左边一句「最近 N 条 / 筛出 N 条 · M 个事件」，
+  右边两颗胶囊按钮「筛选」「回收站」（`Pressable` + 图标 + 文案，`borderRadius: pill`）。
+  浅灰底 + 一条发丝线，和正文分开——工具不混进卡片流里。
+- **筛选面板**仍在列表顶部（`ListHeaderComponent`），因为它是「展开后要看着列表变化」的东西；
+  打开时如果已经滚到下面，先把列表滚回顶部：
+
+  ```ts
+  useEffect(() => {
+    if (panelOpen) {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    }
+  }, [panelOpen]);
+  ```
+
+- **摘要条**（查询不是默认值时出现的 `筛选 … · 按次数` + 「清空筛选 / 还原排序」）也放在列表外面，
+  和工具条一起固定——它说明「现在在看什么」，跟着滚走就失去了提示作用。
+
+「筛选」按钮用三种状态表示自己：面板展开 **或** 筛选生效时，图标从描边变实心、底色变浅蓝
+（`filterOn = panelOpen || filterActive`）；只展开面板但没设条件时也算「在用」，否则用户看不出
+自己点开过它。
+
+代价：工具条占掉固定高度，列表首屏能看到的行少了一点；换来的是**任何滚动位置都能换筛选 / 进回收站**。
+
+### 4.11 页头固定，返回不再「滚着滚着就没了」
+
+详情页的内容很长（快照 + 改 / 删 / 撤销 + 最近记录），原先 `Header` 是 `ScrollView` 的第一个孩子，
+**返回箭头会跟着内容滚出屏幕**；用户往下翻几屏想退出去，只能先一路滚回顶部。
+
+现在 `Screen` 收了一个 `header` prop，把页头渲染在 `ScrollView` **外面**（见 `02` 的第 4.2 节）：
+
+```tsx
+<Screen
+  scroll
+  contentStyle={styles.content}
+  header={<Header title={record.snapshot.name} onBack={goBack} />}
+>
+```
+
+- 页头自带一条极细的分隔线（`hairlineWidth`），不画成卡片——它只是「浮在内容之上」。
+- 页头右侧的按钮（如「编辑定义」）也跟着固定；但**仍然不能放到最右上角**，Expo Go 的浮球还在那里（见 `HANDOFF.md` 第 10 节）。
+- 标签页不传 `header`，顶部交给 Tabs 导航栏；它们传 `edges={['left', 'right']}`，否则会多出一截顶部留白。
+
+**深链兜底**：通知 / 备份链接可能直接把二级页面打开，此时栈里没有上一层，`router.back()` 什么都不做。
+所以二级页面统一改用 `useGoBack()`（`src/features/common/useGoBack.ts`）：能回就回，回不去就
+`router.replace('/')` —— 用户不会遇到「返回键坏了」。
+
+这个改动对 Maestro 有直接影响：以前流程用 `scrollUntilVisible: 返回` 当「滚回顶部」，
+页头固定后它**立刻就能匹配、不会滚动**。所以 02 / 03 改成直接滚到要断言的横幅
+（如「这条记录已删除」），别再拿「返回」当滚动目标。
+
 ## 5. 一次完整数据流：点一下【+1】
 
 前提：时间轴「逐条」视图，第一行是「喝水 +1」（`10-22 18:20 · 手动`）。

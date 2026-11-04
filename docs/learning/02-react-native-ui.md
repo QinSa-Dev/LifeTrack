@@ -181,12 +181,15 @@ fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'mono
 **用在哪个真实文件**：`src/components/Screen.tsx`：
 
 ```tsx
-<SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+<SafeAreaView style={styles.safeArea} edges={edges}>
 ```
+
+`edges` 由调用方传，默认 `['top', 'left', 'right']`（二级页面用自绘页头，顶部要留出来）；
+**标签页**传 `['left', 'right']`——顶部安全区已经由 Tabs 的导航栏处理，再要一次就会多出一截空白。
 
 **不用会怎样**：文字顶到状态栏里，或者内容被刘海遮挡。
 
-**容易误解的地方**：这里 `edges` **故意不包含 `'bottom'`**。因为底部已经被标签栏占据，如果再加底部安全区，页面内容和标签栏之间会多出一段空白。
+**容易误解的地方**：`edges` **故意不包含 `'bottom'`**。因为底部已经被标签栏占据，如果再加底部安全区，页面内容和标签栏之间会多出一段空白。
 
 ## 4. 关键代码逐段解释
 
@@ -219,29 +222,40 @@ export function AppText({ variant = 'body', color = palette.text, style, ...rest
 
 **容易误解的地方**：`{ color }` 是 `{ color: color }` 的简写。这里写成一个独立对象而不是放进 `typography`，是因为 `typography` 只放「不随调用方变化的排版」，颜色是每次调用都可能不同的。
 
-### 4.2 `Screen`：一个组件管两种布局
+### 4.2 `Screen`：一个组件管两种布局 + 固定页头
 
 ```tsx
-export function Screen({ children, scroll = false, padded = true, contentStyle }: ScreenProps) {
+export function Screen({
+  children,
+  header,
+  scroll = false,
+  padded = true,
+  contentStyle,
+  edges = ['top', 'left', 'right'],
+}: ScreenProps) {
   const paddingStyle = padded ? styles.padded : undefined;
 
-  if (scroll) {
-    return (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <ScrollView
-          style={styles.flex}
-          contentContainerStyle={[styles.scrollContent, paddingStyle, contentStyle]}
-          keyboardShouldPersistTaps="handled"
-        >
-          {children}
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
+  const body = scroll ? (
+    <ScrollView
+      style={styles.flex}
+      contentContainerStyle={[styles.scrollContent, paddingStyle, contentStyle]}
+      keyboardShouldPersistTaps="handled"
+    >
+      {children}
+    </ScrollView>
+  ) : (
+    <View style={[styles.flex, paddingStyle, contentStyle]}>{children}</View>
+  );
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <View style={[styles.flex, paddingStyle, contentStyle]}>{children}</View>
+    <SafeAreaView style={styles.safeArea} edges={edges}>
+      {header ? (
+        <View style={styles.header}>
+          <View style={[styles.headerContent, paddingStyle]}>{header}</View>
+          <View style={styles.divider} />
+        </View>
+      ) : null}
+      {body}
     </SafeAreaView>
   );
 }
@@ -249,8 +263,11 @@ export function Screen({ children, scroll = false, padded = true, contentStyle }
 
 - `scroll` 决定内容溢出屏幕时能不能滚动：设置页内容很长，必须能滚；加载中的页面只有一行字，不需要。
 - `padded` 只做一件事：要不要给左右加内边距。
-- `contentStyle` 是「逃生舱」：调用方可以再追加样式。三个页面都传了 `{ paddingTop: spacing.lg }`，因为它们的标题是卡片而不是导航栏标题，需要和状态栏拉开一点距离。
+- `contentStyle` 是「逃生舱」：调用方可以再追加样式。
 - `keyboardShouldPersistTaps="handled"`：键盘弹出时点击按钮第一次不会被吞掉。现在还没有输入框，这是为第二阶段表单预留的。
+- `header` 是**固定的页头**（`Header`），渲染在 `ScrollView` **外面**——二级页面的「返回」必须一直点得到，
+  不能滚两下就跟着内容跑出屏幕（见 `04` 与 `16` 的相关章节）。
+- `edges` 交给调用方：标签页传 `['left', 'right']`（顶部安全区由 Tabs 导航栏处理），二级页面用默认值。
 
 **为什么不用两个组件（`ScrollScreen` / `StaticScreen`）**：那会让调用方在「传不传 `scroll`」和「用哪个组件」之间做冗余选择，而且两者 95% 的结构相同。一个 `scroll` 布尔值更简单。
 
@@ -445,7 +462,8 @@ npm start           # 肉眼验证渲染
 
 **原因**：某个屏幕没有用 `Screen` 包裹，或者自己写了 `edges` 覆盖。
 
-**排查顺序**：确认页面最外层是 `Screen`；确认没有把 `edges` 里的 `'top'` 去掉。
+**排查顺序**：确认页面最外层是 `Screen`；确认 `edges` 没把 `'top'` 去掉——**标签页除外**，
+标签页的顶部安全区由 Tabs 导航栏处理，那里本来就不该传 `'top'`（传了会多出空白）。
 
 ### 问题：Android 和 iOS 显示不一致（间距、字体、阴影）
 
