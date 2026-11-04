@@ -50,6 +50,7 @@ tags:
     element:
       text: '.*Maestro周期.*'
     direction: DOWN
+    centerElement: true
 - tapOn: '.*Maestro周期.*'
 - assertVisible: '定义信息'
 - takeScreenshot: 05-definition
