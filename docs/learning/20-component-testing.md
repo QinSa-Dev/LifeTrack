@@ -6,7 +6,7 @@
 
 - 用 `npm test` 跑组件测试：**11 个套件 / 57 个用例**，和原有单元测试一起约 3 秒跑完。
 - 覆盖十一块界面规则：通用按钮、时间轴单条记录行、合并行、筛选与排序面板、周期月视图、
-  自定义字段取值、撤销提示条、症状统计卡片、记账的年月选择 / 列表行 / 底部表单。
+  自定义字段取值、撤销提示条、症状统计卡片、记账的顶部时间 / 列表行 / 底部表单。
 - 只跑其中一块：`npm test -- src/features/ledger/__tests__/ledgerEntryForm-test.tsx`。
 
 **解决了什么问题**
@@ -42,8 +42,8 @@
 | `src/features/records/__tests__/fieldValuePicker-test.tsx` | `FieldValuePicker` | 单选互斥、多选叠加、时间点输入、时间段两头各改一头、清空回到空数组 |
 | `src/features/records/__tests__/undoBar-test.tsx` | `UndoBar` | 撤销 / 关闭两个出口、撤销中改文案并双双禁用 |
 | `src/features/cycles/__tests__/symptomStatsCard-test.tsx` | `SymptomStatsCard` | 无记录 / 有记录无症 / 按天数排序与百分比 / 只列前 N 种 / 软删除不计入 |
-| `src/features/ledger/__tests__/monthPicker-test.tsx` | `MonthPicker` | 年标题、12 个月胶囊、当前月选中、点月只换月、年份箭头逐年翻 |
-| `src/features/ledger/__tests__/ledgerEntryRow-test.tsx` | `LedgerEntryRow` | 备注 / 时间 / 带符号金额、无备注回落到方向、复制 / 删除各走各的回调 |
+| `src/features/ledger/__tests__/monthPicker-test.tsx` | `MonthPicker` | 右侧年份、月份下拉默认收起、展开后 12 个月、当前月选中、点月只换月、年份箭头逐年翻 |
+| `src/features/ledger/__tests__/ledgerEntryRow-test.tsx` | `LedgerEntryRow` | 备注 / 时间 / 带符号金额、无备注回落到方向、复制 / 删除各走各的回调（未激活的一侧对读屏隐藏） |
 | `src/features/ledger/__tests__/ledgerEntryForm-test.tsx` | `LedgerEntryForm` | 空金额拦截、元转分、支出 / 收入切换、输入清洗、提交失败留在表单、取消 |
 | `jest.setup.ts` | Jest 全局准备 | 把 `@expo/vector-icons/Ionicons` 换成空组件，避免单测环境没有 asset registry 时字体加载报错（见 3.7） |
 | `src/features/records/__tests__/fixtures.ts` | 测试夹具 | 固定时间戳 + `makeRecord` / `makeGroup`；不是测试文件，不会被 `testMatch` 当用例 |
@@ -190,8 +190,8 @@ jest.mock('@expo/vector-icons/Ionicons', () => {
 | `fieldValuePicker-test.tsx` | 7 | 单选 / 多选 / 时间点 / 时间段的取值与回调 |
 | `undoBar-test.tsx` | 3 | 两个出口互不串台、撤销中改为「撤销中…」并禁用 |
 | `symptomStatsCard-test.tsx` | 5 | 三种空态、按天数排序与百分比、只列前 N 种、软删除不计入 |
-| `monthPicker-test.tsx` | 3 | 年标题、12 个月、当前月选中、点月只换月、年份箭头 |
-| `ledgerEntryRow-test.tsx` | 3 | 备注 / 时间 / 带符号金额、无备注回落到方向、复制 / 删除回调 |
+| `monthPicker-test.tsx` | 3 | 右侧年份、月份下拉默认收起、展开后 12 个月、当前月选中、点月只换月、年份箭头 |
+| `ledgerEntryRow-test.tsx` | 3 | 备注 / 时间 / 带符号金额、无备注回落到方向、复制 / 删除回调（未激活的一侧对读屏隐藏） |
 | `ledgerEntryForm-test.tsx` | 6 | 空金额、元转分、方向切换、输入清洗、提交失败、取消 |
 
 合计 **11 个套件 / 57 个用例**。
@@ -212,7 +212,7 @@ jest.mock('@expo/vector-icons/Ionicons', () => {
 ## 5. 怎么跑
 
 ```bash
-npm test                                  # 全部：51 个套件 / 648 个用例
+npm test                                  # 全部：51 个套件 / 650 个用例
 npm test -- src/components/__tests__      # 只跑组件测试
 npm test -- src/features/ledger/__tests__ # 只跑记账相关
 npm run verify                            # typecheck + lint + test

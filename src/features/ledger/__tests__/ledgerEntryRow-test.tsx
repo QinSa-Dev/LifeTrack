@@ -23,7 +23,7 @@ describe('<LedgerEntryRow />', () => {
 
     expect(screen.getByText('上班地铁')).toBeOnTheScreen();
     expect(screen.getByText('-¥3.60')).toBeOnTheScreen();
-    expect(screen.getByText(/^11-05/)).toBeOnTheScreen();
+    expect(screen.getByText(/^\d{2}:\d{2}$/)).toBeOnTheScreen();
   });
 
   test('没有备注时用方向当标题，收入带正号', async () => {
@@ -39,16 +39,21 @@ describe('<LedgerEntryRow />', () => {
     expect(screen.getByText('+¥100.00')).toBeOnTheScreen();
   });
 
-  test('左滑后的「复制 / 删除」各走各的回调，名字里带上这一条', async () => {
+  test('左滑复制、右滑删除各走各的回调，名字里带上这一条', async () => {
     const onCopy = jest.fn();
     const onDelete = jest.fn();
     await render(<LedgerEntryRow entry={makeEntry()} onCopy={onCopy} onDelete={onDelete} />);
 
-    await fireEvent.press(screen.getByRole('button', { name: '复制「上班地铁」' }));
+    // 未滑动时两个动作对读屏隐藏；组件测试直接取隐藏节点验证回调。
+    await fireEvent.press(
+      screen.getByRole('button', { name: '复制「上班地铁」', includeHiddenElements: true }),
+    );
     expect(onCopy).toHaveBeenCalledTimes(1);
     expect(onDelete).not.toHaveBeenCalled();
 
-    await fireEvent.press(screen.getByRole('button', { name: '删除「上班地铁」' }));
+    await fireEvent.press(
+      screen.getByRole('button', { name: '删除「上班地铁」', includeHiddenElements: true }),
+    );
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 });

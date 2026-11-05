@@ -1,7 +1,7 @@
 /**
  * 记账页的「年 / 月」选择（纯函数）。
  *
- * 为什么不用字符串 `YYYY-MM` 当状态：年、月要分别给「年份标题」和「月份胶囊」用，
+ * 为什么不用字符串 `YYYY-MM` 当状态：年、月要分别给「年份」和「月份下拉」用，
  * 跨年时还要让两者一起变；拆成两个数字最不容易算错。
  * 月份从 **1** 开始（跟界面一致），不是 JS `Date` 的 0 起。
  */
@@ -21,7 +21,7 @@ export function sameYearMonth(a: YearMonth, b: YearMonth): boolean {
   return a.year === b.year && a.month === b.month;
 }
 
-/** 只平移年（月份保持不变）；跨年由月份胶囊负责。 */
+/** 只平移年（月份保持不变）；换月由月份下拉负责。 */
 export function shiftYear(value: YearMonth, offset: number): YearMonth {
   return { year: value.year + offset, month: value.month };
 }
@@ -47,5 +47,5 @@ export function monthLabel(month: number): string {
   return `${month} 月`;
 }
 
-/** 12 个月，给界面一次摆出来。 */
+/** 12 个月，给月份下拉用。 */
 export const MONTHS: readonly number[] = Array.from({ length: 12 }, (_, index) => index + 1);

@@ -1,4 +1,4 @@
-# 22 记账：记一笔、按月看、左滑复制
+# 22 记账：记一笔、按天分组、左滑复制 / 右滑删除
 
 > 这一篇讲第五个标签页「记账」。它和前面的事件记录是**两套数据**：事件记录回答「今天做了什么」，
 > 记账回答「今天花了 / 赚了多少」。两者共用本地 SQLite 与同一套备份，但表、规则、页面都独立。
@@ -6,16 +6,17 @@
 ## 1. 本次完成什么
 
 - 底部新增第五个标签页「记账」（默认顺序：时间轴 → 记账 → 统计 → 事件 → 设置）。
-- 页面顶部是**年份**（左右箭头逐年翻），下面一次摆出 **12 个月**，默认当前月，点一下就换月。
-- 月份下面是当月的**支出 / 收入 / 结余**合计。
+- 页面顶部是**一行**：左边当月支出 / 收入 / 结余合计，右边是时间块——上面年份（左右箭头逐年翻），
+  下面月份下拉（默认当前月，点一下才展开 12 个月，选完自动收起）。
+- 记录按**设备本地日期**分组：组标题 `YYYY-MM-DD`，组与组之间留一段空白；行内时间只显示 `HH:mm`。
 - 右下角「记一笔」打开表单：支出 / 收入二选一、金额（数字键盘、最多两位小数）、备注（可空）。
 - 保存后**立即**出现在列表里，不需要刷新。
-- 列表行**左滑**露出「复制 / 删除」：
+- 列表行**左滑复制、右滑删除**，一次滑动只露一侧：
   - 复制＝以**当前时间**再记一条，金额、备注、方向都不变（然后切到当前月，保证看得见）；
   - 删除＝原生二次确认后真删（记账没有快照、没有联动数据，不做软删除）。
 - 记账条目进入 JSON 备份；备份格式从 **v3 升到 v4**，旧备份里没有 `ledgerEntries` 时按空数组处理。
 - 新增迁移 **v8** 建 `ledger_entries` 表；新增 Maestro 流程 `15`，真实模拟器上跑通
-  「记一笔 → 左滑复制 → 删两条收尾」。
+  「记一笔 → 左滑复制 → 右滑删除两条收尾」。
 
 ## 2. 数据模型（v8）
 
@@ -84,11 +85,11 @@ return { from: start.toISOString(), until: end.toISOString() };
 
 | 文件 | 作用 |
 | --- | --- |
-| `src/app/(tabs)/ledger.tsx` | 页面：加载当月、记一笔、左滑复制 / 删除、错误与空状态 |
-| `src/features/ledger/MonthPicker.tsx` | 年份箭头 + 12 个月胶囊（只收 `value` / `onChange`） |
-| `src/features/ledger/LedgerEntryRow.tsx` | 一行账：备注（没备注用「支出 / 收入」）、本地时间、带符号金额、左滑动作 |
+| `src/app/(tabs)/ledger.tsx` | 页面：加载当月、顶部合计 + 年 / 月、按天分组、记一笔、左滑复制 / 右滑删除、错误与空状态 |
+| `src/features/ledger/MonthPicker.tsx` | 右侧时间块：年份箭头 + 月份下拉浮层（只收 `value` / `onChange`） |
+| `src/features/ledger/LedgerEntryRow.tsx` | 一行账：备注（没备注用「支出 / 收入」）、本地时间、带符号金额、左滑复制 / 右滑删除 |
 | `src/features/ledger/LedgerEntryForm.tsx` | 底部表单：方向胶囊、金额输入、备注、提交 / 取消 |
-| `src/features/ledger/format.ts` | 展示文案与当月合计（纯函数） |
+| `src/features/ledger/format.ts` | 展示文案、按天分组与当月合计（纯函数） |
 | `src/features/ledger/month.ts` | 年月状态、月份区间、标签（纯函数） |
 
 ### 4.1 记一笔
@@ -100,22 +101,36 @@ return { from: start.toISOString(), until: end.toISOString() };
   超过两位小数都会得到「请输入大于 0 的金额」或仓储的校验错误。
 - 备注 `trim()` 后为空就存 `NULL`，读回来是 `undefined`，列表不会出现一行空白。
 
-### 4.2 左滑复制
+### 4.2 左滑复制、右滑删除
 
-要求是「左滑记录可以快速复制一条，时间是当前时间」。实现没有引入手势库，而是用 React Native 自带的
-`PanResponder` + `Animated.Value`：
+要求是「左滑记录可以快速复制一条，时间是当前时间」，同时复制和删除不要挤在同一侧，减少误触。
+实现没有引入手势库，而是用 React Native 自带的 `PanResponder` + `Animated.Value`：
 
 - 横向位移超过 8px 且明显大于纵向位移，才接管手势（不影响列表纵向滚动）。
-- 最多左移 `ACTIONS_WIDTH`，松手时过一半就停在展开位，否则弹回。
-- 展开后露出「复制 / 删除」两个按钮；按钮的无障碍名字带标题
-  （`复制「上班地铁」` / `删除「上班地铁」`），读屏与 Maestro 都能精确到行。
+- **左滑**（`dx < 0`）只把行往左推，露出右侧「复制」；**右滑**（`dx > 0`）只往右推，露出左侧「删除」。
+  一次滑动最多露一侧，两个按钮不会同时出现。
+- 松手时过一半就停在展开位，否则弹回。已经展开时，反向滑动只收起、不直接换到另一侧；
+  想从「复制」换到「删除」，先反向收起再往另一侧滑。
+- 展开侧提升为 React state（`openSide`），未激活的一侧用 `accessibilityElementsHidden` /
+  `importantForAccessibility` 从读屏与 Maestro 的树里隐藏；视觉上两个按钮仍在行背后，
+  由 `translateX` 决定露出哪边。
 - 复制走 `LedgerEntryRepository.create`，`occurredAt` / `recordedAt` 都取**当前时刻**；
   如果当前选中的不是本月，复制后自动切到当前月，否则用户会以为「点了没反应」。
 - 删除先 `Alert.alert` 二次确认（标题「删除这笔账？」，正文带金额与备注），确认后真删。
 
-`Animated.Value`、`PanResponder` 与「当前是否展开」都不需要触发渲染，但必须跨渲染保持同一份。
-它们一起放进 `useState` 的惰性初始化里（只创建一次），既满足这个要求，也避开 React Compiler
-「渲染期读写 ref」的 lint 规则。细节见 `LedgerEntryRow.tsx` 的注释。
+`Animated.Value`、`PanResponder` 与手势内部的「当前侧」不需要触发渲染，但必须跨渲染保持同一份；
+它们一起放进 `useState` 的惰性初始化里（只创建一次）。`openSide` 需要参与「哪个按钮对读屏可见」，
+所以单独用 state。细节见 `LedgerEntryRow.tsx` 的注释。
+
+### 4.3 按天分组
+
+列表不再是一整串 `FlatList`，而是 `SectionList`：
+
+- `groupLedgerEntriesByDay(entries)` 是纯函数：按 `occurredAt` 的**设备本地日期**分组，
+  用 `Map` 保留仓储已经排好的倒序；同一天内不重新排序，同一毫秒的连续记录也不会乱。
+- 分组标题是完整日期 `YYYY-MM-DD`；行内只留 `HH:mm`，日期不用每行重复。
+- 每组最后一行多留 `spacing.lg` 的底部空白，下一组日期标题再出现，视觉上就是「一组、空一段、下一组」。
+- 月末跨时区仍然按本地日期算，和 `monthRangeIso` 用同一个时区口径。
 
 ## 5. 备份格式 v4
 
@@ -130,7 +145,8 @@ return { from: start.toISOString(), until: end.toISOString() };
 
 ## 6. 测试与验收
 
-- 纯函数：`domain/__tests__/money-test.ts`、`features/ledger/__tests__/month-test.ts`、`format-test.ts`。
+- 纯函数：`domain/__tests__/money-test.ts`、`features/ledger/__tests__/month-test.ts`、`format-test.ts`
+  （含按本地日期分组）。
 - 仓储：`repositories/__tests__/ledgerEntryRepository-test.ts`（真实内存 SQLite：整数分、备注 trim、
   倒序、本地时区月边界、非法金额 / 方向 / 备注 / 未来时间、真删与 `NotFoundError`）。
 - 组件：`monthPicker-test`、`ledgerEntryRow-test`、`ledgerEntryForm-test`（RNTL，不连数据库）。
@@ -138,7 +154,8 @@ return { from: start.toISOString(), until: end.toISOString() };
   `backupRepository-test.ts` 的导出 / 导入 / 计数覆盖第八张表。
 - 端到端：`.maestro/flows/15-ledger.yaml`。真实模拟器上跑过：
   记一笔 `3.6` / 备注 `Maestro记账` → 左滑点「复制」→ 月合计从 `-¥3.60` 变 `-¥7.20` →
-  删两条（原生二次确认）→ 列表里不再有这条备注，自产自销。整跑 **16/16，10m58s**（2026-11-05）。
+  **右滑**点「删除」删两条（原生二次确认）→ 列表里不再有这条备注，自产自销。
+  整跑 **16/16，11m48s**（2026-11-05；单跑 `15` 见 `.maestro/README.md`）。
 
 ## 7. 已知取舍
 
@@ -148,9 +165,8 @@ return { from: start.toISOString(), until: end.toISOString() };
   也会让「复制到当前时间」的语义变复杂。
 - **删除是真删，不进回收站**：一条账没有快照、没有联动数据，误删的代价比事件记录小；
   表单外有二次确认兜底。若以后要软删除，需加 `deleted_at` 与迁移，并同步备份。
-- **左滑动作对读屏是「隐藏但仍可聚焦」**：两个按钮在行背后，视觉上要滑动才出现，
-  但无障碍树里一直存在。当前用带标题的名字保证点得准；若要做成真正按需出现，
-  需要把展开状态提升为 React state（会多一次渲染）。
+- **月份下拉是绝对定位浮层**：不把左侧合计撑高、不推页面，但也还没做「点空白处关闭」
+  与「回到今天」；目前点月份或再点触发器收起，翻远了要自己翻回来或选当前月。
+- **同一天的多条记录不折叠**：按天分组只加日期标题，不把同一天的记录收进一张可折叠卡；
+  每天条数通常不多，折叠会多一次点击。
 - **按月加载，不做跨月分页**：一个月的数据量有限；若单月达到数万条，需要再给列表加分页 / 窗口。
-- **月份只能一年一年翻**：没有「回到今天」按钮。当前月是默认值，翻远了要自己翻回来；
-  如果常用，可以加一颗「本月」快捷入口。

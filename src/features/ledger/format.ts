@@ -27,13 +27,42 @@ export function formatLedgerTotal(cents: number): string {
   return cents < 0 ? `-¥${formatCents(-cents)}` : `¥${formatCents(cents)}`;
 }
 
-/** 列表一行的时间：设备本地 `MM-DD HH:mm`。 */
+/** 列表一行的时间：设备本地 `HH:mm`（日期已经由分组标题说清）。 */
 export function formatLedgerTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) {
     return iso;
   }
-  return `${localDateText(date).slice(5)} ${localTimeText(date)}`;
+  return localTimeText(date);
+}
+
+export interface LedgerDayGroup {
+  /** 设备本地 `YYYY-MM-DD`，同时用作分组标题与 React key */
+  date: string;
+  entries: LedgerEntry[];
+}
+
+/**
+ * 把按时间倒序的记录按**设备本地日期**分组。
+ *
+ * 只做分组、不重新排序：仓储已经按 `occurred_at DESC` 排好，
+ * 同一天内保持原顺序（同一毫秒的连续记录也不会被打乱）。
+ * 日期用本地时区算，否则东八区凌晨的记录会被分到前一天。
+ */
+export function groupLedgerEntriesByDay(entries: readonly LedgerEntry[]): LedgerDayGroup[] {
+  const groups = new Map<string, LedgerEntry[]>();
+  for (const entry of entries) {
+    const date = new Date(entry.occurredAt);
+    // 非法时间不入库，但纯函数仍要不崩：原样当分组键。
+    const key = Number.isNaN(date.getTime()) ? entry.occurredAt : localDateText(date);
+    const bucket = groups.get(key);
+    if (bucket) {
+      bucket.push(entry);
+    } else {
+      groups.set(key, [entry]);
+    }
+  }
+  return Array.from(groups, ([date, dayEntries]) => ({ date, entries: dayEntries }));
 }
 
 /** 没有备注时用方向当标题，列表不会出现一行空白。 */

@@ -3,6 +3,7 @@ import {
   formatLedgerAmount,
   formatLedgerTime,
   formatLedgerTotal,
+  groupLedgerEntriesByDay,
   ledgerEntryTitle,
   summarizeLedger,
 } from '@/features/ledger/format';
@@ -58,9 +59,9 @@ describe('列表文案', () => {
     expect(ledgerEntryTitle(makeEntry({ kind: 'income', note: undefined }))).toBe('收入');
   });
 
-  test('时间按设备本地时区显示为 MM-DD HH:mm', () => {
+  test('时间按设备本地时区显示为 HH:mm（日期在分组标题里）', () => {
     const local = new Date(2026, 10, 5, 8, 30, 0, 0);
-    expect(formatLedgerTime(local.toISOString())).toBe('11-05 08:30');
+    expect(formatLedgerTime(local.toISOString())).toBe('08:30');
   });
 
   test('非法时间原样返回，列表不会崩', () => {
@@ -69,5 +70,34 @@ describe('列表文案', () => {
 
   test('删除确认说清金额与标题', () => {
     expect(describeLedgerEntry(makeEntry())).toBe('-¥3.60 · 上班地铁');
+  });
+});
+
+describe('groupLedgerEntriesByDay', () => {
+  test('按设备本地日期分组，同一天保持传入顺序', () => {
+    const later = makeEntry({
+      id: '018fed00-0000-7000-8000-000000000811',
+      occurredAt: new Date(2026, 10, 2, 9, 0, 0, 0).toISOString(),
+    });
+    const earlier = makeEntry({
+      id: '018fed00-0000-7000-8000-000000000812',
+      occurredAt: new Date(2026, 10, 2, 8, 0, 0, 0).toISOString(),
+    });
+    const previousDay = makeEntry({
+      id: '018fed00-0000-7000-8000-000000000813',
+      occurredAt: new Date(2026, 10, 1, 20, 0, 0, 0).toISOString(),
+    });
+
+    expect(groupLedgerEntriesByDay([later, earlier, previousDay])).toEqual([
+      { date: '2026-11-02', entries: [later, earlier] },
+      { date: '2026-11-01', entries: [previousDay] },
+    ]);
+  });
+
+  test('空列表与非法时间都不崩', () => {
+    expect(groupLedgerEntriesByDay([])).toEqual([]);
+    expect(groupLedgerEntriesByDay([makeEntry({ occurredAt: '不是时间' })])).toEqual([
+      { date: '不是时间', entries: [makeEntry({ occurredAt: '不是时间' })] },
+    ]);
   });
 });

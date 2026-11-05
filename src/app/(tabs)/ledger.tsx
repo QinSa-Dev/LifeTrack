@@ -1,7 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, SectionList, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AppText, Card, EmptyState } from '@/components';
@@ -13,6 +13,7 @@ import { MonthPicker } from '@/features/ledger/MonthPicker';
 import {
   describeLedgerEntry,
   formatLedgerTotal,
+  groupLedgerEntriesByDay,
   summarizeLedger,
   type LedgerTotals,
 } from '@/features/ledger/format';
@@ -26,7 +27,13 @@ function Totals({ totals }: { totals: LedgerTotals }) {
     <Card style={styles.summary}>
       <View style={styles.summaryRow}>
         <View style={styles.metric}>
-          <AppText variant="title" color={palette.danger}>
+          <AppText
+            variant="subtitle"
+            color={palette.danger}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+          >
             {formatLedgerTotal(totals.expenseCents)}
           </AppText>
           <AppText variant="caption" color={palette.textMuted}>
@@ -34,7 +41,13 @@ function Totals({ totals }: { totals: LedgerTotals }) {
           </AppText>
         </View>
         <View style={styles.metric}>
-          <AppText variant="title" color={palette.success}>
+          <AppText
+            variant="subtitle"
+            color={palette.success}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+          >
             {formatLedgerTotal(totals.incomeCents)}
           </AppText>
           <AppText variant="caption" color={palette.textMuted}>
@@ -42,7 +55,9 @@ function Totals({ totals }: { totals: LedgerTotals }) {
           </AppText>
         </View>
         <View style={styles.metric}>
-          <AppText variant="title">{formatLedgerTotal(totals.balanceCents)}</AppText>
+          <AppText variant="subtitle" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+            {formatLedgerTotal(totals.balanceCents)}
+          </AppText>
           <AppText variant="caption" color={palette.textMuted}>
             结余
           </AppText>
@@ -55,9 +70,10 @@ function Totals({ totals }: { totals: LedgerTotals }) {
 /**
  * 「记账」页：按月看流水。
  *
- * 顶部是年 + 12 个月的选择，默认当前月；列表按发生时间倒序。
- * 「记一笔」走底部表单（方向 + 金额 + 备注）；每条记录左滑可以
- * **以当前时间复制一条**——每天同样的通勤 / 早餐不用重新输入。
+ * 顶部一行是当月合计（左）和年 / 月选择（右），默认当前月；
+ * 下面的记录按**天**分组，两组之间留一段空白。
+ * 「记一笔」走底部表单（方向 + 金额 + 备注）；每条记录
+ * **左滑复制、右滑删除**——每天同样的通勤 / 早餐不用重新输入。
  */
 export default function LedgerScreen() {
   const { db } = useReadyDatabase();
@@ -168,15 +184,27 @@ export default function LedgerScreen() {
     ]);
   };
 
+  const sections = useMemo(
+    () =>
+      groupLedgerEntriesByDay(entries).map((group) => ({
+        date: group.date,
+        data: group.entries,
+      })),
+    [entries],
+  );
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
-      <MonthPicker value={selected} onChange={setSelected} />
+      <View style={styles.topRow}>
+        <Totals totals={summarizeLedger(entries)} />
+        <MonthPicker value={selected} onChange={setSelected} />
+      </View>
 
-      <FlatList
-        data={entries}
+      <SectionList
+        sections={sections}
         keyExtractor={(entry) => entry.id}
-        renderItem={({ item }) => (
-          <View style={styles.item}>
+        renderItem={({ item, index, section }) => (
+          <View style={index === section.data.length - 1 ? styles.dayEnd : styles.item}>
             <LedgerEntryRow
               entry={item}
               onCopy={() => void copyEntry(item)}
@@ -184,17 +212,19 @@ export default function LedgerScreen() {
             />
           </View>
         )}
+        renderSectionHeader={({ section }) => (
+          <AppText variant="label" color={palette.textMuted} style={styles.dayHeader}>
+            {section.date}
+          </AppText>
+        )}
         ListHeaderComponent={
-          <View style={styles.header}>
-            {error ? (
-              <Card title="操作失败" style={styles.spaced}>
-                <AppText variant="body" color={palette.danger}>
-                  {error}
-                </AppText>
-              </Card>
-            ) : null}
-            {entries.length > 0 ? <Totals totals={summarizeLedger(entries)} /> : null}
-          </View>
+          error ? (
+            <Card title="操作失败" style={styles.errorCard}>
+              <AppText variant="body" color={palette.danger}>
+                {error}
+              </AppText>
+            </Card>
+          ) : undefined
         }
         ListEmptyComponent={
           loading ? (
@@ -206,6 +236,8 @@ export default function LedgerScreen() {
           )
         }
         contentContainerStyle={styles.content}
+        stickySectionHeadersEnabled={false}
+        style={styles.list}
       />
 
       <Pressable
@@ -237,18 +269,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
-  content: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: 96,
-  },
-  header: {
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: spacing.md,
-  },
-  spaced: {
-    marginTop: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    // 月份下拉是绝对定位的浮层，必须画在下面的列表之上。
+    zIndex: 20,
   },
   summary: {
-    marginBottom: spacing.md,
+    flex: 1,
+    padding: spacing.md,
   },
   summaryRow: {
     flexDirection: 'row',
@@ -258,8 +291,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.xs,
   },
+  list: {
+    flex: 1,
+  },
+  content: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: 96,
+  },
+  errorCard: {
+    marginBottom: spacing.md,
+  },
+  dayHeader: {
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xs,
+  },
   item: {
     marginBottom: spacing.sm,
+  },
+  dayEnd: {
+    marginBottom: spacing.lg,
   },
   loading: {
     paddingVertical: spacing.xxl,

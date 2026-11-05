@@ -1,8 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { StyleSheet, Pressable, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { AppText, Chip } from '@/components';
-import { palette, spacing } from '@/theme';
+import { palette, radius, spacing } from '@/theme';
 
 import { MONTHS, monthLabel, yearLabel, type YearMonth } from './month';
 
@@ -12,78 +13,132 @@ export interface MonthPickerProps {
 }
 
 /**
- * 记账页顶部的「年 + 月份」选择。
+ * 记账页右上角的「年 / 月」选择：上面是年，下面是月。
  *
- * 年用左右箭头逐年翻（看老账本要能翻年），月份一次摆出 12 个胶囊，
- * 点哪个月就是哪个月。两者分开，是因为「换年」和「换月」是两件事：
- * 换年保留月份，点月份不改年份。
+ * 年和月份是两件事：年箭头只平移年（保留月份），月份下拉只换月（保留年份）。
+ * 月份默认显示当前月，点一下才在下方展开 12 个月，选完自动收起。
+ * 下拉是绝对定位的浮层，不把右边的收支统计一起撑高。
  */
 export function MonthPicker({ value, onChange }: MonthPickerProps) {
+  const [open, setOpen] = useState(false);
+
+  const chooseMonth = (month: number) => {
+    onChange({ ...value, month });
+    setOpen(false);
+  };
+
   return (
     <View style={styles.container}>
-      <View style={styles.yearRow}>
+      <View style={styles.timeBlock}>
+        <View style={styles.yearRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="上一年"
+            hitSlop={8}
+            onPress={() => onChange({ ...value, year: value.year - 1 })}
+            style={({ pressed }) => [styles.arrow, pressed ? styles.pressed : null]}
+          >
+            <Ionicons name="chevron-back" size={14} color={palette.textMuted} />
+          </Pressable>
+          <AppText variant="subtitle">{yearLabel(value)}</AppText>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="下一年"
+            hitSlop={8}
+            onPress={() => onChange({ ...value, year: value.year + 1 })}
+            style={({ pressed }) => [styles.arrow, pressed ? styles.pressed : null]}
+          >
+            <Ionicons name="chevron-forward" size={14} color={palette.textMuted} />
+          </Pressable>
+        </View>
+
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="上一年"
-          onPress={() => onChange({ ...value, year: value.year - 1 })}
-          style={({ pressed }) => [styles.arrow, pressed ? styles.pressed : null]}
+          accessibilityLabel={`月份：${monthLabel(value.month)}`}
+          accessibilityHint="展开月份列表"
+          accessibilityState={{ expanded: open }}
+          onPress={() => setOpen((current) => !current)}
+          style={({ pressed }) => [styles.monthTrigger, pressed ? styles.pressed : null]}
         >
-          <Ionicons name="chevron-back" size={20} color={palette.textMuted} />
-        </Pressable>
-        <AppText variant="title" style={styles.year}>
-          {yearLabel(value)}
-        </AppText>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="下一年"
-          onPress={() => onChange({ ...value, year: value.year + 1 })}
-          style={({ pressed }) => [styles.arrow, pressed ? styles.pressed : null]}
-        >
-          <Ionicons name="chevron-forward" size={20} color={palette.textMuted} />
+          <AppText variant="label" color={palette.primary}>
+            {monthLabel(value.month)}
+          </AppText>
+          <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={14} color={palette.primary} />
         </Pressable>
       </View>
-      <View style={styles.months}>
-        {MONTHS.map((month) => (
-          <Chip
-            key={month}
-            label={monthLabel(month)}
-            selected={month === value.month}
-            onPress={() => onChange({ ...value, month })}
-          />
-        ))}
-      </View>
+
+      {open ? (
+        <View style={styles.dropdown} accessibilityLabel="月份列表">
+          {MONTHS.map((month) => (
+            <View key={month} style={styles.monthCell}>
+              <Chip
+                label={monthLabel(month)}
+                selected={month === value.month}
+                onPress={() => chooseMonth(month)}
+              />
+            </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    paddingBottom: spacing.md,
-    gap: spacing.sm,
+    position: 'relative',
+    alignItems: 'flex-end',
+    zIndex: 30,
+  },
+  timeBlock: {
+    alignItems: 'flex-end',
+    gap: 2,
   },
   yearRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.lg,
-  },
-  year: {
-    minWidth: 96,
-    textAlign: 'center',
+    gap: 2,
   },
   arrow: {
-    padding: spacing.xs,
+    padding: 2,
     borderRadius: 999,
   },
-  pressed: {
-    backgroundColor: palette.surfaceMuted,
+  monthTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+    backgroundColor: palette.primarySoft,
   },
-  months: {
+  dropdown: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    marginTop: spacing.sm,
+    width: 280,
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: spacing.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radius.lg,
+    backgroundColor: palette.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+    zIndex: 40,
+  },
+  monthCell: {
+    width: '25%',
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  pressed: {
+    opacity: 0.7,
   },
 });
