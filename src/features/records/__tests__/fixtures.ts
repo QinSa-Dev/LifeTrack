@@ -1,4 +1,4 @@
-import type { EventDefinitionSnapshot, EventRecord } from '@/domain/models';
+import type { DefinitionField, EventDefinitionSnapshot, EventRecord } from '@/domain/models';
 
 import type { RecordGroup } from '../groupRecords';
 
@@ -26,6 +26,18 @@ export function makeRecord(overrides: Partial<EventRecord> = {}): EventRecord {
     recordedAt: T1,
     source: 'manual',
     snapshot,
+    ...overrides,
+  };
+}
+
+/** 一个「心情」字段；每个用例只覆盖自己关心的字段。 */
+export function makeField(overrides: Partial<DefinitionField> = {}): DefinitionField {
+  return {
+    id: 'field-1',
+    name: '心情',
+    kind: 'single',
+    options: ['好', '一般', '差'],
+    sortOrder: 0,
     ...overrides,
   };
 }
