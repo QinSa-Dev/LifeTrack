@@ -4,9 +4,10 @@
 
 **现在可以做什么**
 
-- 用 `npm test` 跑组件测试：**11 个套件 / 57 个用例**，和原有单元测试一起约 3 秒跑完。
-- 覆盖十一块界面规则：通用按钮、时间轴单条记录行、合并行、筛选与排序面板、周期月视图、
-  自定义字段取值、撤销提示条、症状统计卡片、记账的顶部时间 / 列表行 / 底部表单。
+- 用 `npm test` 跑组件测试：**14 个套件 / 71 个用例**，和原有单元测试一起约 3 秒跑完。
+- 覆盖十四块界面规则：通用按钮、时间轴单条记录行、合并行、筛选与排序面板、周期月视图、
+  自定义字段取值、撤销提示条、症状统计卡片、记账的顶部时间 / 列表行 / 底部表单 / 账单分析、
+  年份选择、导航设置卡。
 - 只跑其中一块：`npm test -- src/features/ledger/__tests__/ledgerEntryForm-test.tsx`。
 
 **解决了什么问题**
@@ -191,10 +192,13 @@ jest.mock('@expo/vector-icons/Ionicons', () => {
 | `undoBar-test.tsx` | 3 | 两个出口互不串台、撤销中改为「撤销中…」并禁用 |
 | `symptomStatsCard-test.tsx` | 5 | 三种空态、按天数排序与百分比、只列前 N 种、软删除不计入 |
 | `monthPicker-test.tsx` | 3 | 右侧年份、月份下拉默认收起、展开后 12 个月、当前月选中、点月只换月、年份箭头 |
-| `ledgerEntryRow-test.tsx` | 3 | 备注 / 时间 / 带符号金额、无备注回落到方向、复制 / 删除回调（未激活的一侧对读屏隐藏） |
-| `ledgerEntryForm-test.tsx` | 6 | 空金额、元转分、方向切换、输入清洗、提交失败、取消 |
+| `yearPicker-test.tsx` | 2 | 默认收起、展开列出年份、当前年选中、选完自动收起 |
+| `ledgerEntryRow-test.tsx` | 5 | 备注 / 时间 / 带符号金额、无备注回落到方向、点行回调、标签胶囊、复制 / 删除回调 |
+| `ledgerEntryForm-test.tsx` | 8 | 空金额、元转分、方向切换、输入清洗、提交失败、取消、标签长度、编辑模式预填 |
+| `ledgerAnalysis-test.tsx` | 3 | 月账单概览 / 每日柱状图 / 构成 / 排行、只有收入时说明、年账单 12 个月标签 |
+| `navigationSettingsCard-test.tsx` | 5 | 五个标签顺序与两端禁用、左移 / 右移、默认页选择、偏好写失败提示 |
 
-合计 **11 个套件 / 57 个用例**。
+合计 **14 个套件 / 71 个用例**。
 
 **仍未覆盖**
 
@@ -212,7 +216,7 @@ jest.mock('@expo/vector-icons/Ionicons', () => {
 ## 5. 怎么跑
 
 ```bash
-npm test                                  # 全部：51 个套件 / 650 个用例
+npm test                                  # 全部：54 个套件 / 692 个用例
 npm test -- src/components/__tests__      # 只跑组件测试
 npm test -- src/features/ledger/__tests__ # 只跑记账相关
 npm run verify                            # typecheck + lint + test

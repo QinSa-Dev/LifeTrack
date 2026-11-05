@@ -7,9 +7,11 @@
  * 2. **发生时间不能晚于录入时间**：与事件记录同一条规则（未来还没发生，不构成事实）。
  * 3. **读按发生时间倒序**；同一毫秒内的两条（连续点两下）用 id 兜底，
  *    UUID v7 是单调的，所以顺序仍然确定。
- * 4. **删除是真删**：记账没有快照、没有联动数据，一条记录就是一个事实；
+ * 4. **可以更正**：`update` 只改方向 / 金额 / 备注 / 标签，发生时间与录入时间不变。
+ *    没有 `updated_at`，备份合并仍按「同 id 保留本地」处理（与事件记录一致）。
+ * 5. **删除是真删**：记账没有快照、没有联动数据，一条记录就是一个事实；
  *    界面上有二次确认，删掉不会影响别的表。
- * 5. `list` 的时间范围下推到 SQL：按月看账时不必把全部记录读进内存。
+ * 6. `list` 的时间范围下推到 SQL：按月看账时不必把全部记录读进内存。
  */
 
 import { guard } from '@/db/guard';
@@ -18,12 +20,14 @@ import { NotFoundError, ValidationError } from '@/domain/errors';
 import { newId } from '@/domain/id';
 import { isLedgerKind, type IsoDateTime, type LedgerEntry, type LedgerKind } from '@/domain/models';
 import {
+  requireId,
   requireIsoDateTime,
   requireLedgerAmountCents,
   requireLedgerKind,
   requireLedgerNote,
   requireLedgerTag,
   requireNotFuture,
+  type LedgerEntryEditInput,
   type LedgerEntryInput,
 } from '@/domain/validation';
 
@@ -108,6 +112,18 @@ export class LedgerEntryRepository {
     return this.list();
   }
 
+  /** 详情页按 id 读一笔；不存在返回 null（由页面显示「找不到」）。 */
+  async getById(id: string): Promise<LedgerEntry | null> {
+    const targetId = requireId(id, '记账 id');
+    return guard('读取一笔账', async () => {
+      const row = await this.db.getFirstAsync<LedgerRow>(
+        `SELECT ${SELECT_COLUMNS} FROM ledger_entries WHERE id = ?`,
+        targetId,
+      );
+      return row ? toLedgerEntry(row) : null;
+    });
+  }
+
   /**
    * 有记账数据的年份范围（给账单页的年份下拉）。
    * 用最早 / 最晚一条的发生时间换算成**本地年份**；没有数据时返回 null。
@@ -174,6 +190,37 @@ export class LedgerEntryRepository {
     });
   }
 
+  /**
+   * 更正一笔账：方向、金额、备注、标签整体替换。
+   *
+   * 发生时间 / 录入时间保持原样——改金额或备注不代表这笔钱换了发生时间。
+   * 删除后再改会得到 `NotFoundError`；界面从列表进详情，正常不会撞上。
+   */
+  async update(id: string, input: LedgerEntryEditInput): Promise<LedgerEntry> {
+    const targetId = requireId(id, '记账 id');
+    const kind = requireLedgerKind(input.kind);
+    const amountCents = requireLedgerAmountCents(input.amountCents);
+    const note = requireLedgerNote(input.note);
+    const tag = requireLedgerTag(input.tag);
+
+    return guard('修改一笔账', async () => {
+      const result = await this.db.runAsync(
+        `UPDATE ledger_entries
+         SET kind = ?, amount_cents = ?, note = ?, tag = ?
+         WHERE id = ?`,
+        kind,
+        amountCents,
+        note ?? null,
+        tag ?? null,
+        targetId,
+      );
+      if (result.changes === 0) {
+        throw new NotFoundError(`找不到这笔账：${targetId}`);
+      }
+      return this.mustReadOne(targetId);
+    });
+  }
+
   /** 真删（界面负责二次确认）。 */
   async remove(id: string): Promise<void> {
     return guard('删除一笔账', async () => {
@@ -182,5 +229,17 @@ export class LedgerEntryRepository {
         throw new NotFoundError(`找不到这笔账：${id}`);
       }
     });
+  }
+
+  /** `update` 之后读回：刚才那行一定还在，否则说明并发删除，按未找到处理。 */
+  private async mustReadOne(id: string): Promise<LedgerEntry> {
+    const row = await this.db.getFirstAsync<LedgerRow>(
+      `SELECT ${SELECT_COLUMNS} FROM ledger_entries WHERE id = ?`,
+      id,
+    );
+    if (!row) {
+      throw new NotFoundError(`找不到这笔账：${id}`);
+    }
+    return toLedgerEntry(row);
   }
 }

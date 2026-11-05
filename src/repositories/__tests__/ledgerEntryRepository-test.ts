@@ -42,6 +42,93 @@ describe('LedgerEntryRepository', () => {
     expect(await ledger.list()).toEqual([created]);
   });
 
+  it('按 id 读回一笔；不存在时返回 null', async () => {
+    const created = await ledger.create(
+      { kind: 'expense', amountCents: 360, note: '上班地铁', tag: '通勤' },
+      '2026-11-05T08:00:00.000Z',
+    );
+
+    expect(await ledger.getById(created.id)).toEqual(created);
+    expect(await ledger.getById('018fed00-0000-7000-8000-000000000999')).toBeNull();
+    await expect(ledger.getById('   ')).rejects.toThrow(ValidationError);
+  });
+
+  it('更正方向 / 金额 / 备注 / 标签：整体替换，发生时间与录入时间不变', async () => {
+    const created = await ledger.create(
+      {
+        kind: 'expense',
+        amountCents: 360,
+        note: '旧备注',
+        tag: '旧标签',
+        occurredAt: '2026-11-04T08:00:00.000Z',
+      },
+      '2026-11-05T08:00:00.000Z',
+    );
+
+    const updated = await ledger.update(created.id, {
+      kind: 'income',
+      amountCents: 12345,
+      note: '  新备注  ',
+      tag: '  新标签  ',
+    });
+
+    expect(updated).toEqual({
+      id: created.id,
+      kind: 'income',
+      amountCents: 12345,
+      note: '新备注',
+      tag: '新标签',
+      occurredAt: created.occurredAt,
+      recordedAt: created.recordedAt,
+    });
+    expect(await ledger.getById(created.id)).toEqual(updated);
+    expect(await ledger.list()).toEqual([updated]);
+  });
+
+  it('更正时可以清空备注与标签；不存在的 id 报 NotFoundError', async () => {
+    const created = await ledger.create(
+      { kind: 'expense', amountCents: 360, note: '旧备注', tag: '旧标签' },
+      '2026-11-05T08:00:00.000Z',
+    );
+
+    const updated = await ledger.update(created.id, {
+      kind: 'expense',
+      amountCents: 360,
+      note: '',
+      tag: '   ',
+    });
+    expect(updated.note).toBeUndefined();
+    expect(updated.tag).toBeUndefined();
+
+    await expect(
+      ledger.update('018fed00-0000-7000-8000-000000000999', {
+        kind: 'expense',
+        amountCents: 100,
+      }),
+    ).rejects.toThrow(NotFoundError);
+  });
+
+  it('更正时沿用同一套校验：非法方向 / 金额 / 备注 / 标签都拒绝', async () => {
+    const created = await ledger.create({ kind: 'expense', amountCents: 360 }, '2026-11-05T08:00:00.000Z');
+
+    await expect(
+      // @ts-expect-error 故意传非法方向，验证运行时校验
+      ledger.update(created.id, { kind: 'transfer', amountCents: 100 }),
+    ).rejects.toThrow(ValidationError);
+    await expect(ledger.update(created.id, { kind: 'expense', amountCents: 0 })).rejects.toThrow(
+      ValidationError,
+    );
+    await expect(
+      ledger.update(created.id, { kind: 'expense', amountCents: 100, note: 'x'.repeat(101) }),
+    ).rejects.toThrow(ValidationError);
+    await expect(
+      ledger.update(created.id, { kind: 'expense', amountCents: 100, tag: 'x'.repeat(31) }),
+    ).rejects.toThrow(ValidationError);
+
+    // 校验失败不应改掉原来的记录
+    expect(await ledger.getById(created.id)).toEqual(created);
+  });
+
   it('列表按发生时间倒序；同一时刻用 id 兜底，结果稳定', async () => {
     const now = '2026-11-05T12:00:00.000Z';
     const first = await ledger.create(

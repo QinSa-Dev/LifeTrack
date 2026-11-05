@@ -3,7 +3,7 @@ import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleShee
 
 import { AppText, Button, Chip, TextField } from '@/components';
 import type { LedgerKind } from '@/domain/models';
-import { parseAmountToCents, sanitizeAmountInput } from '@/domain/money';
+import { formatCents, parseAmountToCents, sanitizeAmountInput } from '@/domain/money';
 import { MAX_LEDGER_TAG_LENGTH } from '@/domain/validation';
 import { palette, radius, spacing } from '@/theme';
 
@@ -17,20 +17,36 @@ export interface LedgerEntryFormValues {
 export interface LedgerEntryFormProps {
   onSubmit: (values: LedgerEntryFormValues) => Promise<void>;
   onClose: () => void;
+  /** 编辑已有记录时传入；省略就是新建（默认支出、金额为空） */
+  initialValues?: LedgerEntryFormValues;
+  /** 标题，默认「记一笔」 */
+  title?: string;
+  /** 提交按钮，默认「记下」 */
+  submitLabel?: string;
 }
 
 /**
  * 「记一笔」的底部表单：方向 + 金额 + 备注 + 标签。
  *
+ * 新建与编辑共用：编辑时由 `initialValues` 预填，标题与提交按钮换文案，
+ * 提交仍走同一套本地格式检查与仓储校验。
  * 只负责收集与本地格式检查；金额范围、备注 / 标签长度、发生时间这些规则
  * 由仓储层再用同一套校验过一遍。金额输入用数字键盘，输入框本身会清掉
  * 粘贴进来的非数字字符，免得「看得见却怎么都保存不了」。
  */
-export function LedgerEntryForm({ onSubmit, onClose }: LedgerEntryFormProps) {
-  const [kind, setKind] = useState<LedgerKind>('expense');
-  const [amountText, setAmountText] = useState('');
-  const [note, setNote] = useState('');
-  const [tag, setTag] = useState('');
+export function LedgerEntryForm({
+  onSubmit,
+  onClose,
+  initialValues,
+  title = '记一笔',
+  submitLabel = '记下',
+}: LedgerEntryFormProps) {
+  const [kind, setKind] = useState<LedgerKind>(initialValues?.kind ?? 'expense');
+  const [amountText, setAmountText] = useState(() =>
+    initialValues ? formatCents(initialValues.amountCents) : '',
+  );
+  const [note, setNote] = useState(initialValues?.note ?? '');
+  const [tag, setTag] = useState(initialValues?.tag ?? '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -67,7 +83,7 @@ export function LedgerEntryForm({ onSubmit, onClose }: LedgerEntryFormProps) {
             style={styles.scroll}
           >
             <View style={styles.header}>
-              <AppText variant="title">记一笔</AppText>
+              <AppText variant="title">{title}</AppText>
             </View>
 
             <View style={styles.kinds}>
@@ -111,7 +127,7 @@ export function LedgerEntryForm({ onSubmit, onClose }: LedgerEntryFormProps) {
           <View style={styles.actions}>
             <Button label="取消" tone="secondary" onPress={onClose} disabled={saving} style={styles.grow} />
             <Button
-              label={saving ? '保存中…' : '记下'}
+              label={saving ? '保存中…' : submitLabel}
               onPress={submit}
               disabled={saving}
               style={styles.grow}

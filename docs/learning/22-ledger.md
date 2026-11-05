@@ -1,4 +1,4 @@
-# 22 记账：记一笔、按天分组、左滑复制 / 右滑删除
+# 22 记账：记一笔、按天分组、左滑复制 / 右滑删除、单条编辑
 
 > 这一篇讲第五个标签页「记账」。它和前面的事件记录是**两套数据**：事件记录回答「今天做了什么」，
 > 记账回答「今天花了 / 赚了多少」。两者共用本地 SQLite 与同一套备份，但表、规则、页面都独立。
@@ -15,6 +15,8 @@
 - 列表行**左滑复制、右滑删除**，一次滑动只露一侧：
   - 复制＝以**当前时间**再记一条，金额、备注、标签、方向都不变（然后切到当前月，保证看得见）；
   - 删除＝原生二次确认后真删（记账没有快照、没有联动数据，不做软删除）。
+- **点整行进入详情页**：金额、方向、发生时间、备注、标签、录入时间都在同一页；
+  「编辑这笔账」打开与「记一笔」共用的底部表单（预填原值），保存后原地刷新。
 - 记账条目进入 JSON 备份；v8 时备份格式从 **v3 升到 v4**，v9 加标签后再升到 **v5**。
   旧备份里没有 `ledgerEntries` 时按空数组处理，没有 `tag` 时按「没有标签」处理。
 - 新增迁移 **v8** 建 `ledger_entries` 表，**v9** 给它加 `tag` 列；新增 Maestro 流程 `15`，真实模拟器上跑通
@@ -69,9 +71,11 @@ export interface LedgerEntry {
 一笔钱同时落进多个类别；30 字是列表胶囊还能看清的上限。`trim()` 后为空就存 `NULL`，
 读回来是 `undefined`。以后若要多标签，得把列改成 JSON，并同时决定统计是否允许重复计入。
 
-**为什么没有 `updated_at` / `deleted_at`**：记账条目是不可变事实，没有编辑入口；删除就是真删。
-因此备份合并时它也按「不可篡改」处理：同 id 只保留本地，不拿备份覆盖（与事件记录同一原则）。
-以后若要支持编辑或软删除，需要像事件记录那样补列、补迁移、补合并规则，不能直接改这条约定。
+**为什么没有 `updated_at` / `deleted_at`**：`update` 只改方向、金额、备注、标签，
+发生时间与录入时间不动，所以不需要再用一列「最后修改时间」表达版本；删除仍然直接真删。
+备份合并因此继续按「同 id 保留本地、新 id 追加」处理（与事件记录的更正一致）：
+本机改过的那一笔，导入一份同 id 的旧备份不会被覆盖。若以后要做跨设备同 id 的「谁更新」，
+才需要补 `updated_at` 与合并比较规则，不能只改表。
 
 ## 3. 月份与时间边界
 
@@ -99,10 +103,11 @@ return { from: start.toISOString(), until: end.toISOString() };
 
 | 文件 | 作用 |
 | --- | --- |
-| `src/app/(tabs)/ledger.tsx` | 页面：加载当月、顶部合计 + 年 / 月、按天分组、记一笔、左滑复制 / 右滑删除、错误与空状态 |
+| `src/app/(tabs)/ledger.tsx` | 页面：加载当月、顶部合计 + 年 / 月、按天分组、记一笔、点行进详情、左滑复制 / 右滑删除、错误与空状态 |
+| `src/app/ledger/[id].tsx` | 单条详情：金额 / 方向 / 时间 / 备注 / 标签；「编辑这笔账」打开预填表单 |
 | `src/features/ledger/MonthPicker.tsx` | 右侧时间块：年份箭头 + 月份下拉浮层（只收 `value` / `onChange`） |
-| `src/features/ledger/LedgerEntryRow.tsx` | 一行账：备注（没备注用「支出 / 收入」）、本地时间、标签小字胶囊、带符号金额、左滑复制 / 右滑删除 |
-| `src/features/ledger/LedgerEntryForm.tsx` | 底部表单：方向胶囊、金额输入、备注、标签、提交 / 取消 |
+| `src/features/ledger/LedgerEntryRow.tsx` | 一行账：备注（没备注用「支出 / 收入」）、本地时间、标签小字胶囊、带符号金额、点行进详情、左滑复制 / 右滑删除 |
+| `src/features/ledger/LedgerEntryForm.tsx` | 底部表单（新建与编辑共用）：方向胶囊、金额输入、备注、标签、提交 / 取消 |
 | `src/features/ledger/format.ts` | 展示文案、按天分组与当月合计（纯函数） |
 | `src/features/ledger/month.ts` | 年月状态、月份区间（纯函数） |
 
@@ -157,6 +162,22 @@ return { from: start.toISOString(), until: end.toISOString() };
   这样「备注写细节、标签写类别」时，统计口径是稳定的。
 - 删除确认里也会带上标签（`金额 · 备注 · 标签`），避免删错同名记录。
 
+### 4.5 单条详情与编辑
+
+- 行内容现在是一个 `Pressable`：点整行 push 到 `/ledger/[id]`，详情页按 id 读一笔。
+  行已经左滑 / 右滑展开时，点内容只收起，不直接跳转，避免「想收起却进了详情」。
+- 手势仍然归父级 `PanResponder`。因为行内容自己会接管触摸，`PanResponder` 同时注册了
+  `onMoveShouldSetPanResponderCapture`：横向滑动在捕获阶段就把 responder 抢过来，
+  `Pressable` 收到终止、不会误触成点击；纵向滚动仍由 `SectionList` 处理。
+- 详情页显示金额、方向、发生时间、标签、备注、录入时间；「编辑这笔账」打开
+  `LedgerEntryForm`，传 `initialValues` 预填方向 / 金额 / 备注 / 标签，标题和按钮换成
+  「编辑这笔账 / 保存」。
+- 保存走 `LedgerEntryRepository.update(id, input)`：方向、金额、备注、标签**整体替换**，
+  发生时间与录入时间保持原样。校验与新建完全共用（金额、备注 100 字、标签 30 字）。
+  成功后详情页原地更新并提示「已保存修改」；返回列表时 `useFocusEffect` 会重新读当月。
+- **发生时间不参与编辑**：表单没有日期字段，补记过去日期仍是已知取舍；改金额 / 备注
+  不应该顺手改掉「这笔钱什么时候发生」。
+
 ## 5. 备份格式 v5
 
 - v8 时 `BACKUP_FORMAT_VERSION` 从 `3` 升到 `4`，`BackupData` 新增 `ledgerEntries: LedgerEntry[]`；
@@ -166,7 +187,8 @@ return { from: start.toISOString(), until: end.toISOString() };
   错误带路径（`data.ledgerEntries[0].tag`）。
 - **旧备份兼容**：缺失的集合按空处理（v3 及更早的备份只是没有账）；
   v4 备份缺失 `tag` 字段按「没有标签」解析，不会报错。
-- 合并按「不可变事实」：同 id 保留本地，新 id 追加；`ledgerEntries` 参与稳定排序与重复 id 体检。
+- 合并按「同 id 保留本地，新 id 追加」：本机 `update` 过的账不会被同 id 的旧备份覆盖；
+  没有 `updated_at`，所以暂不做跨设备同 id 的「谁更新」比较。`ledgerEntries` 参与稳定排序与重复 id 体检。
 - 导入在同一个独占事务里删 / 写**八张表**（原来七张 + `ledger_entries`），
   并核对行数与 `PRAGMA foreign_key_check`；失败整体回滚。`tag` 是列，不是新表。
 
@@ -175,9 +197,10 @@ return { from: start.toISOString(), until: end.toISOString() };
 - 纯函数：`domain/__tests__/money-test.ts`、`features/ledger/__tests__/month-test.ts`、`format-test.ts`
   （含按本地日期分组）。
 - 仓储：`repositories/__tests__/ledgerEntryRepository-test.ts`（真实内存 SQLite：整数分、备注 / 标签 trim、
-  倒序、本地时区月边界、非法金额 / 方向 / 备注 / 标签 / 未来时间、真删与 `NotFoundError`）。
+  倒序、本地时区月边界、非法金额 / 方向 / 备注 / 标签 / 未来时间、真删与 `NotFoundError`；
+  另覆盖 `getById` 与 `update`——整体替换、清空备注 / 标签、时间保持不变、不存在的 id）。
 - 组件：`monthPicker-test`、`ledgerEntryRow-test`、`ledgerEntryForm-test`（RNTL，不连数据库；
-  覆盖标签胶囊与标签输入）。
+  覆盖标签胶囊、点行回调、标签输入与编辑模式预填）。
 - 备份：`domain/__tests__/backup-test.ts` 增加记账往返、v4 旧备份缺 `tag`、逐字段拒绝、合并与重复 id；
   `backupRepository-test.ts` 的导出 / 导入 / 计数覆盖第八张表与标签。
 - 端到端：`.maestro/flows/15-ledger.yaml`。真实模拟器上跑过：
@@ -188,10 +211,11 @@ return { from: start.toISOString(), until: end.toISOString() };
 
 ## 7. 已知取舍
 
-- **没有编辑入口**：记错只能删了重记。记账条目少、字段少，先不做编辑页；以后要做，
-  得同时决定「备份合并是否还坚持不可变」。
-- **不能补记过去的日期**：表单只记当前时间。需求是「快速记一笔」；补记需要再加日期选择，
-  也会让「复制到当前时间」的语义变复杂。
+- **不能选发生时间**：新建只记当前时间，详情页的编辑也不改发生时间；补记 / 改时间需要再加日期选择，
+  也会让「复制到当前时间」的语义变复杂。现在记错时间只能删了重记。
+- **本地编辑不参与跨设备同 id 合并**：没有 `updated_at`，备份导入时同 id 保留本地。
+  本机改过的账不会被旧备份覆盖；但如果先在 A 机改、再拿 B 机的旧备份导入，B 的旧值会留下。
+  要做跨设备「谁更新」需要补列、迁移与合并规则。
 - **删除是真删，不进回收站**：一条账没有快照、没有联动数据，误删的代价比事件记录小；
   表单外有二次确认兜底。若以后要软删除，需加 `deleted_at` 与迁移，并同步备份。
 - **月份下拉是绝对定位浮层**：不把左侧合计撑高、不推页面，但也还没做「点空白处关闭」

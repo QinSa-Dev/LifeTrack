@@ -19,7 +19,9 @@ function makeEntry(overrides: Partial<LedgerEntry> = {}): LedgerEntry {
 
 describe('<LedgerEntryRow />', () => {
   test('一行说清备注、时间与带符号的金额', async () => {
-    await render(<LedgerEntryRow entry={makeEntry()} onCopy={() => {}} onDelete={() => {}} />);
+    await render(
+      <LedgerEntryRow entry={makeEntry()} onPress={() => {}} onCopy={() => {}} onDelete={() => {}} />,
+    );
 
     expect(screen.getByText('上班地铁')).toBeOnTheScreen();
     expect(screen.getByText('-¥3.60')).toBeOnTheScreen();
@@ -27,7 +29,14 @@ describe('<LedgerEntryRow />', () => {
   });
 
   test('有标签时在时间旁边用小字展示出来', async () => {
-    await render(<LedgerEntryRow entry={makeEntry({ tag: '通勤' })} onCopy={() => {}} onDelete={() => {}} />);
+    await render(
+      <LedgerEntryRow
+        entry={makeEntry({ tag: '通勤' })}
+        onPress={() => {}}
+        onCopy={() => {}}
+        onDelete={() => {}}
+      />,
+    );
 
     expect(screen.getByText('通勤')).toBeOnTheScreen();
   });
@@ -36,6 +45,7 @@ describe('<LedgerEntryRow />', () => {
     await render(
       <LedgerEntryRow
         entry={makeEntry({ kind: 'income', amountCents: 10000, note: undefined })}
+        onPress={() => {}}
         onCopy={() => {}}
         onDelete={() => {}}
       />,
@@ -45,10 +55,28 @@ describe('<LedgerEntryRow />', () => {
     expect(screen.getByText('+¥100.00')).toBeOnTheScreen();
   });
 
+  test('点整行打开详情：无障碍名字带上金额与标签', async () => {
+    const onPress = jest.fn();
+    await render(
+      <LedgerEntryRow
+        entry={makeEntry({ tag: '通勤' })}
+        onPress={onPress}
+        onCopy={() => {}}
+        onDelete={() => {}}
+      />,
+    );
+
+    await fireEvent.press(screen.getByRole('button', { name: '上班地铁，-¥3.60，标签 通勤' }));
+
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
   test('左滑复制、右滑删除各走各的回调，名字里带上这一条', async () => {
     const onCopy = jest.fn();
     const onDelete = jest.fn();
-    await render(<LedgerEntryRow entry={makeEntry()} onCopy={onCopy} onDelete={onDelete} />);
+    await render(
+      <LedgerEntryRow entry={makeEntry()} onPress={() => {}} onCopy={onCopy} onDelete={onDelete} />,
+    );
 
     // 未滑动时两个动作对读屏隐藏；组件测试直接取隐藏节点验证回调。
     await fireEvent.press(

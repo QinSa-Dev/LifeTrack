@@ -23,6 +23,34 @@ describe('<LedgerEntryForm />', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  test('编辑模式：预填方向、金额、备注与标签，标题与按钮换成编辑文案', async () => {
+    const onSubmit = jest.fn().mockResolvedValue(undefined);
+    await render(
+      <LedgerEntryForm
+        onSubmit={onSubmit}
+        onClose={() => {}}
+        title="编辑这笔账"
+        submitLabel="保存"
+        initialValues={{ kind: 'income', amountCents: 12345, note: '工资', tag: '薪资' }}
+      />,
+    );
+
+    expect(screen.getByText('编辑这笔账')).toBeOnTheScreen();
+    expect(screen.getByRole('button', { name: '收入' })).toBeSelected();
+    expect(screen.getByDisplayValue('123.45')).toBeOnTheScreen();
+    expect(screen.getByDisplayValue('工资')).toBeOnTheScreen();
+    expect(screen.getByDisplayValue('薪资')).toBeOnTheScreen();
+
+    await fireEvent.press(screen.getByRole('button', { name: '保存' }));
+
+    expect(onSubmit).toHaveBeenCalledWith({
+      kind: 'income',
+      amountCents: 12345,
+      note: '工资',
+      tag: '薪资',
+    });
+  });
+
   test('输入金额、备注与标签后提交：元转成分，文本原样带走', async () => {
     const { onSubmit, onClose } = await renderForm();
 

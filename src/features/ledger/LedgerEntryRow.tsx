@@ -10,6 +10,8 @@ import { formatLedgerAmount, formatLedgerTime, ledgerEntryTitle } from './format
 
 export interface LedgerEntryRowProps {
   entry: LedgerEntry;
+  /** 点整行进详情页（行已展开时先收起，不直接跳转） */
+  onPress: () => void;
   /** 左滑后点「复制」：以当前时间再记一笔一模一样的 */
   onCopy: () => void;
   /** 右滑后点「删除」：由调用方弹二次确认 */
@@ -46,7 +48,7 @@ function clampOffset(value: number): number {
  * 只在明显的横向滑动（`|dx| > 8` 且比纵向大）时接管，
  * 纵向滚动列表仍然归 `SectionList`。
  */
-export function LedgerEntryRow({ entry, onCopy, onDelete }: LedgerEntryRowProps) {
+export function LedgerEntryRow({ entry, onPress, onCopy, onDelete }: LedgerEntryRowProps) {
   // 哪一侧露出来了要参与渲染（决定哪个按钮对读屏可见），所以用 state；
   // Animated.Value、PanResponder 和手势内部的当前侧仍在惰性初始化里只建一次。
   const [openSide, setOpenSide] = useState<OpenSide>(null);
@@ -65,6 +67,10 @@ export function LedgerEntryRow({ entry, onCopy, onDelete }: LedgerEntryRowProps)
     };
 
     const panResponder = PanResponder.create({
+      // 捕获阶段也判断一次：行内容现在是 Pressable，横向滑动要从它手里把
+      // responder 抢过来，否则「按下 → 滑动」会被 Pressable 当成一次点击。
+      onMoveShouldSetPanResponderCapture: (_, state) =>
+        Math.abs(state.dx) > 8 && Math.abs(state.dx) > Math.abs(state.dy) * 1.5,
       onMoveShouldSetPanResponder: (_, state) =>
         Math.abs(state.dx) > 8 && Math.abs(state.dx) > Math.abs(state.dy) * 1.5,
       onPanResponderMove: (_, state) => {
@@ -105,6 +111,14 @@ export function LedgerEntryRow({ entry, onCopy, onDelete }: LedgerEntryRowProps)
     action();
   };
 
+  const handlePress = () => {
+    if (openSide !== null) {
+      settle(null);
+      return;
+    }
+    onPress();
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.actions}>
@@ -136,32 +150,36 @@ export function LedgerEntryRow({ entry, onCopy, onDelete }: LedgerEntryRowProps)
         </Pressable>
       </View>
 
-      <Animated.View
-        {...panResponder.panHandlers}
-        accessibilityHint="左滑复制，右滑删除"
-        style={[styles.row, { transform: [{ translateX }] }]}
-      >
-        <View style={styles.texts}>
-          <AppText variant="body" numberOfLines={1}>
-            {title}
-          </AppText>
-          <View style={styles.metaRow}>
-            <AppText variant="caption" color={palette.textMuted}>
-              {formatLedgerTime(entry.occurredAt)}
+      <Animated.View {...panResponder.panHandlers} style={[styles.row, { transform: [{ translateX }] }]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`${title}，${amount}${tag ? `，标签 ${tag}` : ''}`}
+          accessibilityHint="打开并编辑这笔账；左滑复制，右滑删除"
+          onPress={handlePress}
+          style={({ pressed }) => [styles.rowContent, pressed ? styles.rowPressed : null]}
+        >
+          <View style={styles.texts}>
+            <AppText variant="body" numberOfLines={1}>
+              {title}
             </AppText>
-            {tag ? (
-              <View style={styles.tag}>
-                <Ionicons name="pricetag-outline" size={10} color={palette.primary} />
-                <AppText variant="caption" color={palette.primary} numberOfLines={1} style={styles.tagText}>
-                  {tag}
-                </AppText>
-              </View>
-            ) : null}
+            <View style={styles.metaRow}>
+              <AppText variant="caption" color={palette.textMuted}>
+                {formatLedgerTime(entry.occurredAt)}
+              </AppText>
+              {tag ? (
+                <View style={styles.tag}>
+                  <Ionicons name="pricetag-outline" size={10} color={palette.primary} />
+                  <AppText variant="caption" color={palette.primary} numberOfLines={1} style={styles.tagText}>
+                    {tag}
+                  </AppText>
+                </View>
+              ) : null}
+            </View>
           </View>
-        </View>
-        <AppText variant="subtitle" color={entry.kind === 'expense' ? palette.danger : palette.success}>
-          {amount}
-        </AppText>
+          <AppText variant="subtitle" color={entry.kind === 'expense' ? palette.danger : palette.success}>
+            {amount}
+          </AppText>
+        </Pressable>
       </Animated.View>
     </View>
   );
@@ -200,6 +218,9 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   row: {
+    backgroundColor: palette.surface,
+  },
+  rowContent: {
     minHeight: 64,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
@@ -207,7 +228,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
-    backgroundColor: palette.surface,
+  },
+  rowPressed: {
+    backgroundColor: palette.surfaceMuted,
   },
   texts: {
     flexShrink: 1,

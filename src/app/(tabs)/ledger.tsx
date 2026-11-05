@@ -222,6 +222,7 @@ export default function LedgerScreen() {
           <View style={index === section.data.length - 1 ? styles.dayEnd : styles.item}>
             <LedgerEntryRow
               entry={item}
+              onPress={() => router.push({ pathname: '/ledger/[id]', params: { id: item.id } })}
               onCopy={() => void copyEntry(item)}
               onDelete={() => confirmDelete(item)}
             />

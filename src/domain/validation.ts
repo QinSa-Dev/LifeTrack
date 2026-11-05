@@ -130,6 +130,19 @@ export interface LedgerEntryInput {
   occurredAt?: string;
 }
 
+/**
+ * 更正一笔已存在的账：方向、金额、备注、标签整体替换。
+ *
+ * 发生时间与录入时间不在这里：它们说明「这笔钱什么时候发生、什么时候记下的」，
+ * 改金额 / 备注不该顺手改掉。复制与新建仍然走 `LedgerEntryInput`。
+ */
+export interface LedgerEntryEditInput {
+  kind: LedgerKind;
+  amountCents: number;
+  note?: string;
+  tag?: string;
+}
+
 /** 记账标签的长度上限（数据库 CHECK 与界面输入共用同一个数字）。 */
 export const MAX_LEDGER_TAG_LENGTH = 30;
 
