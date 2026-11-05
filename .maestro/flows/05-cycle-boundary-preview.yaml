@@ -21,7 +21,7 @@ tags:
     stopApp: true
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 4'
+    visible: '时间轴, tab, 1 of 5'
     timeout: 120000
 # 周期是事件的一种类型：在「事件」页新建一个周期型事件
 - tapOn: '.*事件, tab.*'

@@ -9,6 +9,7 @@ import { CycleInstanceRepository } from '@/repositories/cycleInstanceRepository'
 import { EventDefinitionRepository } from '@/repositories/eventDefinitionRepository';
 import { EventGroupRepository } from '@/repositories/eventGroupRepository';
 import { EventRecordRepository } from '@/repositories/eventRecordRepository';
+import { LedgerEntryRepository } from '@/repositories/ledgerEntryRepository';
 import { MetaRepository } from '@/repositories/metaRepository';
 
 const T1 = '2026-10-19T08:00:00.000Z';
@@ -24,6 +25,7 @@ interface Context {
   records: EventRecordRepository;
   instances: CycleInstanceRepository;
   entries: CycleEntryRepository;
+  ledger: LedgerEntryRepository;
   meta: MetaRepository;
 }
 
@@ -38,6 +40,7 @@ async function setup(): Promise<Context> {
     records: new EventRecordRepository(db),
     instances: new CycleInstanceRepository(db),
     entries: new CycleEntryRepository(db),
+    ledger: new LedgerEntryRepository(db),
     meta: new MetaRepository(db),
   };
 }
@@ -97,6 +100,8 @@ async function seed(context: Context): Promise<void> {
     T1,
   );
   await context.entries.save(instance.id, { date: '2026-10-02', phase: '经期', symptoms: ['头痛'] }, T1);
+
+  await context.ledger.create({ kind: 'expense', amountCents: 360, note: '上班地铁' }, T1);
 }
 
 /** 取导出数据里某个名字的定义，找不到就失败（夹具变更时能立刻发现） */
@@ -149,6 +154,8 @@ describe('BackupRepository.exportAll', () => {
     expect(file.data.eventRecords.filter((record) => record.deletedAt !== undefined)).toHaveLength(1);
     expect(file.data.cycleInstances).toHaveLength(1);
     expect(file.data.cycleEntries).toHaveLength(1);
+    expect(file.data.ledgerEntries).toHaveLength(1);
+    expect(file.data.ledgerEntries[0]?.note).toBe('上班地铁');
   });
 
   it('导出的是稳定顺序：同一份数据两次导出完全一致', async () => {
@@ -205,7 +212,7 @@ describe('BackupRepository.importAll', () => {
     try {
       const summary = await target.backup.importAll(file);
 
-      expect(summary.totals.added).toBe(8); // 1 分组 + 3 定义 + 2 记录 + 1 周期实例 + 1 周期记录
+      expect(summary.totals.added).toBe(9); // 1 分组 + 3 定义 + 2 记录 + 1 周期实例 + 1 周期记录 + 1 笔账
       expect(summary.totals.updated).toBe(0);
       expect(summary.totals.kept).toBe(0);
       expect(sortBackupData(await target.backup.readAll())).toEqual(file.data);
@@ -222,7 +229,7 @@ describe('BackupRepository.importAll', () => {
     const second = await context.backup.importAll(file);
 
     expect(first.totals.added).toBe(0);
-    expect(second.totals).toEqual({ added: 0, updated: 0, kept: 8 });
+    expect(second.totals).toEqual({ added: 0, updated: 0, kept: 9 });
   });
 
   it('导入是合并：本地独有的数据一定保留', async () => {
@@ -343,7 +350,7 @@ describe('BackupRepository.importAll', () => {
     const summary = await context.backup.previewImport(file);
 
     expect(summary.totals.added).toBe(0);
-    expect(summary.totals.kept).toBe(8);
+    expect(summary.totals.kept).toBe(9);
     expect(sortBackupData(await context.backup.readAll())).toEqual(before);
   });
 

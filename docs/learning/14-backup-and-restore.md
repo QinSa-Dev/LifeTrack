@@ -1,6 +1,8 @@
 # 14 备份与恢复（导入导出）：显式格式契约、严格解析与「取并集」的合并
 
-> ⚠️ **v7 起备份格式升到 `formatVersion = 3`**（v6 起为 2，最初是 1）：
+> ⚠️ **v8 起备份格式升到 `formatVersion = 4`**（v7 为 3、v6 为 2，最初是 1）：
+> - **v8**：新增 `ledgerEntries` 集合（记账）；旧 v3 及更早的备份**仍然能导**，缺失的
+>   `ledgerEntries` 按空数组解析（走读见 [22 记账](./22-ledger.md)）。
 > - **v7**：集合从 6 个变成 5 个（**没有 `tags`**）；定义多了 `fields`、记录的快照多了
 >   `fields` + `fieldValues`（取代 `tagIds` / `snapshot.tagIds`）。**v2 及以前的备份仍然能导**：
 >   计数型定义里的标签会被折成一条名为「标签」的多选字段、记录的标签值折成字段取值
@@ -23,7 +25,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| 导出 JSON 备份 | 五个业务集合（**v6 去掉了 `cycleDefinitions`、v7 去掉了 `tags`**；含**归档的定义**与**软删除的记录**）打包成一个带格式声明的 JSON 文件 |
+| 导出 JSON 备份 | 六个业务集合（**v6 去掉了 `cycleDefinitions`、v7 去掉了 `tags`、v8 加了 `ledgerEntries`**；含**归档的定义**与**软删除的记录**）打包成一个带格式声明的 JSON 文件 |
 | 导出 CSV 表格 | 只要事件记录的表格视图，方便用 Excel / Numbers 打开核对数字（**只导出、不导入**） |
 | 导入（合并） | 选一个 JSON 备份，**并进**本地数据；本地独有的数据一条都不会被删 |
 | 冲突合并 | 同 id 的一对数据按「较新的 `updatedAt` 胜出」决定谁留下 |
@@ -37,8 +39,8 @@
 
 | 数字 | 含义 | 谁决定 |
 | --- | --- | --- |
-| `formatVersion`（当前 3） | **备份文件结构**的版本：字段怎么摆 | 领域层 `BACKUP_FORMAT_VERSION` |
-| `schemaVersion`（备份时是当前的 schema 版本，如今 7） | 导出那一刻**数据库 schema** 的版本 | `LATEST_SCHEMA_VERSION`，由调用方传入 |
+| `formatVersion`（当前 4） | **备份文件结构**的版本：字段怎么摆 | 领域层 `BACKUP_FORMAT_VERSION` |
+| `schemaVersion`（备份时是当前的 schema 版本，如今 8） | 导出那一刻**数据库 schema** 的版本 | `LATEST_SCHEMA_VERSION`，由调用方传入 |
 
 两者不是一回事：领域层不依赖数据库（见 [03](./03-typescript-domain-model.md) 与
 [04](./04-sqlite-and-repository.md) 的职责边界），所以 `schemaVersion` 是**参数**，
@@ -178,7 +180,7 @@ data.cycleInstances[0].definitionId：指向不存在的周期定义：0199…
 
 ```
 BEGIN（独占事务）
-  DELETE 全部七张表（子表在前）
+  DELETE 全部八张表（子表在前）
   INSERT 合并结果（父表在前）
   SELECT COUNT(*) 逐表核对行数
   PRAGMA foreign_key_check（外键体检）
@@ -206,7 +208,7 @@ COMMIT
 
 ### 3.6 「读到内存 → 合并 → 整体重写」这个形状
 
-**是什么**：导入的流程是 `readAll()` → `mergeBackup()` → 一个事务里重写全部七张表。
+**是什么**：导入的流程是 `readAll()` → `mergeBackup()` → 一个事务里重写全部八张表。
 
 **为什么**：合并规则是**纯函数**，输入是两份 `BackupData`、输出是一份。这样一来
 「合并」可以脱离数据库单测（本次 28 个领域用例里有 7 个专测合并），
@@ -286,7 +288,7 @@ UUID 的**形状**（8-4-4-4-12 的小写十六进制）。而**生成**新 id �
 
 ```ts
 export const BACKUP_FORMAT = 'lifetrack-backup';
-export const BACKUP_FORMAT_VERSION = 3;
+export const BACKUP_FORMAT_VERSION = 4;
 
 export interface BackupFile {
   format: string;
@@ -385,7 +387,7 @@ async importAll(file: BackupFile): Promise<ImportSummary> {
     const { data, summary } = await this.planImport(file); // 校验版本 + 完整性 + 读本地 + 合并
 
     await this.db.withExclusiveTransactionAsync(async (txn) => {
-      await this.clearAll(txn);   // DELETE 七张表（子表在前）
+      await this.clearAll(txn);   // DELETE 八张表（子表在前）
       await this.writeAll(txn, data); // INSERT 合并结果（父表在前）
       await assertConsistent(txn, data); // 行数 + PRAGMA foreign_key_check
     });
@@ -446,7 +448,7 @@ setBackupMessage(`导入完成：${describeSummary(applied)}`);
 
 ```mermaid
 flowchart TD
-  A[设置页点「导出 JSON 备份」] --> B[BackupRepository.exportAll<br/>readAll 读七张表]
+  A[设置页点「导出 JSON 备份」] --> B[BackupRepository.exportAll<br/>readAll 读八张表]
   B --> C[createBackup 排序 + 写格式元信息]
   C --> D[serializeBackup 缩进 JSON]
   D --> E[transfer：写缓存目录 → expo-sharing 分享]

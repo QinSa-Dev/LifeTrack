@@ -9,6 +9,7 @@ import {
   MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE,
   MIGRATION_V6_CYCLE_AS_EVENT_KIND,
   MIGRATION_V7_CUSTOM_FIELDS,
+  MIGRATION_V8_LEDGER,
 } from '@/db/schema';
 import { createTestDatabase, type TestDatabase } from '@/db/testing/nodeSqliteAdapter';
 import { MigrationError } from '@/domain/errors';
@@ -46,7 +47,7 @@ describe('迁移清单校验', () => {
 
   it('当前仓库的迁移清单是合法的', () => {
     expect(() => validateMigrations(MIGRATIONS)).not.toThrow();
-    expect(LATEST_SCHEMA_VERSION).toBe(7);
+    expect(LATEST_SCHEMA_VERSION).toBe(8);
   });
 });
 
@@ -64,8 +65,8 @@ describe('runMigrations', () => {
   it('全新数据库：建表并提升 user_version', async () => {
     const result = await runMigrations(db, MIGRATIONS);
 
-    expect(result).toEqual({ from: 0, to: 7, applied: [1, 2, 3, 4, 5, 6, 7] });
-    expect(await readSchemaVersion(db)).toBe(7);
+    expect(result).toEqual({ from: 0, to: 8, applied: [1, 2, 3, 4, 5, 6, 7, 8] });
+    expect(await readSchemaVersion(db)).toBe(8);
     expect(tableExists(db, 'app_meta')).toBe(true);
     expect(tableExists(db, 'event_definitions')).toBe(true);
     expect(tableExists(db, 'event_records')).toBe(true);
@@ -92,7 +93,7 @@ describe('runMigrations', () => {
     await runMigrations(db, MIGRATIONS);
     const second = await runMigrations(db, MIGRATIONS);
 
-    expect(second).toEqual({ from: 7, to: 7, applied: [] });
+    expect(second).toEqual({ from: 8, to: 8, applied: [] });
   });
 
   it('数据库版本高于应用支持版本时拒绝启动，且不破坏数据', async () => {
@@ -285,8 +286,8 @@ describe('v2 事件定义结构', () => {
 
       const result = await runMigrations(legacy, MIGRATIONS);
 
-      expect(result).toEqual({ from: 1, to: 7, applied: [2, 3, 4, 5, 6, 7] });
-      expect(await readSchemaVersion(legacy)).toBe(7);
+      expect(result).toEqual({ from: 1, to: 8, applied: [2, 3, 4, 5, 6, 7, 8] });
+      expect(await readSchemaVersion(legacy)).toBe(8);
       expect(legacy.rawGet("SELECT value FROM app_meta WHERE key = 'keep'")).toEqual({ value: 'me' });
       expect(tableExists(legacy, 'event_definitions')).toBe(true);
       expect(tableExists(legacy, 'event_records')).toBe(true);
@@ -744,7 +745,7 @@ describe('v6 周期并入事件定义、单位改为属性', () => {
 
       const result = await runMigrations(legacy, MIGRATIONS);
 
-      expect(result).toEqual({ from: 5, to: 7, applied: [6, 7] });
+      expect(result).toEqual({ from: 5, to: 8, applied: [6, 7, 8] });
 
       const definitions = legacy.rawAll<{
         id: string;
@@ -813,6 +814,7 @@ describe('v6 周期并入事件定义、单位改为属性', () => {
       'idx_event_definitions_group_id',
       'idx_event_records_definition_id',
       'idx_event_records_occurred_at',
+      'idx_ledger_entries_occurred_at',
       'idx_quick_options_definition_id',
     ]);
   });
@@ -905,7 +907,7 @@ describe('v7 自定义字段替换标签', () => {
 
       const result = await runMigrations(legacy, MIGRATIONS);
 
-      expect(result).toEqual({ from: 6, to: 7, applied: [7] });
+      expect(result).toEqual({ from: 6, to: 8, applied: [7, 8] });
 
       const fields = legacy.rawAll<{
         definition_id: string;
@@ -951,5 +953,61 @@ describe('v7 自定义字段替换标签', () => {
     expect(MIGRATION_V7_CUSTOM_FIELDS.version).toBe(7);
     expect(MIGRATION_V7_CUSTOM_FIELDS.statements?.length).toBeGreaterThan(0);
     expect(MIGRATION_V7_CUSTOM_FIELDS.up).toBeDefined();
+  });
+});
+
+describe('v8 记账', () => {
+  let db: TestDatabase;
+
+  beforeEach(async () => {
+    db = createTestDatabase();
+    await runMigrations(db, MIGRATIONS);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function insert(kind: unknown, amountCents: unknown, note: string | null = null) {
+    db.rawGet(
+      `INSERT INTO ledger_entries (id, kind, amount_cents, note, occurred_at, recorded_at)
+       VALUES ('l1', ?, ?, ?, '2026-11-05T08:00:00.000Z', '2026-11-05T08:00:00.000Z')`,
+      kind as string,
+      amountCents as number,
+      note,
+    );
+  }
+
+  it('建表、列与索引都在', () => {
+    expect(tableExists(db, 'ledger_entries')).toBe(true);
+    const columns = db
+      .rawAll<{ name: string; notnull: number; pk: number }>('PRAGMA table_info(ledger_entries)')
+      .map((column) => column.name);
+    expect(columns).toEqual(['id', 'kind', 'amount_cents', 'note', 'occurred_at', 'recorded_at']);
+
+    const indexes = db.rawAll<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ledger_entries'",
+    );
+    expect(indexes.map((index) => index.name)).toContain('idx_ledger_entries_occurred_at');
+  });
+
+  it('方向只认 expense / income，金额必须大于 0', () => {
+    insert('expense', 360);
+    expect(() => insert('expense', 0)).toThrow();
+    expect(() => insert('expense', -1)).toThrow();
+    expect(() => insert('transfer', 100)).toThrow();
+  });
+
+  it('备注可以空，但超过 100 字符会被拒绝', () => {
+    insert('income', 100, null);
+    db.rawGet("DELETE FROM ledger_entries WHERE id = 'l1'");
+    insert('income', 100, 'x'.repeat(100));
+    db.rawGet("DELETE FROM ledger_entries WHERE id = 'l1'");
+    expect(() => insert('income', 100, 'x'.repeat(101))).toThrow();
+  });
+
+  it('v8 迁移对象自带版本号与可执行内容', () => {
+    expect(MIGRATION_V8_LEDGER.version).toBe(8);
+    expect(MIGRATION_V8_LEDGER.statements?.length).toBeGreaterThan(0);
   });
 });

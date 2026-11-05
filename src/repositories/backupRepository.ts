@@ -36,9 +36,11 @@ import { CycleInstanceRepository } from './cycleInstanceRepository';
 import { EventDefinitionRepository } from './eventDefinitionRepository';
 import { EventGroupRepository } from './eventGroupRepository';
 import { EventRecordRepository } from './eventRecordRepository';
+import { LedgerEntryRepository } from './ledgerEntryRepository';
 
 /** 清空顺序：先子表后父表（外键 + CASCADE 之下顺序并不严格，但这样最直白）。 */
 const DELETE_ORDER = [
+  'ledger_entries',
   'cycle_entries',
   'cycle_instances',
   'event_records',
@@ -70,14 +72,16 @@ export class BackupRepository {
       const records = new EventRecordRepository(this.db);
       const cycleInstances = new CycleInstanceRepository(this.db);
       const cycleEntries = new CycleEntryRepository(this.db);
+      const ledgerEntries = new LedgerEntryRepository(this.db);
 
-      const [groupList, definitionList, recordList, instanceList, entryList] = await Promise.all([
+      const [groupList, definitionList, recordList, instanceList, entryList, ledgerList] = await Promise.all([
         eventGroups.list(),
         // 周期型事件也在 event_definitions 里，所以这一个列表就是全部定义
         definitions.list({ includeArchived: true }),
         records.list({ includeDeleted: true }),
         cycleInstances.list(),
         cycleEntries.listAll(),
+        ledgerEntries.listAll(),
       ]);
 
       return {
@@ -86,6 +90,7 @@ export class BackupRepository {
         eventRecords: recordList,
         cycleInstances: instanceList,
         cycleEntries: entryList,
+        ledgerEntries: ledgerList,
       };
     });
   }
@@ -257,6 +262,19 @@ export class BackupRepository {
         entry.deletedAt ?? null,
       );
     }
+
+    for (const entry of data.ledgerEntries) {
+      await txn.runAsync(
+        `INSERT INTO ledger_entries (id, kind, amount_cents, note, occurred_at, recorded_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        entry.id,
+        entry.kind,
+        entry.amountCents,
+        entry.note ?? null,
+        entry.occurredAt,
+        entry.recordedAt,
+      );
+    }
   }
 }
 
@@ -271,6 +289,7 @@ function expectedCounts(data: BackupData): readonly { table: string; expected: n
     { table: 'event_records', expected: data.eventRecords.length },
     { table: 'cycle_instances', expected: data.cycleInstances.length },
     { table: 'cycle_entries', expected: data.cycleEntries.length },
+    { table: 'ledger_entries', expected: data.ledgerEntries.length },
   ];
 }
 

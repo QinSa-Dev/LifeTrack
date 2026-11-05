@@ -29,7 +29,7 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `.maestro/flows/00-smoke.yaml` | 冒烟：四个标签页都能渲染真实数据；「新建事件」里确认计数与周期两种类型都在 |
+| `.maestro/flows/00-smoke.yaml` | 冒烟：五个标签页都能渲染真实数据；「新建事件」里确认计数与周期两种类型都在 |
 | `.maestro/flows/01-record-event.yaml` | 事件页 →（必要时新建定义）→ 记录页「记录」→ 时间轴可见 |
 | `.maestro/flows/02-timeline-delete-undo.yaml` | 时间轴点行 → 记录详情页 → 「更多操作」改发生日期 / 删除 / 撤销删除（**改版后已更新**，见 [16](./16-timeline-row-and-detail.md)） |
 | `.maestro/flows/03-trash-restore-perma.yaml` | 从详情页删除 → 回收站「恢复」；再删 →「永久删除」+ 原生二次确认 |
@@ -40,7 +40,8 @@
 | `.maestro/flows/08-cycle-calendar.yaml` | 月视图点 `2026-10-02` → `当前选中` 跟着变 → 填症状保存 → 那格变成「有记录（2 个症状）」→ 定义页「症状统计」→ 自产自销删干净 |
 | `.maestro/flows/09-timeline-repeat-merge.yaml` | 行内【+1】（不弹确认）→ 进那条记录的详情页核对来源「快捷」→ 到设置切「合并」→ 点行就地展开 → 切回「逐条」（**时间轴改版时新增**，见 [16](./16-timeline-row-and-detail.md)） |
 | `.maestro/flows/10-cycle-prediction-and-overlap.yaml` | 建三段周期（**在「事件」页新建周期型事件**）→ 默认预测文案 → 到「设置 → 偏好设置」改预测窗口 → 文案跟着变 → 改边界触发**重叠预演**（**周期增强收尾时新增**，见 [11](./11-cycle-tracking.md) 4.11 / 4.12 节） |
-| `.maestro/subflows/record-once.yaml` | 被 01 / 03 用 `runFlow` 调用的共用片段 |
+| `.maestro/flows/15-ledger.yaml` | 记账页记一笔 `3.6 / Maestro记账` → 左滑点「复制」→ 月合计 `-¥7.20` → 删两条收尾（**记账时新增**，见 [22](./22-ledger.md)） |
+| `.maestro/subflows/record-once.yaml` | 被 01 / 03 / 09 用 `runFlow` 调用的共用片段（行在底部时先滚到中间再点） |
 | `.maestro/subflows/use-expanded-view.yaml` | 被 02 / 03 / 09 调用：去「设置 → 偏好设置」把时间轴钉成「逐条」（默认是合并，点行是就地展开） |
 | `.maestro/import/09a-export-marker.yaml` + `09b-import-merge.yaml` | **手工两段式**（不在 `flows/` 里）：造标记 → 导出 →（宿主把文件拷进「我的 iPhone」）→ 永久删除本地那条 → 选文件导入 → 「新增 1 条」→ 时间轴里那条回来 |
 | `.maestro/README.md` | 跑法、前置条件、约定（尤其「**不许** `clearState`」） |
@@ -79,7 +80,7 @@ iOS 上 Maestro 读的是元素的 **accessibility 文字**，对 React Native �
 ### 3.3 匹配是**全文匹配**，部分匹配要自己写 `.*`
 
 这是本项踩的第一个坑。`assertVisible: '时间轴'` 能过，是因为页面头部标题恰好就是「时间轴」；
-但底部标签栏的文字是 **`时间轴, tab, 1 of 4`**（Maestro 帮忙拼了「第几个 tab」；**v6 起只剩四个标签**），
+但底部标签栏的文字是 **`时间轴, tab, 1 of 5`**（Maestro 帮忙拼了「第几个 tab」；**v6 起没有「周期」、v8 起多了「记账」，现在是五个**），
 所以 `tapOn: '事件'` **找不到任何东西**。
 
 规矩：**默认按正则全文匹配**；要用片段就显式写 `.*事件, tab.*`。
@@ -124,7 +125,7 @@ iOS 上 Maestro 读的是元素的 **accessibility 文字**，对 React Native �
     stopApp: true          # 杀掉 Expo Go（不清数据）
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 4'   # 用标签栏文字当锚点，确认真的落在根页面
+    visible: '时间轴, tab, 1 of 5'   # 用标签栏文字当锚点，确认真的落在根页面
     timeout: 120000
 ```
 
@@ -388,11 +389,15 @@ maestro hierarchy                  # 排错：打印当前屏幕的视图树
 
 > 上面是**搭建这套流程时**的快照（当时 9 条，标签栏还是五个）。后来加了 `09`（时间轴行改版）、
 > `10`（周期增强收尾：预测窗口 + 重叠预演）与 `11`（时间轴筛选与排序）。
-> **最新一次全量跑为 12/12 通过，7m49s**（2026-10-29，iPhone 16e / iOS 26.3 / Expo Go），
-> 这是提示文案精简 / 统计趋势改版 / 时间轴筛选排序之后的第一次回归，也是 `11` 的第一次真跑。
-> 那次同时修掉了 5 处「界面改了、断言没跟上」的漂移（`hideKeyboard` → `pressKey: Enter`、
-> 统计对比基准折叠后要先展开、撤销条断言别用常驻提示认、页头滚上来会顶到状态栏下面 →
-> `centerElement: true`、摘要行全文匹配要写 `.*`），明细见 `.maestro/README.md`。
+> **最新一次全量跑为 16/16 通过，10m58s**（2026-11-05，iPhone 16e / iOS 26.3 / Expo Go），
+> 覆盖新增的 `15`（记账：记一笔 → 左滑复制 → 删两条）。第一遍是 15/16：`09` 点定义行时
+> 行中心落在底部「时间轴」标签上（行被 tab bar 盖住），给共用的 `record-once.yaml` 加
+> `centerElement: true` 后第二遍 16/16。
+> 2026-10-29 的 12 条全量跑是 **12/12，7m49s**，那是提示文案精简 / 统计趋势改版 / 时间轴筛选排序
+> 之后的第一次回归，也是 `11` 的第一次真跑。那次同时修掉了 5 处「界面改了、断言没跟上」的漂移
+> （`hideKeyboard` → `pressKey: Enter`、统计对比基准折叠后要先展开、撤销条断言别用常驻提示认、
+> 页头滚上来会顶到状态栏下面 → `centerElement: true`、摘要行全文匹配要写 `.*`），明细见
+> `.maestro/README.md`。
 > 更早两次（都是 11 条）：v6 那批改动之后 `11/11`、6m47s；随后在**一个「真跑过 v6 迁移的 v5 库」**
 > 上原样整跑一遍 `11/11`、7m20s。逐条明细与实测耗时见 `.maestro/README.md` 的「流程清单」。
 

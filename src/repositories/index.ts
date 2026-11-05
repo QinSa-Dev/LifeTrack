@@ -4,4 +4,5 @@ export * from './cycleInstanceRepository';
 export * from './eventDefinitionRepository';
 export * from './eventGroupRepository';
 export * from './eventRecordRepository';
+export * from './ledgerEntryRepository';
 export * from './metaRepository';

@@ -185,7 +185,8 @@ export default function SettingsScreen() {
       setBackupMessage(
         `已导出 ${saved.name}（分组 ${counts.eventGroups.length} / ` +
           `事件定义 ${counts.eventDefinitions.length}（含周期型）/ 记录 ${counts.eventRecords.length} / ` +
-          `周期实例 ${counts.cycleInstances.length} 段 / 每日记录 ${counts.cycleEntries.length} 条）`,
+          `周期实例 ${counts.cycleInstances.length} 段 / 每日记录 ${counts.cycleEntries.length} 条 / ` +
+          `记账 ${counts.ledgerEntries.length} 条）`,
       );
     });
   }, [db, runBackupTask]);
@@ -351,7 +352,7 @@ function confirmImport(name: string, file: BackupFile, summary: ImportSummary): 
     `文件：${name}\n` +
     `备份时间：${file.exportedAt}（schema v${file.schemaVersion}）\n` +
     `备份内容：定义 ${file.data.eventDefinitions.length} 个（含周期型）、记录 ${file.data.eventRecords.length} 条、` +
-    `周期实例 ${file.data.cycleInstances.length} 段\n\n` +
+    `周期实例 ${file.data.cycleInstances.length} 段、记账 ${file.data.ledgerEntries.length} 条\n\n` +
     `合并结果：新增 ${added} 条、覆盖 ${updated} 条、保留本地 ${kept} 条。\n` +
     '本地独有的数据不会被删除。';
 

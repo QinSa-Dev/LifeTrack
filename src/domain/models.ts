@@ -277,6 +277,34 @@ export interface CycleEntry {
   deletedAt?: IsoDateTime;
 }
 
+/** 记账的两种方向：支出（`expense`）与收入（`income`）。 */
+export type LedgerKind = 'expense' | 'income';
+
+export const LEDGER_KINDS: readonly LedgerKind[] = ['expense', 'income'];
+
+export function isLedgerKind(value: unknown): value is LedgerKind {
+  return value === 'expense' || value === 'income';
+}
+
+/**
+ * 一条记账记录。
+ *
+ * **金额一律存整数「分」**（`amountCents`）：浮点数不适合做钱的累加
+ * （`0.1 + 0.2 !== 0.3`），展示时再换成元。`occurredAt` 是这笔钱发生的时间，
+ * `recordedAt` 是录入时间——「左滑复制」产生的新记录，两者都取当前时刻。
+ *
+ * 记账不依赖事件定义，也没有快照：它就是一条独立的事实。
+ */
+export interface LedgerEntry {
+  id: string;
+  kind: LedgerKind;
+  /** 金额，单位为分；恒为正整数 */
+  amountCents: number;
+  note?: string;
+  occurredAt: IsoDateTime;
+  recordedAt: IsoDateTime;
+}
+
 /**
  * 回收站里的一条周期记录。
  *

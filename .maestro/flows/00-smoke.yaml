@@ -1,12 +1,12 @@
-# 冒烟：Expo Go 打开本项目，四个标签页都能渲染真实数据。
+# 冒烟：Expo Go 打开本项目，五个标签页都能渲染真实数据。
 #
 # 这条不写任何数据，纯粹用来确认「Maestro + Expo Go + Metro」这条链路是通的。
-# 标签栏的可访问文字长这样：`时间轴, tab, 1 of 4`，所以要用正则匹配。
+# 标签栏的可访问文字长这样：`时间轴, tab, 1 of 5`，所以要用正则匹配。
 #
 # 周期不是独立标签页了（v6 起它是事件的一种类型），所以这里改成：
 # 在「事件」页点「新建事件」，确认类型入口里同时有计数与周期。
 appId: host.exp.Exponent
-name: 00 冒烟 · 打开 App 并走一遍四个标签页
+name: 00 冒烟 · 打开 App 并走一遍五个标签页
 tags:
   - smoke
 ---
@@ -16,7 +16,7 @@ tags:
     stopApp: true
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 4'
+    visible: '时间轴, tab, 1 of 5'
     timeout: 120000
 - tapOn: '.*时间轴, tab.*'
 - assertVisible: '回收站'
@@ -38,6 +38,10 @@ tags:
 - assertVisible: '手动标记'
 - takeScreenshot: 00-event-kinds
 - tapOn: '返回'
+
+- tapOn: '.*记账, tab.*'
+- assertVisible: '记一笔'
+- takeScreenshot: 00-ledger
 
 - tapOn: '.*统计, tab.*'
 # 空库时统计页是空状态（没有「概览」卡片），两种都认

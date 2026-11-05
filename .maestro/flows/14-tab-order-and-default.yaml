@@ -1,9 +1,9 @@
 # 写入路径 14：设置里的底部导航顺序 + 默认打开页。
 #
 # 覆盖：
-#   1. 设置页新增「底部导航」卡：四个标签按当前顺序列出，左右移动按钮带标签名
+#   1. 设置页新增「底部导航」卡：五个标签按当前顺序列出，左右移动按钮带标签名
 #      （`把「统计」左移`），首尾方向按钮禁用；
-#   2. 顺序改完标签栏立刻换位（无障碍标签里的 `tab, N of 4` 会跟着变）；
+#   2. 顺序改完标签栏立刻换位（无障碍标签里的 `tab, N of 5` 会跟着变）；
 #   3. 「默认打开」选事件后冷启动，应用直接落在事件页，且标签顺序仍是改过的；
 #   4. 末尾把顺序与默认页都还原成初始值，再冷启动确认恢复时间轴——
 #      本流程自产自销，不把偏好留给后续流程。
@@ -25,12 +25,13 @@ tags:
     element:
       text: '底部导航'
     direction: DOWN
-- assertVisible: '.*统计, tab, 2 of 4.*'
+- assertVisible: '.*统计, tab, 3 of 5.*'
 
-# —— 顺序：统计左移到第一 ——
+# —— 顺序：统计左移两次到第一（默认顺序是 时间轴 / 记账 / 统计 / 事件 / 设置）——
 - tapOn: '把「统计」左移'
-- assertVisible: '.*统计, tab, 1 of 4.*'
-- assertVisible: '.*时间轴, tab, 2 of 4.*'
+- tapOn: '把「统计」左移'
+- assertVisible: '.*统计, tab, 1 of 5.*'
+- assertVisible: '.*时间轴, tab, 2 of 5.*'
 
 # —— 默认页：选事件 ——
 - scrollUntilVisible:
@@ -47,15 +48,16 @@ tags:
 - extendedWaitUntil:
     visible: '+ 新建事件'
     timeout: 120000
-- assertVisible: '.*统计, tab, 1 of 4.*'
+- assertVisible: '.*统计, tab, 1 of 5.*'
 - takeScreenshot: 14-default-event
 
-# —— 还原：统计右移一格，默认页回时间轴 ——
+# —— 还原：统计右移两次，默认页回时间轴 ——
 - tapOn: '.*设置, tab.*'
 - scrollUntilVisible:
     element:
       text: '底部导航'
     direction: DOWN
+- tapOn: '把「统计」右移'
 - tapOn: '把「统计」右移'
 - scrollUntilVisible:
     element:
@@ -70,5 +72,5 @@ tags:
 - extendedWaitUntil:
     visible: '筛选'
     timeout: 120000
-- assertVisible: '.*时间轴, tab, 1 of 4.*'
+- assertVisible: '.*时间轴, tab, 1 of 5.*'
 - takeScreenshot: 14-restored

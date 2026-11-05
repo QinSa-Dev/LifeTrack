@@ -16,7 +16,7 @@ import {
 import { palette } from '@/theme';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
-type IconBase = 'time' | 'stats-chart' | 'albums' | 'settings';
+type IconBase = 'time' | 'wallet' | 'stats-chart' | 'albums' | 'settings';
 
 const ACTIVE_COLOR = palette.primary;
 const INACTIVE_COLOR = palette.textMuted;
@@ -24,6 +24,7 @@ const INACTIVE_COLOR = palette.textMuted;
 /** 每个标签的图标；顺序由用户偏好决定，这里只放不随顺序变的东西。 */
 const TAB_META: Record<TabRoute, { icon: IconBase }> = {
   index: { icon: 'time' },
+  ledger: { icon: 'wallet' },
   stats: { icon: 'stats-chart' },
   definitions: { icon: 'albums' },
   settings: { icon: 'settings' },

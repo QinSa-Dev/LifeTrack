@@ -1,0 +1,62 @@
+# 写入路径 15：记账（记一笔 + 左滑复制 + 删除收尾）。
+#
+# 覆盖：
+#   1. 「记账」标签页默认停在当前月，顶部是年 + 12 个月；
+#   2. 点「记一笔」→ 数字键盘输入 3.6 → 备注 → 记下，列表出现 -¥3.60；
+#   3. **左滑那一条** → 点「复制」→ 以当前时间再记一条一样的（月合计变 -¥7.20）；
+#   4. 两条都删掉（原生二次确认），自产自销，不把数据留给后面的流程。
+#
+# 左滑用屏幕百分比坐标（行在月选择器 + 月合计下面）。如果设备尺寸变化导致
+# 滑动落空，先看 `maestro hierarchy` 里行的位置，再调这里的 y。
+appId: host.exp.Exponent
+name: 15 记账 · 记一笔、左滑复制、删除
+tags:
+  - write
+---
+- launchApp:
+    stopApp: true
+- openLink: exp://127.0.0.1:8081
+- extendedWaitUntil:
+    visible: '.*记账, tab.*'
+    timeout: 120000
+- tapOn: '.*记账, tab.*'
+- assertVisible: '记一笔'
+
+# —— 记一笔：支出 3.6，备注 Maestro记账 ——
+- tapOn: '记一笔'
+- tapOn: '0.00'
+- inputText: '3.6'
+- tapOn: '上班地铁'
+- inputText: 'Maestro记账'
+- tapOn: '记下'
+- assertVisible: 'Maestro记账'
+- assertVisible: '-¥3.60'
+- takeScreenshot: 15-ledger-created
+
+# —— 左滑复制：新记录发生在当前时间，月合计翻倍 ——
+- swipe:
+    start: 90%, 43%
+    end: 20%, 43%
+    duration: 400
+- tapOn: '复制「Maestro记账」'
+- assertVisible: '-¥7.20'
+- takeScreenshot: 15-ledger-copied
+
+# —— 收尾 1：删掉复制出来的那一条 ——
+- swipe:
+    start: 90%, 43%
+    end: 20%, 43%
+    duration: 400
+- tapOn: '删除「Maestro记账」'
+- tapOn: '删除'
+- assertVisible: '-¥3.60'
+
+# —— 收尾 2：删掉最初那一条 ——
+- swipe:
+    start: 90%, 43%
+    end: 20%, 43%
+    duration: 400
+- tapOn: '删除「Maestro记账」'
+- tapOn: '删除'
+- assertNotVisible: 'Maestro记账'
+- takeScreenshot: 15-ledger-cleaned

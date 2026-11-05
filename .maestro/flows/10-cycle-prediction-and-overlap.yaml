@@ -21,7 +21,7 @@ tags:
     stopApp: true
 - openLink: exp://127.0.0.1:8081
 - extendedWaitUntil:
-    visible: '时间轴, tab, 1 of 4'
+    visible: '时间轴, tab, 1 of 5'
     timeout: 120000
 
 # —— 定义「Maestro预测」：只在不存在时新建（不填平均周期长度，逼预测用观察到的间隔）——

@@ -18,7 +18,7 @@ function renderCard(
 }
 
 describe('<NavigationSettingsCard />', () => {
-  test('摆出四个标签的顺序与默认页；两端的方向按钮禁用', async () => {
+  test('摆出五个标签的顺序与默认页；两端的方向按钮禁用', async () => {
     await renderCard();
 
     expect(screen.getByText('底部导航')).toBeOnTheScreen();
@@ -30,24 +30,24 @@ describe('<NavigationSettingsCard />', () => {
     expect(screen.getByRole('button', { name: '默认打开「时间轴」' })).toBeSelected();
   });
 
-  test('右移一格：把时间轴换到统计后面，其余顺序不变', async () => {
+  test('右移一格：把时间轴换到记账后面，其余顺序不变', async () => {
     const onChange = await renderCard();
 
     await fireEvent.press(screen.getByRole('button', { name: '把「时间轴」右移' }));
 
     expect(onChange).toHaveBeenCalledWith({
-      order: ['stats', 'index', 'definitions', 'settings'],
+      order: ['ledger', 'index', 'stats', 'definitions', 'settings'],
       defaultTab: 'index',
     });
   });
 
-  test('左移一格：把统计换到最前面', async () => {
+  test('左移一格：把统计换到记账前面', async () => {
     const onChange = await renderCard();
 
     await fireEvent.press(screen.getByRole('button', { name: '把「统计」左移' }));
 
     expect(onChange).toHaveBeenCalledWith({
-      order: ['stats', 'index', 'definitions', 'settings'],
+      order: ['index', 'stats', 'ledger', 'definitions', 'settings'],
       defaultTab: 'index',
     });
   });

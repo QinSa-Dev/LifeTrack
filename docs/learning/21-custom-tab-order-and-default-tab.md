@@ -1,15 +1,16 @@
 # 21 自定义底部导航顺序与默认页
 
-> 本文讲两件相关的小功能：让用户把四个底部标签**换顺序**，以及选择**每次冷启动先打开哪一页**。
+> 本文讲两件相关的小功能：让用户把五个底部标签**换顺序**，以及选择**每次冷启动先打开哪一页**。
 > 两者都是纯展示偏好，不改任何业务数据，所以仍然存在 `app_meta` 里，**没有新增迁移**。
 
 ## 1. 本次完成什么
 
 - 「设置」页新增一张「底部导航」卡：
-  - 四个标签按当前顺序列出，每行有「左移 / 右移」；
+  - 五个标签按当前顺序列出，每行有「左移 / 右移」；
   - 下方用胶囊选「默认打开」哪一页；
   - 顺序改完**立即**反映到标签栏；默认页**下次冷启动**生效。
-- 默认顺序仍是：时间轴 → 统计 → 事件 → 设置；默认页是时间轴。
+- 默认顺序仍是：时间轴 → 记账 → 统计 → 事件 → 设置；默认页是时间轴。
+  （记账是 2026-11-05 加的第五个标签；本文其余机制与它无关，只是常量从四个变五个。）
 - 偏好存 `app_meta` 的一个键 `app.navigation`，值为一段 JSON：
   ```json
   { "order": ["index", "stats", "definitions", "settings"], "defaultTab": "index" }
@@ -50,7 +51,7 @@
 
 ### 3.2 Expo Router 的标签顺序从哪来
 
-`Tabs` 的四个页面不是写死的配置数组，而是四个 `Tabs.Screen` 子元素：
+`Tabs` 的页面不是写死的配置数组，而是每页一个 `Tabs.Screen` 子元素：
 
 ```tsx
 <Tabs>
@@ -112,7 +113,7 @@ React Navigation 按子元素顺序建路由，标签栏也按这个顺序画。
 `src/features/navigation/navigationPreferences.ts`：
 
 ```ts
-export const TAB_ROUTES = ['index', 'stats', 'definitions', 'settings'] as const;
+export const TAB_ROUTES = ['index', 'ledger', 'stats', 'definitions', 'settings'] as const;
 export type TabRoute = (typeof TAB_ROUTES)[number];
 
 export interface NavigationPreferences {
@@ -251,7 +252,7 @@ export default function TabsLayout() {
 ))}
 ```
 
-`key` 用路由名而不是数组下标：换顺序时 React 认为还是那四个屏幕，只是位置变了，
+`key` 用路由名而不是数组下标：换顺序时 React 认为还是那几个屏幕，只是位置变了，
 当前激活的「设置」页不会被卸载重建。
 
 ### 4.5 默认页：只重定向一次
@@ -310,7 +311,7 @@ const covering =
 />
 ```
 
-一屏有四行「左移 / 右移」，可见文字必然重名。无障碍名字带上标签名后：
+一屏有五行「左移 / 右移」，可见文字必然重名。无障碍名字带上标签名后：
 
 - 读屏能说清移动的是哪一行；
 - Maestro 可以精确点 `把「统计」左移`，不需要用半平面的 `rightOf` / `below` 猜。
@@ -386,7 +387,7 @@ export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 
 流程做了两次真正的冷启动（`launchApp: stopApp: true`）：
 
-1. 设置 → 把统计左移一格 → 标签无障碍名从 `tab, 2 of 4` 变成 `1 of 4`；
+1. 设置 → 把统计左移两次（默认顺序里它在 `3 of 5`）→ 标签无障碍名变成 `1 of 5`；
 2. 默认页选「事件」→ 冷启动 → 直接看到「+ 新建事件」，且统计仍在第一位；
 3. 还原顺序、默认页回时间轴 → 再冷启动 → 回到时间轴。
 

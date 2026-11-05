@@ -22,6 +22,7 @@ import type {
   EventGroup,
   EventRecord,
   FieldSnapshot,
+  LedgerEntry,
 } from '@/domain/models';
 
 const T1 = '2026-10-19T08:00:00.000Z';
@@ -37,6 +38,7 @@ const RECORD_BASE = 400;
 const CYCLE_DEFINITION_BASE = 500;
 const CYCLE_INSTANCE_BASE = 600;
 const CYCLE_ENTRY_BASE = 700;
+const LEDGER_BASE = 800;
 
 /** 生成合法的 UUID v7（只要满足 UUID 形状，导入校验就认） */
 function id(value: number): string {
@@ -167,7 +169,19 @@ function makeCycleEntry(index: number, overrides: Partial<CycleEntry> = {}): Cyc
   };
 }
 
-/** 一份自洽的最小数据：1 分组 / 1 计数定义（带一个字段）+ 1 周期定义 / 1 记录 / 1 实例 / 1 每日记录 */
+function makeLedgerEntry(index: number, overrides: Partial<LedgerEntry> = {}): LedgerEntry {
+  return {
+    id: id(LEDGER_BASE + index),
+    kind: 'expense',
+    amountCents: 360,
+    note: '上班地铁',
+    occurredAt: T1,
+    recordedAt: T1,
+    ...overrides,
+  };
+}
+
+/** 一份自洽的最小数据：1 分组 / 1 计数定义（带一个字段）+ 1 周期定义 / 1 记录 / 1 实例 / 1 每日记录 / 1 笔记账 */
 function fixtureData(overrides: Partial<BackupData> = {}): BackupData {
   return {
     eventGroups: [makeGroup(1)],
@@ -175,6 +189,7 @@ function fixtureData(overrides: Partial<BackupData> = {}): BackupData {
     eventRecords: [makeRecord(1)],
     cycleInstances: [makeCycleInstance(1)],
     cycleEntries: [makeCycleEntry(1)],
+    ledgerEntries: [makeLedgerEntry(1)],
     ...overrides,
   };
 }
@@ -700,6 +715,84 @@ describe('parseBackup', () => {
   });
 });
 
+describe('记账备份', () => {
+  const ledgerRow = (overrides: Record<string, unknown> = {}) => ({
+    id: id(LEDGER_BASE + 1),
+    kind: 'expense',
+    amountCents: 360,
+    note: '上班地铁',
+    occurredAt: T1,
+    recordedAt: T1,
+    ...overrides,
+  });
+
+  it('v4 备份里的记账条目能完整往返，备注为空时读成 undefined', () => {
+    const parsed = parseBackup(
+      rawFile({ ledgerEntries: [ledgerRow(), ledgerRow({ id: id(LEDGER_BASE + 2), note: null })] }),
+    );
+
+    expect(parsed.data.ledgerEntries).toEqual([
+      {
+        id: id(LEDGER_BASE + 1),
+        kind: 'expense',
+        amountCents: 360,
+        note: '上班地铁',
+        occurredAt: T1,
+        recordedAt: T1,
+      },
+      {
+        id: id(LEDGER_BASE + 2),
+        kind: 'expense',
+        amountCents: 360,
+        note: undefined,
+        occurredAt: T1,
+        recordedAt: T1,
+      },
+    ]);
+  });
+
+  it('方向、金额、备注与时间逐字段校验，错误带路径', () => {
+    expect(() => parseBackup(rawFile({ ledgerEntries: [ledgerRow({ kind: 'transfer' })] }))).toThrow(
+      /data\.ledgerEntries\[0\]\.kind/,
+    );
+    expect(() => parseBackup(rawFile({ ledgerEntries: [ledgerRow({ amountCents: 0 })] }))).toThrow(
+      /data\.ledgerEntries\[0\]\.amountCents/,
+    );
+    expect(() => parseBackup(rawFile({ ledgerEntries: [ledgerRow({ amountCents: 3.6 })] }))).toThrow(
+      /data\.ledgerEntries\[0\]\.amountCents/,
+    );
+    expect(() => parseBackup(rawFile({ ledgerEntries: [ledgerRow({ note: 'x'.repeat(101) })] }))).toThrow(
+      /data\.ledgerEntries\[0\]\.note/,
+    );
+    expect(() =>
+      parseBackup(
+        rawFile({
+          ledgerEntries: [ledgerRow({ occurredAt: T3, recordedAt: T1 })],
+        }),
+      ),
+    ).toThrow(/data\.ledgerEntries\[0\]\.occurredAt/);
+  });
+
+  it('合并是并集；同 id 的记账是不可变事实，保留本地', () => {
+    const local = emptyBackupData();
+    local.ledgerEntries = [makeLedgerEntry(1, { note: '本地' })];
+    const incoming = emptyBackupData();
+    incoming.ledgerEntries = [makeLedgerEntry(1, { note: '备份' }), makeLedgerEntry(2)];
+
+    const { data, summary } = mergeBackup(local, incoming);
+
+    expect(data.ledgerEntries.find((entry) => entry.id === id(LEDGER_BASE + 1))?.note).toBe('本地');
+    expect(data.ledgerEntries.find((entry) => entry.id === id(LEDGER_BASE + 2))).toBeDefined();
+    expect(summary.collections.ledgerEntries).toEqual({ added: 1, updated: 0, kept: 1 });
+  });
+
+  it('同一个文件里出现重复 id 会在体检时被拒绝', () => {
+    expect(() =>
+      assertBackupIntegrity(fixtureData({ ledgerEntries: [makeLedgerEntry(1), makeLedgerEntry(1)] })),
+    ).toThrow(/data\.ledgerEntries/);
+  });
+});
+
 describe('assertBackupCompatible / assertBackupIntegrity', () => {
   it('schema 版本不高于应用支持时放行', () => {
     expect(() => assertBackupCompatible(makeFile({ schemaVersion: 4 }), 4)).not.toThrow();
@@ -834,7 +927,7 @@ describe('mergeBackup', () => {
     const local = emptyBackupData();
     const { summary } = mergeBackup(local, fixtureData());
 
-    expect(summary.totals).toEqual({ added: 6, updated: 0, kept: 0 });
+    expect(summary.totals).toEqual({ added: 7, updated: 0, kept: 0 });
     expect(summary.collections.cycleEntries).toEqual({ added: 1, updated: 0, kept: 0 });
   });
 });

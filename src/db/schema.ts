@@ -596,6 +596,34 @@ export const MIGRATION_V7_CUSTOM_FIELDS: Migration = {
   },
 };
 
+/**
+ * v8：记账。
+ *
+ * 一条记录 = 方向（支出 / 收入）+ 金额 + 备注 + 发生时间。
+ * - **金额存整数「分」**：钱不能浮点累加（`0.1 + 0.2 !== 0.3`），
+ *   `CHECK (amount_cents > 0)` 从结构上挡住 0 与负数。
+ * - 没有外键、没有快照：记账是独立事实，不依赖事件定义。
+ * - 备注可空；界面限制 100 字符，这里用 `CHECK` 再兜一层
+ *   （`length` 对中文按字符数算）。
+ * - 按发生时间倒序读；索引与时间轴同向。
+ */
+export const MIGRATION_V8_LEDGER: Migration = {
+  version: 8,
+  name: 'ledger_entries',
+  statements: [
+    `CREATE TABLE ledger_entries (
+       id           TEXT    PRIMARY KEY NOT NULL,
+       kind         TEXT    NOT NULL CHECK (kind IN ('expense', 'income')),
+       amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+       note         TEXT,
+       occurred_at  TEXT    NOT NULL,
+       recorded_at  TEXT    NOT NULL,
+       CHECK (note IS NULL OR length(note) <= 100)
+     );`,
+    `CREATE INDEX idx_ledger_entries_occurred_at ON ledger_entries(occurred_at DESC);`,
+  ],
+};
+
 /** 全部迁移，顺序即执行顺序。 */
 export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V1_BASELINE,
@@ -605,6 +633,7 @@ export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V5_CYCLE_ENTRY_SOFT_DELETE,
   MIGRATION_V6_CYCLE_AS_EVENT_KIND,
   MIGRATION_V7_CUSTOM_FIELDS,
+  MIGRATION_V8_LEDGER,
 ];
 
 /** 当前应用支持的 schema 版本。 */

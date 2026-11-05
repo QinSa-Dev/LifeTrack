@@ -32,6 +32,7 @@ import {
   type FieldSnapshot,
   type FieldValue,
   type IsoDateTime,
+  type LedgerEntry,
   type QuickOption,
 } from './models';
 import {
@@ -46,6 +47,9 @@ import {
   requireIsoDate,
   requireIsoDateTime,
   requireKind,
+  requireLedgerAmountCents,
+  requireLedgerKind,
+  requireLedgerNote,
   requireName,
   requireNotFuture,
   requireQuickOptionValue,
@@ -59,15 +63,16 @@ import {
 export const BACKUP_FORMAT = 'lifetrack-backup';
 
 /** 备份**格式**版本（数据结构本身的版本，与数据库 schema 版本是两件事） */
-export const BACKUP_FORMAT_VERSION = 3;
+export const BACKUP_FORMAT_VERSION = 4;
 
-/** 备份里包含的五个集合，顺序即写入顺序（父表在前） */
+/** 备份里包含的六个集合，顺序即写入顺序（父表在前） */
 export const BACKUP_COLLECTIONS = [
   'eventGroups',
   'eventDefinitions',
   'eventRecords',
   'cycleInstances',
   'cycleEntries',
+  'ledgerEntries',
 ] as const;
 
 export type BackupCollection = (typeof BACKUP_COLLECTIONS)[number];
@@ -80,6 +85,8 @@ export interface BackupData {
   eventRecords: EventRecord[];
   cycleInstances: CycleInstance[];
   cycleEntries: CycleEntry[];
+  /** 记账：与事件体系完全独立，没有外键 */
+  ledgerEntries: LedgerEntry[];
 }
 
 /**
@@ -119,6 +126,7 @@ export function emptyBackupData(): BackupData {
     eventRecords: [],
     cycleInstances: [],
     cycleEntries: [],
+    ledgerEntries: [],
   };
 }
 
@@ -578,6 +586,23 @@ function parseCycleEntry(value: unknown, path: string): CycleEntry {
   };
 }
 
+function parseLedgerEntry(value: unknown, path: string): LedgerEntry {
+  const row = asObject(value, path);
+  const occurredAt = dateTime(row.occurredAt, `${path}.occurredAt`);
+  const recordedAt = dateTime(row.recordedAt, `${path}.recordedAt`);
+  check(`${path}.occurredAt`, () => requireNotFuture(occurredAt, recordedAt, `${path}.occurredAt`));
+  return {
+    id: entityId(row.id, `${path}.id`),
+    kind: check(`${path}.kind`, () => requireLedgerKind(row.kind)),
+    amountCents: check(`${path}.amountCents`, () =>
+      requireLedgerAmountCents(numberValue(row.amountCents, `${path}.amountCents`)),
+    ),
+    note: check(`${path}.note`, () => requireLedgerNote(textOrUndefined(row.note, `${path}.note`))),
+    occurredAt,
+    recordedAt,
+  };
+}
+
 /** 主键唯一（同一集合里不能出现两条相同 id，否则写库必然撞主键） */
 function assertUniqueIds(items: readonly { id: string }[], path: string): void {
   const seen = new Set<string>();
@@ -599,6 +624,7 @@ export function assertBackupIntegrity(data: BackupData): void {
   assertUniqueIds(data.eventRecords, 'data.eventRecords');
   assertUniqueIds(data.cycleInstances, 'data.cycleInstances');
   assertUniqueIds(data.cycleEntries, 'data.cycleEntries');
+  assertUniqueIds(data.ledgerEntries, 'data.ledgerEntries');
 
   const groupIds = new Set(data.eventGroups.map((group) => group.id));
   data.eventDefinitions.forEach((definition, index) => {
@@ -718,6 +744,7 @@ function parseBackupRoot(value: unknown): BackupFile {
     ),
     cycleInstances: parseArray(data.cycleInstances, 'data.cycleInstances', parseCycleInstance),
     cycleEntries: parseArray(data.cycleEntries, 'data.cycleEntries', parseCycleEntry),
+    ledgerEntries: parseArray(data.ledgerEntries, 'data.ledgerEntries', parseLedgerEntry),
   };
   assertBackupIntegrity(parsed);
 
@@ -760,6 +787,9 @@ export function sortBackupData(data: BackupData): BackupData {
     ),
     cycleEntries: [...data.cycleEntries].sort(
       (a, b) => compareText(a.date, b.date) || compareText(a.id, b.id),
+    ),
+    ledgerEntries: [...data.ledgerEntries].sort(
+      (a, b) => compareText(a.occurredAt, b.occurredAt) || compareText(a.id, b.id),
     ),
   };
 }
@@ -917,6 +947,8 @@ export function mergeBackup(
   const records = mergeCollection(current.eventRecords, incoming.eventRecords, preferIncomingRecord);
   const cycleInstances = mergeCollection(current.cycleInstances, incoming.cycleInstances, byUpdatedAt);
   const cycleEntries = mergeCollection(current.cycleEntries, incoming.cycleEntries, byUpdatedAt);
+  // 记账是不可变事实（没有 updatedAt、也没有软删除）：同 id 一定相同，保留本地即可。
+  const ledgerEntries = mergeCollection(current.ledgerEntries, incoming.ledgerEntries, () => false);
 
   const collections: Record<BackupCollection, MergeCounts> = {
     eventGroups: groups.counts,
@@ -924,6 +956,7 @@ export function mergeBackup(
     eventRecords: records.counts,
     cycleInstances: cycleInstances.counts,
     cycleEntries: cycleEntries.counts,
+    ledgerEntries: ledgerEntries.counts,
   };
 
   return {
@@ -933,6 +966,7 @@ export function mergeBackup(
       eventRecords: records.items,
       cycleInstances: cycleInstances.items,
       cycleEntries: cycleEntries.items,
+      ledgerEntries: ledgerEntries.items,
     }),
     summary: {
       collections,

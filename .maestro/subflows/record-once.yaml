@@ -1,4 +1,4 @@
-# 子流程：被 01 / 03 用 runFlow 调起来。
+# 子流程：被 01 / 03 / 09 用 runFlow 调起来。
 #
 # 前置：当前停在「事件」标签页。
 # 结果：库里有定义「Maestro喝水」，并且刚用它记录了一次；停在记录页，成功提示还在。
@@ -30,6 +30,9 @@ name: 子流程 · 确保 Maestro喝水 存在并记一次
     element:
       text: '.*Maestro喝水.*'
     direction: DOWN
+    # 事件行在底部 tab bar 附近时，scrollUntilVisible 会误判「已可见」，
+    # tapOn 的行中心却落在 tab bar 上 → 点进别的标签。滚到中间再点。
+    centerElement: true
 - tapOn: '.*Maestro喝水.*'
 - assertVisible: '手动记录'
 - scrollUntilVisible:

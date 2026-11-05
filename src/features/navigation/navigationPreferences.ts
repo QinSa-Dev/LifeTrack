@@ -8,22 +8,24 @@
  * 显示用的中文名与路径也放在这里，避免标签栏和设置页各写一份。
  */
 
-/** 四个标签页的路由名，同时也是默认顺序。 */
-export const TAB_ROUTES = ['index', 'stats', 'definitions', 'settings'] as const;
+/** 五个标签页的路由名，同时也是默认顺序。 */
+export const TAB_ROUTES = ['index', 'ledger', 'stats', 'definitions', 'settings'] as const;
 
 export type TabRoute = (typeof TAB_ROUTES)[number];
 
 /** 标签栏与设置页共用的中文名。 */
 export const TAB_ROUTE_LABELS: Record<TabRoute, string> = {
   index: '时间轴',
+  ledger: '记账',
   stats: '统计',
   definitions: '事件',
   settings: '设置',
 };
 
 /** 默认打开某个标签时，交给 `router.replace` 的路径。 */
-export const TAB_ROUTE_HREFS: Record<TabRoute, '/' | '/stats' | '/definitions' | '/settings'> = {
+export const TAB_ROUTE_HREFS: Record<TabRoute, '/' | '/ledger' | '/stats' | '/definitions' | '/settings'> = {
   index: '/',
+  ledger: '/ledger',
   stats: '/stats',
   definitions: '/definitions',
   settings: '/settings',
@@ -33,7 +35,7 @@ export const TAB_ROUTE_HREFS: Record<TabRoute, '/' | '/stats' | '/definitions' |
 export const DEFAULT_TAB_ROUTE: TabRoute = 'index';
 
 export interface NavigationPreferences {
-  /** 四个标签从左到右的顺序；保证恰好包含 `TAB_ROUTES` 各一次 */
+  /** 五个标签从左到右的顺序；保证恰好包含 `TAB_ROUTES` 各一次 */
   order: TabRoute[];
   /** 每次冷启动默认打开哪一个；只影响启动，不改变当前正在看的页面 */
   defaultTab: TabRoute;
@@ -78,7 +80,7 @@ interface StoredNavigationPreferences {
  * 解析 `app_meta` 里的一段 JSON。
  *
  * 缺失、空串、坏 JSON 都回退到默认；顺序按 `normalizeTabOrder` 收拾；
- * 默认页只认四个已知路由，认不出来就回到时间轴。
+ * 默认页只认这几个已知路由，认不出来就回到时间轴。
  */
 export function parseNavigationPreferences(value: string | null | undefined): NavigationPreferences {
   const fallback = defaultNavigationPreferences();

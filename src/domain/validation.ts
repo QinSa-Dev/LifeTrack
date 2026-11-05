@@ -9,11 +9,13 @@
 
 import { isValidIsoDate } from './dates';
 import { ValidationError } from './errors';
+import { MAX_LEDGER_AMOUNT_CENTS } from './money';
 import {
   isCycleMode,
   isEnumFieldKind,
   isEventDefinitionKind,
   isFieldKind,
+  isLedgerKind,
   isRecordKind,
   isRecordSource,
   type CycleMode,
@@ -22,6 +24,7 @@ import {
   type FieldSnapshot,
   type FieldValue,
   type IsoDate,
+  type LedgerKind,
   type RecordKind,
   type RecordSource,
 } from './models';
@@ -110,6 +113,19 @@ export interface EventRecordEditInput {
   occurredAt?: string;
   /** 省略即清空备注：更新是「这条记录的这三个字段整体替换」 */
   note?: string;
+}
+
+/**
+ * 记一笔账的输入。
+ *
+ * `amountCents` 已经是「分」——界面负责把「元」文本转过来（`domain/money.ts`），
+ * 这里只校验范围。`occurredAt` 省略表示「就是现在」。
+ */
+export interface LedgerEntryInput {
+  kind: LedgerKind;
+  amountCents: number;
+  note?: string;
+  occurredAt?: string;
 }
 
 /** 周期实例的输入（创建与更新共用）。`endDate` 省略表示仍在进行中。 */
@@ -252,6 +268,34 @@ export function requireRecordSource(value: unknown): RecordSource {
     throw new ValidationError(`记录来源不合法：${String(value)}`);
   }
   return value;
+}
+
+/** 记账方向：只接受 expense / income。 */
+export function requireLedgerKind(value: unknown): LedgerKind {
+  if (!isLedgerKind(value)) {
+    throw new ValidationError(`记账方向不合法：${String(value)}`);
+  }
+  return value;
+}
+
+/** 金额（分）：正整数，且不超过单笔上限。 */
+export function requireLedgerAmountCents(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+    throw new ValidationError('金额必须大于 0（按分存整数）');
+  }
+  if (value > MAX_LEDGER_AMOUNT_CENTS) {
+    throw new ValidationError(`单笔金额不能超过 ${MAX_LEDGER_AMOUNT_CENTS / 100} 元`);
+  }
+  return value;
+}
+
+/** 备注：可空；写不下超长文本，免得列表一行变成一堵墙。 */
+export function requireLedgerNote(value: string | undefined | null): string | undefined {
+  const note = optionalText(value);
+  if (note !== undefined && note.length > 100) {
+    throw new ValidationError('备注最多 100 个字符');
+  }
+  return note;
 }
 
 /** ISO-8601 带时区时间戳，例如 2026-10-19T07:30:00.000Z。 */

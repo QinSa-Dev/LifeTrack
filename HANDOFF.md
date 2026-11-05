@@ -5,7 +5,7 @@
 
 ## 0. 一句话
 
-LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 / 周期）与周期症状，按时间轴回看并统计。
+LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 / 周期）与周期症状，记支出 / 收入，按时间轴回看并统计。
 技术栈：React Native + Expo SDK 58 + TypeScript + SQLite（expo-sqlite）。
 数据全部在设备本地，**无后端、无账号、无云同步**。
 
@@ -13,29 +13,30 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 
 - 分支：`main`；工作区干净。
 - 最新提交：用 `git log -1` 查看
-- schema 版本：**v7**（`PRAGMA user_version = 7`）。最近两次迁移：
+- schema 版本：**v8**（`PRAGMA user_version = 8`）。最近三次迁移：
   1. **v6 —— 周期不再是独立实体**：`cycle_definitions` 整表并入 `event_definitions`（新增 `cycle_mode`
      与两个平均长度列），周期实例 / 每日记录的外键改指 `event_definitions`；
      类型 CHECK 收敛为 `kind IN ('counter','cycle')`；**「单位」变「属性」且可多条**；
      **快捷选项合并成「属性 + 取值」**。
   2. **v7 —— 全局「标签」退出**，换成每个事件自己的**带类型字段**（`event_definition_fields`，
      记录里的 `snapshot_tag_ids` → `snapshot_fields` + `field_values`）。
+  3. **v8 —— 记账**：新增 `ledger_entries`（金额存整数「分」、方向 `expense` / `income`、
+     备注可空且 ≤100 字、发生时间索引）。
   历史记录里的 `quantity` 类型**保留不动**（展示 / 统计 / 导入继续接受它）。
   此后的统计、回收站、导入导出、周期增强、月视图、时间轴改版、设置项归拢、统计趋势改版、
   自定义字段、接入 EAS、内置模板事件、提示文案精简、分组管理收进「事件」页、时间轴筛选与排序、
   界面框架收口（固定页头 / 时间轴工具条 / 深链返回兜底）、周期自动循环启动懒补齐、
-  底部导航顺序与默认页
-  都没有再新增迁移（v7 是最近一次）。
+  底部导航顺序与默认页都没有再新增迁移（直到记账的 v8）。
 - 验证状态（全部真实跑过）：
 
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 44 个套件 / 601 个用例通过（含组件测试 8 个套件 / 45 个用例）
+npm test             # 51 个套件 / 648 个用例通过（含组件测试 11 个套件 / 57 个用例）
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（js bundle 3.2MB；本次只改 JS，无新增原生依赖）
 npx expo-doctor      # 13 个旧依赖 patch 版本漂移（SDK 58 的 patch 已往前走了；本次未升级，与功能改动无关）
-maestro test .maestro/flows      # 15/15 通过（10m26s，2026-11-04；需先起 Metro，见 .maestro/README.md）
+maestro test .maestro/flows      # 16/16 通过（10m58s，2026-11-05；需先起 Metro，见 .maestro/README.md）
                                                                     # 底部导航顺序与默认页之后的整跑
 ```
 
@@ -49,7 +50,10 @@ maestro test .maestro/flows      # 15/15 通过（10m26s，2026-11-04；需先�
 > **时间轴页头筛选与排序（含杀掉重启后偏好还在、收尾还原）**、
 > **二级页面的固定页头 / 时间轴工具条 / 深链返回兜底**，
 > 原来 12 条流程全绿（2026-11-04，7m35s），跑完还直接读模拟器的 `lifetrack.db` 核对过（`PRAGMA foreign_key_check` 为空）。
-> **15 条流程全绿（2026-11-04，10m26s）**：第 13 条是 `12`（周期自动循环启动懒补齐：
+> **16 条流程全绿（2026-11-05，10m58s）**：第 16 条是 `15`（记账：记一笔 → 左滑复制 → 删两条，
+> 含原生二次确认；自产自销）。加入记账后的第一遍是 15/16：`09` 点定义行时行中心落在底部
+> 「时间轴」标签上（行被 tab bar 盖住），给共用的 `record-once.yaml` 加 `centerElement: true`
+> 后第二遍 16/16。**此前 15 条流程全绿（2026-11-04，10m26s）**：第 13 条是 `12`（周期自动循环启动懒补齐：
 > 相对日期 + 冷启动 + 幂等），第 14 条是 `13`（分组管理卡：新建 / 改名 / 删除，20s），
 > 第 15 条是 `14`（底部导航顺序与默认页：换顺序 → 冷启动落在事件页 → 还原 → 再冷启动回时间轴）。
 > 那轮补 `12` 的第一遍是 11/13——`05` / `08` 点定义行落到 `统计` 标签（行被 tab bar
@@ -104,7 +108,7 @@ export PATH="$HOME/.maestro/bin:$PATH"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer   # 本机 xcode-select 指向 CLT，simctl 要靠它
 
 npx expo start                     # 另一个终端，保持运行
-maestro test .maestro/flows        # 15/15，10m26s（2026-11-04）
+maestro test .maestro/flows        # 16/16，10m58s（2026-11-05）
 maestro hierarchy                  # 排错：打印当前屏幕的视图树
 ```
 
@@ -146,6 +150,7 @@ src/theme/         设计令牌
 | v5 | `cycle_entries.deleted_at`（`ALTER TABLE ADD COLUMN`） | 周期内记录也能软删除；**追加而不改 v4**（已发布迁移是历史）；旧行自动为 NULL = 未删除，不需要回填；恢复时重新校验「日期在实例区间内」 |
 | v6 | `cycle_definitions` 并入 `event_definitions`；`attribute`/`unit` → `attributes`（JSON 数组文本） | **周期是事件类型的一种**：重建 `event_definitions`（加 `cycle_mode` + 两个平均长度列，CHECK `(kind = 'cycle') = (cycle_mode IS NOT NULL)`、`kind IN ('counter','cycle')`），把老周期定义按原 id 折成 `kind = 'cycle'`、`cycle_mode` 兜底 `'manual'`，`quantity` 折成 `counter`、`unit` 包成 `attributes`；`quick_options.label`/`unit` 合成 `attribute`；记录的 `unit`/`snapshot_unit` → `attributes`/`snapshot_attributes`；周期实例 / 记录的外键改指 `event_definitions`；最后 `DROP TABLE cycle_definitions`。属性 JSON 一律用 SQLite `json_array()` 生成（不手拼字符串） |
 | v7 | 新增 `event_definition_fields`；删 `tags` / `event_definition_tags`；重建 `event_records`（`snapshot_tag_ids` → `snapshot_fields` + `field_values`） | **「标签」退出，换成每个事件自己的带类型字段**：`event_definition_fields` 有 `kind CHECK (kind IN ('single','multi','time','range'))`、`options` JSON、`ON DELETE CASCADE`；**只有计数型定义**才把旧的标签折成一条名为「标签」的多选字段，候选值 = 挂着的标签 ∪ 记录快照里出现过的标签（兜住历史值）；`up()` 里逐行读改写重建 `event_records`（`CREATE event_records_new` → `INSERT ... SELECT` → `DROP` → `RENAME` → 重建索引），把每条记录的 `snapshot_tag_ids` 算成字段取值；最后先 `DROP event_definition_tags` 再 `DROP tags`（顺序反了会被外键挡住）。id 用 `migrationUuid()`，`up()` 不依赖会演进的业务代码 |
+| v8 | `ledger_entries` + `idx_ledger_entries_occurred_at` | **记账与事件记录是两套事实**：金额用整数 `amount_cents`（分）避免浮点累加误差；`kind CHECK (kind IN ('expense','income'))`、`amount_cents > 0`、备注 `NULL` 或 ≤100 字；发生时间 / 录入时间都是 ISO 文本，**发生时间 ≤ 录入时间在仓储层校验**（与事件记录同一条规则）；没有外键、没有软删除，删除即真删 |
 
 `MIGRATIONS` 在 `src/db/schema.ts`，`LATEST_SCHEMA_VERSION` 自动推导。新增结构 = 追加一个新 `Migration`，
 然后同步更新 `src/db/__tests__/migrations-test.ts` 里对版本号与 `applied` 的断言。
@@ -189,7 +194,7 @@ src/theme/         设计令牌
     完全相同则保留本地不重写；事件记录不可篡改，**只合并软删除标记**（本地已删除不会被旧备份复活）——
     记录本身现在可以在详情页更正（规则 15），但**备份合并仍只看软删除标记**：编辑只在本地生效、
     不会通过备份传到另一份库（记录没有 `updated_at`，见第 10 节）。
-    导入在单个独占事务里重写七张表（分组 / 定义 / 字段 / 快捷选项 / 记录 / 实例 / 周期记录），
+    导入在单个独占事务里重写八张表（分组 / 定义 / 字段 / 快捷选项 / 记录 / 实例 / 周期记录 / 记账），
     并在事务内核对行数 + `PRAGMA foreign_key_check`，
     **失败整体回滚，不留半截数据**（`src/domain/backup.ts` / `src/repositories/backupRepository.ts`）。
 12. **外部输入（备份 JSON）严格解析**：逐字段守卫、错误带路径（`data.eventRecords[0].value`）、
@@ -315,17 +320,35 @@ src/theme/         设计令牌
     - **自动结束不需要后台任务**：配了持续天数时，创建那一段就把 `endDate` 写好了；
       过了结束日它自然不再是「今天所在的段」。真正长期进行中的只有「没配持续天数」与
       「手动开始 / 手动标记」，这两种都会挡住补齐。
+26. **记账是独立的一本账，金额只存整数分**：`ledger_entries` 与事件记录**不互相引用**；
+   `kind` 只有 `expense` / `income`，`amountCents` 是正整数（支出 / 收入由方向区分，金额不带符号）。
+   界面输入「元」，`domain/money.ts` 负责 `元文本 → 分`（只做格式转换）与展示；
+   是否合法由 `domain/validation.ts` 判断（`> 0`、不超 `999,999,999.99` 元）。原因很实际：
+   `0.1 + 0.2 !== 0.3`，用浮点数记几笔再求和就会出现「差一分」。
+   - **发生时间 ≤ 录入时间**（复用 `requireNotFuture`），与事件记录同一条规则：未来还没发生的事不构成事实。
+   - **按月看账把时间范围下推 SQL**：`monthRangeIso` 用**设备本地零点**构造 `[from, until)` 再转 UTC；
+     本地 11 月 1 日 00:30 的账不会跑到 10 月。`until` 是开区间，12 月 1 日零点整属于 12 月。
+   - **列表按发生时间倒序**，同一毫秒用 UUID v7 id 兜底（连续点两下顺序仍然确定）。
+   - **删除是真删**：没有快照、没有联动数据，界面负责原生二次确认（`Alert.alert`）。
+   - **左滑复制**用 RN 自带的 `PanResponder` + `Animated`，不新增依赖；复制以**当前时间**再记一条
+     （金额 / 备注 / 方向照抄），如果当前不在本月就自动切到本月，避免「点了没反应」。
+   - **备份格式升到 v4**：`ledgerEntries` 进入 `BackupData`；旧备份缺失该集合按空数组解析；
+     合并按「不可变事实」处理（同 id 保留本地、新 id 追加），导入同样在独占事务里核对八张表的行数。
+27. **记账页的「年 / 月」是页面状态，不是持久偏好**：默认当前月（设备本地时区），
+   年箭头只平移年、月份胶囊只换月；不写 `app_meta`，因为需求是「打开就看这个月」，
+   记住上次翻到的月份反而会让用户以为数据丢了。月份从 **1** 开始（跟界面一致），
+   与 JS `Date` 的 0 起分开，避免跨年计算时差一。
 
 ## 6. 关键文件索引
 
 - 迁移与 schema：`src/db/schema.ts`、`src/db/migrations.ts`
-- 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`（**启动初始化：记账 + 新库写内置模板事件 + 自动循环懒补齐**）
-- 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `recordAttributes` / `attributeText` / `toRecordKind` / `isVisibleRecord` / `isVisibleEntry` / `DeletedCycleEntry`）、`src/domain/validation.ts`（含 `requireNotFuture`、`readTextList`（宽松解析属性 JSON）、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `observedCycleLength` / `predictNextCycle`）、`src/domain/backup.ts`（备份格式契约 `BACKUP_FORMAT` / `parseAttributes` / 严格解析 `parseBackup` / 引用完整性 `assertBackupIntegrity` / 合并 `mergeBackup` / 稳定排序 `sortBackupData` / 文件名 `backupFileName`）
-- 仓储：`src/repositories/eventDefinitionRepository.ts`（计数型与周期型共用；`normalizeDraft` 保证「周期 ⟺ `cycleMode`」且周期型属性 / 字段恒为 `[]`；计数的字段整组替换并按 `sortOrder` 读回）、`eventRecordRepository.ts`（记录 / 补录 / **`update` 更正事实** / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until` 与**筛选下推 `nameLike` / `kind` / `source` / `groupId`**；记录时把定义字段固化成快照并用 `normalizeFieldValues` 校验取值）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`eventGroupRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`；`DELETE_ORDER` 含 `event_definition_fields`）、`metaRepository.ts`（键值偏好，时间轴显示方式、筛选排序、预测窗口与底部导航用它）
-- 功能组件：`src/features/definitions/`（定义表单 `EventDefinitionForm`：**类型（计数 / 周期）+ 属性多行 + 周期字段 + 自定义字段 + 快捷选项「属性 + 取值」**；`GroupManager`（**分组管理卡：新建 / 改名 / 删除**，就地在「事件」页展开）/ `groupInput.ts`（`renameGroupInput`：改名要提交的整组字段——`update` 是整体替换，不能只传 `name`）；`fields.ts` 汇总字段类型标签与提示；`labels.ts` 副标题与类型名的文案；`starterDefinitions.ts`（`STARTER_DEFINITIONS` + `seedStarterDefinitions`：新库写一条可删的参考模板事件））、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime` / `describeRecord`）/ `FieldValuePicker`（按字段类型渲染取值控件）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `repeat.ts`（`repeatDraft`：【+1】照抄最近一条要写的那几项，事件列表用它）/ `timelineView.ts`（显示方式偏好）/ `TimelineQueryPanel.tsx`（**时间轴的「筛选与排序」面板：四组「不限 + 选一个」的胶囊**）/ `timelineQuery.ts`（**筛选 / 排序的类型、默认值、`app_meta` 读写（一段 JSON，逐项回落）、摘要文案、映射到仓储参数**）/ `timelineSort.ts`（**排序纯函数：算事件级排序键 → 给事件排队**）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `describeLatestCycle` / `describeOverlap` / `describeCycleDefinition` / `CYCLE_MODE_LABELS` / `CYCLE_MODE_HINTS` / `predictionWindow.ts`（预测窗口这个纯偏好的选项 / 解析 / 文案）/ `autoFill.ts`（启动懒补齐的纯计划 `planAutoCycleFill` + 水位键 / 解析）/ `fillAutoCycles.ts`（按定义写库 + 只增不减的 `rememberAutoFillHorizon`）/ `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」，`DefinitionTotal.attributeText`）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV，多个属性用 ` | ` 连接，字段取值汇总成「字段值」列）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）、`src/features/navigation/`（`navigationPreferences.ts` 标签顺序 / 默认页的归一化与解析、`NavigationPreferencesProvider.tsx` 读写 `app_meta` 并把顺序交给标签栏、`NavigationSettingsCard.tsx` 设置卡）
-- 界面：`src/app/(tabs)/definitions.tsx`（**事件页：计数 / 周期同一张列表**，计数型行内有【+1】、点行进记录页，周期进 `/cycles/[id]`；顶部「分组」按钮**就地展开分组管理卡**——没有单独的分组页）、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 合并 + 行内【+1】 + **页头「筛选」面板（筛选下推 SQL、排序在客户端、状态存 `app_meta`）**，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/settings.tsx`（诊断 + **偏好设置（时间轴显示 / 周期预测窗口）** + **底部导航（顺序 / 默认页）** + 备份与恢复）、`src/app/events/new.tsx`、`src/app/events/[id].tsx`（编辑定义）、`src/app/record/[id].tsx`（记录 / 补录，**属性多选 chips + 自定义字段取值**）、`src/app/records/[id].tsx`（**单条记录详情：快照（含字段定义与取值）+ 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/cycles/[id].tsx`（周期型事件详情：开一段 / 生成下一段 / 归档 / 删除；自动型生成时顺手推 `app_meta` 水位；非周期型定义会提示并给「去记录页」）、`src/app/cycle-instances/[id].tsx`
-- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`、`17-custom-fields.md`、`19-timeline-filter-and-sort.md`、`20-component-testing.md`、`21-custom-tab-order-and-default-tab.md`
-- 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`14`（15 条流程；`13` 测分组管理，`14` 测底部导航顺序与默认页；`12` 用相对日期测启动懒补齐）、`.maestro/subflows/record-once.yaml`（记一次）、`.maestro/subflows/use-expanded-view.yaml`（把时间轴钉成「逐条」）
+- 连接与门禁：`src/db/client.ts`、`src/db/DatabaseProvider.tsx`、`src/components/DatabaseGate.tsx`（**启动初始化：迁移 + 新库写内置模板事件 + 自动循环懒补齐**）
+- 领域：`src/domain/models.ts`（含 `toDefinitionSnapshot` / `recordAttributes` / `attributeText` / `toRecordKind` / `isVisibleRecord` / `isVisibleEntry` / `DeletedCycleEntry` / `LedgerKind` / `LedgerEntry`）、`src/domain/money.ts`（**金额只做格式转换**：`parseAmountToCents` / `sanitizeAmountInput` / `formatCents` / 单笔上限）、`src/domain/validation.ts`（含 `requireNotFuture`、`requireLedgerKind` / `requireLedgerAmountCents` / `requireLedgerNote`、`readTextList`（宽松解析属性 JSON）、周期输入类型）、`src/domain/dates.ts`（纯日历日期）、`src/domain/cycles.ts`（周期规则：`findDatesOutside` / `findOverlappingInstance` / `observedCycleLength` / `predictNextCycle`）、`src/domain/backup.ts`（备份格式契约 `BACKUP_FORMAT` / `parseAttributes` / 严格解析 `parseBackup` / 引用完整性 `assertBackupIntegrity` / 合并 `mergeBackup` / 稳定排序 `sortBackupData` / 文件名 `backupFileName`）
+- 仓储：`src/repositories/eventDefinitionRepository.ts`（计数型与周期型共用；`normalizeDraft` 保证「周期 ⟺ `cycleMode`」且周期型属性 / 字段恒为 `[]`；计数的字段整组替换并按 `sortOrder` 读回）、`eventRecordRepository.ts`（记录 / 补录 / **`update` 更正事实** / `softDelete` / `restore` / `remove` 真删 / `list` 的时间范围下推 `from` / `until` 与**筛选下推 `nameLike` / `kind` / `source` / `groupId`**；记录时把定义字段固化成快照并用 `normalizeFieldValues` 校验取值）、`cycleInstanceRepository.ts`（含边界「不静默删除」与不重叠校验）、`cycleEntryRepository.ts`（一天一条的 UPSERT + 复活 + `softDelete` / `restore` / `listDeleted` + 导出用的 `listAll` + 统计用的 `listVisible`）、`ledgerEntryRepository.ts`（**记账：金额整数分、按本地月区间下推、真删**；`list` / `listAll` / `create` / `remove`）、`eventGroupRepository.ts`、`backupRepository.ts`（`exportAll` / `previewImport` / `importAll`；`DELETE_ORDER` 含 `event_definition_fields`）、`metaRepository.ts`（键值偏好，时间轴显示方式、筛选排序、预测窗口与底部导航用它）
+- 功能组件：`src/features/definitions/`（定义表单 `EventDefinitionForm`：**类型（计数 / 周期）+ 属性多行 + 周期字段 + 自定义字段 + 快捷选项「属性 + 取值」**；`GroupManager`（**分组管理卡：新建 / 改名 / 删除**，就地在「事件」页展开）/ `groupInput.ts`（`renameGroupInput`：改名要提交的整组字段——`update` 是整体替换，不能只传 `name`）；`fields.ts` 汇总字段类型标签与提示；`labels.ts` 副标题与类型名的文案；`starterDefinitions.ts`（`STARTER_DEFINITIONS` + `seedStarterDefinitions`：新库写一条可删的参考模板事件））、`src/features/records/`（`format`（含 `formatRowValue` / `formatFullTime` / `describeRecord`）/ `FieldValuePicker`（按字段类型渲染取值控件）/ `RecordRow` / `RecordGroupRow`（合并行 + 就地展开）/ `groupRecords.ts`（按定义分组的纯函数）/ `repeat.ts`（`repeatDraft`：【+1】照抄最近一条要写的那几项，事件列表用它）/ `timelineView.ts`（显示方式偏好）/ `TimelineQueryPanel.tsx`（**时间轴的「筛选与排序」面板：四组「不限 + 选一个」的胶囊**）/ `timelineQuery.ts`（**筛选 / 排序的类型、默认值、`app_meta` 读写（一段 JSON，逐项回落）、摘要文案、映射到仓储参数**）/ `timelineSort.ts`（**排序纯函数：算事件级排序键 → 给事件排队**）/ `UndoBar`）、`src/features/cycles/`（`labels` 含 `describePrediction` / `describeLatestCycle` / `describeOverlap` / `describeCycleDefinition` / `CYCLE_MODE_LABELS` / `CYCLE_MODE_HINTS` / `predictionWindow.ts`（预测窗口这个纯偏好的选项 / 解析 / 文案）/ `autoFill.ts`（启动懒补齐的纯计划 `planAutoCycleFill` + 水位键 / 解析）/ `fillAutoCycles.ts`（按定义写库 + 只增不减的 `rememberAutoFillHorizon`）/ `calendar` 月视图纯计算 / `MonthCalendar` 网格 / `SymptomStatsCard`）、`src/features/stats/aggregate.ts`（统计聚合与窗口对比，纯函数；`TREND_RANGES` 是窗口长度的唯一来源，`statsReadRange` 算出「至少要读到哪一段」，`DefinitionTotal.attributeText`）、`src/features/stats/symptoms.ts`（按症状统计，纯函数）、`src/features/stats/labels.ts`（对比与症状的说法，纯函数）、`src/features/backup/csv.ts`（记录 CSV，多个属性用 ` | ` 连接，字段取值汇总成「字段值」列）、`src/features/backup/transfer.ts`（唯一碰文件系统/系统选择器的地方）、`src/features/common/datetime.ts`（本地时间 ↔ UTC）、`src/features/ledger/`（**记账页的纯展示与纯函数**：`MonthPicker` 年 + 12 月、`LedgerEntryRow` 左滑复制 / 删除、`LedgerEntryForm` 底部表单、`month.ts` 年月与本地月区间、`format.ts` 金额 / 时间 / 合计文案）、`src/features/navigation/`（`navigationPreferences.ts` 标签顺序 / 默认页的归一化与解析、`NavigationPreferencesProvider.tsx` 读写 `app_meta` 并把顺序交给标签栏、`NavigationSettingsCard.tsx` 设置卡）
+- 界面：`src/app/(tabs)/ledger.tsx`（**记账：年 / 12 月、当月支出 / 收入 / 结余、记一笔、左滑复制 / 删除**）、`src/app/(tabs)/definitions.tsx`（**事件页：计数 / 周期同一张列表**，计数型行内有【+1】、点行进记录页，周期进 `/cycles/[id]`；顶部「分组」按钮**就地展开分组管理卡**——没有单独的分组页）、`src/app/(tabs)/index.tsx`（时间轴：逐条 / 合并 + 行内【+1】 + **页头「筛选」面板（筛选下推 SQL、排序在客户端、状态存 `app_meta`）**，`FlatList`）、`src/app/(tabs)/stats.tsx`（统计）、`src/app/(tabs)/settings.tsx`（诊断 + **偏好设置（时间轴显示 / 周期预测窗口）** + **底部导航（顺序 / 默认页）** + 备份与恢复）、`src/app/events/new.tsx`、`src/app/events/[id].tsx`（编辑定义）、`src/app/record/[id].tsx`（记录 / 补录，**属性多选 chips + 自定义字段取值**）、`src/app/records/[id].tsx`（**单条记录详情：快照（含字段定义与取值）+ 修改 / 删除 / 撤销**）、`src/app/records/deleted.tsx`（回收站）、`src/app/cycles/[id].tsx`（周期型事件详情：开一段 / 生成下一段 / 归档 / 删除；自动型生成时顺手推 `app_meta` 水位；非周期型定义会提示并给「去记录页」）、`src/app/cycle-instances/[id].tsx`
+- 走读文档：`docs/learning/08-event-definitions.md`、`09-event-recording.md`、`10-backfill-and-undo.md`、`11-cycle-tracking.md`、`12-statistics.md`、`13-permanent-delete-and-trash.md`、`14-backup-and-restore.md`、`15-maestro-e2e.md`、`16-timeline-row-and-detail.md`、`17-custom-fields.md`、`19-timeline-filter-and-sort.md`、`20-component-testing.md`、`21-custom-tab-order-and-default-tab.md`、`22-ledger.md`
+- 端到端：`.maestro/README.md`（跑法与约定）、`.maestro/flows/00`–`15`（16 条流程；`13` 测分组管理，`14` 测底部导航顺序与默认页，`15` 测记账的记一笔 / 左滑复制 / 删除；`12` 用相对日期测启动懒补齐）、`.maestro/subflows/record-once.yaml`（记一次）、`.maestro/subflows/use-expanded-view.yaml`（把时间轴钉成「逐条」）
 
 ## 7. 必须遵守的工作约定
 
@@ -342,13 +365,14 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ **静态检查、601 个用例**（仓储 / 纯函数跑真实内存 SQLite，界面跑 RNTL 组件测试）、iOS 打包。
-- ✅ **组件级测试已起步**（2026-11-04，2026-11-05 补第二批）：`@testing-library/react-native`，
-  8 个套件 / 45 个用例，覆盖 `Button`、`RecordRow`、`RecordGroupRow`、`TimelineQueryPanel`、
-  `MonthCalendar`、`FieldValuePicker`、`UndoBar`、`SymptomStatsCard`；
+- ✅ **静态检查、648 个用例**（仓储 / 纯函数跑真实内存 SQLite，界面跑 RNTL 组件测试）、iOS 打包。
+- ✅ **组件级测试已起步**（2026-11-04，2026-11-05 补第二批，2026-11-05 再补记账）：`@testing-library/react-native`，
+  11 个套件 / 57 个用例，覆盖 `Button`、`RecordRow`、`RecordGroupRow`、`TimelineQueryPanel`、
+  `MonthCalendar`、`FieldValuePicker`、`UndoBar`、`SymptomStatsCard`、`MonthPicker`、
+  `LedgerEntryRow`、`LedgerEntryForm`；
   不连数据库、不启动模拟器。写法、边界与「RNTL 14 的 `render` / `fireEvent` 必须 `await`」、
   「受控组件要自己 `rerender`」的坑见 `docs/learning/20-component-testing.md`。
-- ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go）：**4 个标签页** + 回收站 +
+- ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go）：**5 个标签页** + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
 - ✅ **写入路径已经真手点过**（Maestro，`12/12` 通过，7m49s，2026-10-29）：点一下记录、
@@ -407,7 +431,7 @@ src/theme/         设计令牌
   **第一遍 13 条是 11/13**：`05` / `08` 点定义行落到 `统计` 标签（行被底部 tab bar 盖住，
   `scrollUntilVisible` 仍判可见）→ 给 05 / 08 / 12 的定义行滚动加 `centerElement: true`，再整跑 13/13。
   这两处也是流程漂移，**App 代码没改**。
-- ✅ **底部导航顺序与默认页**（2026-11-04）：设置 →「底部导航」可把四个标签左 / 右移动，
+- ✅ **底部导航顺序与默认页**（2026-11-04）：设置 →「底部导航」可把五个标签左 / 右移动，
   顺序立即生效；「默认打开」选中的页面在**下次冷启动**时生效（从后台回前台不跳）。
   偏好存 `app_meta.app.navigation`（一段 JSON，无新增迁移），读到坏值会丢未知 / 去重 / 补缺，
   标签永远不会少。默认页不能用 Expo Router 的静态 `initialRouteName`（读不到异步偏好），
@@ -424,6 +448,12 @@ src/theme/         设计令牌
   起因是 `rightOf` / `below` 是**半平面判断**（所有在参照物右边的元素都命中，不是最近的那个），
   第一版试跑点到了别人那一行的「删除」。颜色 / 排序的保留仍只有 `renameGroupInput` 单测；
   「删分组后事件回到未分组」由 `eventDefinitionRepository-test` 的 SET NULL 用例兜底。
+- ✅ **记账（第五个标签页）已落地并真手点过**（2026-11-05）：新增 v8 迁移 `ledger_entries`；
+  页面顶部年份 + 12 个月，当月支出 / 收入 / 结余；「记一笔」用数字键盘记金额 + 备注，保存立即出现；
+  左滑露出「复制 / 删除」——复制以当前时间再记一条并切到本月，删除走原生二次确认后真删。
+  备份格式升到 v4（旧备份缺 `ledgerEntries` 按空数组），导入同样在事务里核对第八张表。
+  端到端流程 `15` 单独跑通：`3.6 / Maestro记账` → 左滑复制 → 合计从 `-¥3.60` 变 `-¥7.20` →
+  删两条收尾。走读见 `docs/learning/22-ledger.md`。
 - ❌ 筛选与排序的**界面**这次点过了（`11`），但它覆盖的只是主干：
   「事件名」输入框逐字输入、分组筛选（含「未分组」）、四种排序键的切换仍没有
   **端到端**逐条覆盖；其中「改一项只影响自己」「三颗『全部』互不串台」与选中态已由
@@ -520,21 +550,35 @@ src/theme/         设计令牌
    规则（不生成第一段 / 只追加 / 进行中停手 / 补到今天 / 上限 12 段 / 水位防复活）见第 5 节第 25 条，
    走读见 `docs/learning/11-cycle-tracking.md` 4.14 节；**无新增迁移**。
    新增流程 `.maestro/flows/12`（相对日期 + 冷启动 + 幂等）；2026-11-04 又补了 `13`（分组管理）
-   与 `14`（底部导航顺序 / 默认页），**整套 15/15 通过（10m26s）**。见第 8 节。
+   与 `14`（底部导航顺序 / 默认页），**当时整套 15/15 通过（10m26s）**；记账的 `15` 进来后
+   最新整跑见第 8 节。
 
 ### 9.7 底部导航顺序与默认页（✅ 已完成）
 
-设置里可把四个标签左 / 右移动，并选冷启动默认打开哪一页。顺序由偏好数组直接决定
+设置里可把五个标签左 / 右移动，并选冷启动默认打开哪一页。顺序由偏好数组直接决定
 `Tabs.Screen` 的渲染顺序，改完立即生效；默认页只在**冷启动且初始路径是 `/`** 时
 `router.replace` 一次，深链不抢路。偏好存 `app_meta.app.navigation`，**无新增迁移**。
 读坏数据会丢未知 / 去重 / 补缺，默认页认不出就回时间轴。
 
 走读：`docs/learning/21-custom-tab-order-and-default-tab.md`；端到端：`.maestro/flows/14`。
 
-第二阶段的功能项到此清零。剩下的不是「再做一项功能」，而是：
+### 9.8 记账（✅ 已完成，v8）
+
+用户要的是「快速记一笔 + 按月回看 + 左滑复制」：
+
+- 第五个标签页「记账」，默认当前月；顶部年份可翻，下面 12 个月胶囊。
+- 「记一笔」：支出 / 收入、金额（数字键盘、最多两位小数）、备注；保存立即出现在当月列表。
+- 左滑一行露出「复制 / 删除」；复制以**当前时间**再记一条（金额 / 备注 / 方向照抄），
+  删除是原生二次确认后的真删。
+- 金额只存整数分（`amount_cents`），避免浮点误差；按月查询把本地时区区间下推 SQL。
+- 备份格式 v4；旧备份没有 `ledgerEntries` 按空数组，导入事务里核对八张表。
+
+走读：`docs/learning/22-ledger.md`；端到端：`.maestro/flows/15`。
+
+第二阶段的功能项到此清零，另加了一个独立功能「记账」。剩下的不是「再做一项功能」，而是：
 
 - **真机验证**：iOS 真机 / Android（见第 8 节）。
-- **组件级测试**：已起步（8 个套件 / 45 个用例，见第 8 节与 `docs/learning/20`），
+- **组件级测试**：已起步（11 个套件 / 57 个用例，见第 8 节与 `docs/learning/20`），
   但带数据库的页面与原生交互仍没有；下一批候选是事件定义表单的校验分支（先把校验抽成纯函数，
   或替掉 `useReadyDatabase` 依赖）、`GroupManager` 的改名 / 键盘提交、
   时间轴展开后的子行顺序（数据层已由 `groupRecords-test` 兜底）。
@@ -565,11 +609,18 @@ src/theme/         设计令牌
   分组行的「改名 / 删除」已经试过更轻的一条路：`Button.accessibilityLabel` 带上分组名
   （可见文字仍只有「改名 / 删除」，见流程 `13`）；要给【+1】补上下文可以照这个做法，
   但先想清楚与「+1 是通用标识」的产品取舍。
-- **组件级测试只覆盖了纯展示组件**：`npm test` 现在含 RNTL（8 个套件 / 45 个用例），
+- **组件级测试只覆盖了纯展示组件**：`npm test` 现在含 RNTL（11 个套件 / 57 个用例），
   但带数据库的页面（分组管理、表单、详情、回收站、设置）、导航、`Alert` / 文件选择 / 分享
   仍未覆盖；这一层刻意不连数据库，跨过这条线就该交给 Maestro。
   新写组件测试记得 `render` / `fireEvent` **每一处都 `await`**（RNTL 14 是异步的，漏掉会报
   `overlapping act()` 再让后面的查询莫名失败）。也没有覆盖率门槛，别用数字替代关键规则。
+- **记账的取舍**（见 `docs/learning/22-ledger.md` 第 7 节）：没有编辑入口、不能补记过去日期、
+  删除是真删不进回收站；左滑动作对读屏是「隐藏但仍可聚焦」（按钮在行背后，无障碍树里一直存在）；
+  按月加载不做跨月分页，月份也只能一年一年翻。以后要改「可编辑 / 可补记 / 软删除」任意一项，
+  都要同时想清楚**备份合并是否还坚持不可变事实**，不能只改表。
+- **记账的左滑状态没有提升到页面级**：同一时刻可能有多行保持展开（用 `PanResponder` +
+  `Animated.Value` 在行内自管），这是有意的轻量做法；如果用户反馈「划开一行再划线另一行」很乱，
+  再把「当前展开的 id」提到页面统一管理（会多一次渲染）。
 - **时间轴只取最近 100 条**：已用 `FlatList` 虚拟化，但没有分页 / 无限滚动；更早的记录要去事件页看。
   第 15 节加了筛选之后，窗口语义是「**符合筛选的**最近 100 条」（筛选下推到 SQL），
   但**窗口本身还在**：筛一个很活跃的事件、或按「次数」排序时，次数说的是**这次载入的条数**
@@ -696,7 +747,7 @@ src/theme/         设计令牌
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：44 套件 / 601 用例通过
+npm run verify             # 应为：51 套件 / 648 用例通过
 npx expo export --platform ios   # 应能打包
 npm start                  # Expo Go 扫码（或走下面的自动流程）
 
@@ -704,7 +755,7 @@ npm start                  # Expo Go 扫码（或走下面的自动流程）
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17
 export PATH="$HOME/.maestro/bin:$PATH"
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-maestro test .maestro/flows      # 15/15 通过（10m26s，2026-11-04，见第 8 节）
+maestro test .maestro/flows      # 16/16 通过（10m58s，2026-11-05，见第 8 节）
 sqlite3 "$(xcrun simctl get_app_container booted host.exp.Exponent data)"/Documents/ExponentExperienceData/@anonymous/lifetrack-*/SQLite/lifetrack.db \
   "select count(*), sum(deleted_at is not null) from event_records;"   # 跑完核对：多的应该只有 Maestro* 那条记录
 ```
@@ -738,6 +789,8 @@ sqlite3 "$(xcrun simctl get_app_container booted host.exp.Exponent data)"/Docume
 把结束日提前到某条记录之前 → 应立刻出现黄色预演提示，保存被拒绝（数据不能少）
 把开始日改到前一段里 → 应出现「会和已有的一段周期重叠（…）」并点名那一段
 删除某天的记录 → 软删除（出现「撤销」提示条，不弹确认）；删除整段周期 → 二次确认
+记账页：年份左右翻 → 点「3 月」应切月；「记一笔」输 3.6 + 备注 → 记下 → 当月列表出现 -¥3.60；
+  左滑那一行 → 点「复制」→ 合计翻倍（当前时间的新一条）→ 点「删除」→ 原生确认 → 两条都删掉
 周期里记一天 → 点「删除」→ 出现「撤销」提示条 → 撤销找回；再删 → 回收站「已删除的周期记录」里恢复 / 彻底删除
 进周期实例页 → 月视图点一天 → 表单日期变成那天 → 保存 → 那格涂底色（有症状还带小圆点）
 回周期定义页 → 「症状统计」列出症状与「N 天 · 百分比」；统计页拉到底也有「周期症状」
