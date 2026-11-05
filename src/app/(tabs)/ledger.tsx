@@ -1,5 +1,5 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, SectionList, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,8 +21,8 @@ import { currentYearMonth, monthRangeIso, sameYearMonth, type YearMonth } from '
 import { LedgerEntryRepository } from '@/repositories';
 import { palette, radius, spacing } from '@/theme';
 
-/** 三个数字并排；支出 / 收入 / 结余各自带色。 */
-function Totals({ totals }: { totals: LedgerTotals }) {
+/** 三个数字并排；支出 / 收入各带色，右侧「账单」可点进二级页。 */
+function Totals({ totals, onPressBill }: { totals: LedgerTotals; onPressBill: () => void }) {
   return (
     <Card style={styles.summary}>
       <View style={styles.summaryRow}>
@@ -54,14 +54,23 @@ function Totals({ totals }: { totals: LedgerTotals }) {
             收入
           </AppText>
         </View>
-        <View style={styles.metric}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`账单，当前 ${formatLedgerTotal(totals.balanceCents)}`}
+          accessibilityHint="查看账单汇总与图表分析"
+          onPress={onPressBill}
+          style={({ pressed }) => [styles.metric, pressed ? styles.metricPressed : null]}
+        >
           <AppText variant="subtitle" numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
             {formatLedgerTotal(totals.balanceCents)}
           </AppText>
-          <AppText variant="caption" color={palette.textMuted}>
-            结余
-          </AppText>
-        </View>
+          <View style={styles.billLabelRow}>
+            <AppText variant="caption" color={palette.primary}>
+              账单
+            </AppText>
+            <Ionicons name="chevron-forward" size={12} color={palette.primary} />
+          </View>
+        </Pressable>
       </View>
     </Card>
   );
@@ -70,12 +79,14 @@ function Totals({ totals }: { totals: LedgerTotals }) {
 /**
  * 「记账」页：按月看流水。
  *
- * 顶部一行是当月合计（左）和年 / 月选择（右），默认当前月；
+ * 顶部左边是年 / 月选择，右边是当月合计（支出 / 收入 / 账单）；
+ * 「账单」可点进二级页，看逐月汇总与图表分析。
  * 下面的记录按**天**分组，两组之间留一段空白。
- * 「记一笔」走底部表单（方向 + 金额 + 备注）；每条记录
+ * 「记一笔」走底部表单（方向 + 金额 + 备注 + 标签）；每条记录
  * **左滑复制、右滑删除**——每天同样的通勤 / 早餐不用重新输入。
  */
 export default function LedgerScreen() {
+  const router = useRouter();
   const { db } = useReadyDatabase();
 
   const [selected, setSelected] = useState<YearMonth>(() => currentYearMonth());
@@ -150,6 +161,7 @@ export default function LedgerScreen() {
           kind: entry.kind,
           amountCents: entry.amountCents,
           note: entry.note,
+          tag: entry.tag,
           occurredAt: now.toISOString(),
         },
         now.toISOString(),
@@ -196,8 +208,11 @@ export default function LedgerScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['left', 'right']}>
       <View style={styles.topRow}>
-        <Totals totals={summarizeLedger(entries)} />
         <MonthPicker value={selected} onChange={setSelected} />
+        <Totals
+          totals={summarizeLedger(entries)}
+          onPressBill={() => router.push({ pathname: '/bills', params: { year: selected.year } })}
+        />
       </View>
 
       <SectionList
@@ -272,7 +287,7 @@ const styles = StyleSheet.create({
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    gap: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.sm,
     paddingBottom: spacing.md,
@@ -281,15 +296,24 @@ const styles = StyleSheet.create({
   },
   summary: {
     flex: 1,
-    padding: spacing.md,
+    padding: spacing.sm,
   },
   summaryRow: {
     flexDirection: 'row',
   },
   metric: {
     flex: 1,
+    minWidth: 0,
     alignItems: 'center',
     gap: spacing.xs,
+  },
+  metricPressed: {
+    opacity: 0.6,
+  },
+  billLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
   },
   list: {
     flex: 1,

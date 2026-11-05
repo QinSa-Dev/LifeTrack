@@ -101,7 +101,7 @@ async function seed(context: Context): Promise<void> {
   );
   await context.entries.save(instance.id, { date: '2026-10-02', phase: '经期', symptoms: ['头痛'] }, T1);
 
-  await context.ledger.create({ kind: 'expense', amountCents: 360, note: '上班地铁' }, T1);
+  await context.ledger.create({ kind: 'expense', amountCents: 360, note: '上班地铁', tag: '通勤' }, T1);
 }
 
 /** 取导出数据里某个名字的定义，找不到就失败（夹具变更时能立刻发现） */
@@ -156,6 +156,7 @@ describe('BackupRepository.exportAll', () => {
     expect(file.data.cycleEntries).toHaveLength(1);
     expect(file.data.ledgerEntries).toHaveLength(1);
     expect(file.data.ledgerEntries[0]?.note).toBe('上班地铁');
+    expect(file.data.ledgerEntries[0]?.tag).toBe('通勤');
   });
 
   it('导出的是稳定顺序：同一份数据两次导出完全一致', async () => {

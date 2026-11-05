@@ -175,6 +175,7 @@ function makeLedgerEntry(index: number, overrides: Partial<LedgerEntry> = {}): L
     kind: 'expense',
     amountCents: 360,
     note: '上班地铁',
+    tag: '通勤',
     occurredAt: T1,
     recordedAt: T1,
     ...overrides,
@@ -721,15 +722,14 @@ describe('记账备份', () => {
     kind: 'expense',
     amountCents: 360,
     note: '上班地铁',
+    tag: '通勤',
     occurredAt: T1,
     recordedAt: T1,
     ...overrides,
   });
 
-  it('v4 备份里的记账条目能完整往返，备注为空时读成 undefined', () => {
-    const parsed = parseBackup(
-      rawFile({ ledgerEntries: [ledgerRow(), ledgerRow({ id: id(LEDGER_BASE + 2), note: null })] }),
-    );
+  it('v5 备份里的记账标签能完整往返', () => {
+    const parsed = parseBackup(rawFile({ ledgerEntries: [ledgerRow()] }));
 
     expect(parsed.data.ledgerEntries).toEqual([
       {
@@ -737,21 +737,30 @@ describe('记账备份', () => {
         kind: 'expense',
         amountCents: 360,
         note: '上班地铁',
-        occurredAt: T1,
-        recordedAt: T1,
-      },
-      {
-        id: id(LEDGER_BASE + 2),
-        kind: 'expense',
-        amountCents: 360,
-        note: undefined,
+        tag: '通勤',
         occurredAt: T1,
         recordedAt: T1,
       },
     ]);
   });
 
-  it('方向、金额、备注与时间逐字段校验，错误带路径', () => {
+  it('v4 旧备份没有 tag 字段：读成 undefined，备注为空同样读成 undefined', () => {
+    const parsed = parseBackup(
+      rawFile({ ledgerEntries: [ledgerRow({ note: null, tag: undefined })] }, { formatVersion: 4 }),
+    );
+
+    expect(parsed.data.ledgerEntries[0]).toEqual({
+      id: id(LEDGER_BASE + 1),
+      kind: 'expense',
+      amountCents: 360,
+      note: undefined,
+      tag: undefined,
+      occurredAt: T1,
+      recordedAt: T1,
+    });
+  });
+
+  it('方向、金额、备注、标签与时间逐字段校验，错误带路径', () => {
     expect(() => parseBackup(rawFile({ ledgerEntries: [ledgerRow({ kind: 'transfer' })] }))).toThrow(
       /data\.ledgerEntries\[0\]\.kind/,
     );
@@ -763,6 +772,9 @@ describe('记账备份', () => {
     );
     expect(() => parseBackup(rawFile({ ledgerEntries: [ledgerRow({ note: 'x'.repeat(101) })] }))).toThrow(
       /data\.ledgerEntries\[0\]\.note/,
+    );
+    expect(() => parseBackup(rawFile({ ledgerEntries: [ledgerRow({ tag: 'x'.repeat(31) })] }))).toThrow(
+      /data\.ledgerEntries\[0\]\.tag/,
     );
     expect(() =>
       parseBackup(

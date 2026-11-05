@@ -50,6 +50,7 @@ import {
   requireLedgerAmountCents,
   requireLedgerKind,
   requireLedgerNote,
+  requireLedgerTag,
   requireName,
   requireNotFuture,
   requireQuickOptionValue,
@@ -63,7 +64,7 @@ import {
 export const BACKUP_FORMAT = 'lifetrack-backup';
 
 /** 备份**格式**版本（数据结构本身的版本，与数据库 schema 版本是两件事） */
-export const BACKUP_FORMAT_VERSION = 4;
+export const BACKUP_FORMAT_VERSION = 5;
 
 /** 备份里包含的六个集合，顺序即写入顺序（父表在前） */
 export const BACKUP_COLLECTIONS = [
@@ -598,6 +599,8 @@ function parseLedgerEntry(value: unknown, path: string): LedgerEntry {
       requireLedgerAmountCents(numberValue(row.amountCents, `${path}.amountCents`)),
     ),
     note: check(`${path}.note`, () => requireLedgerNote(textOrUndefined(row.note, `${path}.note`))),
+    // 可选字段：v5 之前导出的备份没有这一项，缺失即「没有标签」
+    tag: check(`${path}.tag`, () => requireLedgerTag(textOrUndefined(row.tag, `${path}.tag`))),
     occurredAt,
     recordedAt,
   };

@@ -23,19 +23,28 @@ describe('<LedgerEntryForm />', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  test('输入金额与备注后提交：元转成分，备注原样带走', async () => {
+  test('输入金额、备注与标签后提交：元转成分，文本原样带走', async () => {
     const { onSubmit, onClose } = await renderForm();
 
     await fireEvent.changeText(screen.getByPlaceholderText('0.00'), '3.6');
     await fireEvent.changeText(screen.getByPlaceholderText('上班地铁'), '上班地铁');
+    await fireEvent.changeText(screen.getByPlaceholderText('例如 通勤'), '通勤');
     await fireEvent.press(screen.getByRole('button', { name: '记下' }));
 
     expect(onSubmit).toHaveBeenCalledWith({
       kind: 'expense',
       amountCents: 360,
       note: '上班地铁',
+      tag: '通勤',
     });
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  test('标签最多 30 个字符，输入框直接限制长度', async () => {
+    await renderForm();
+
+    const tag = screen.getByPlaceholderText('例如 通勤');
+    expect(tag.props.maxLength).toBe(30);
   });
 
   test('切到收入后再提交，方向跟着变', async () => {
@@ -47,7 +56,7 @@ describe('<LedgerEntryForm />', () => {
     await fireEvent.changeText(screen.getByPlaceholderText('0.00'), '100');
     await fireEvent.press(screen.getByRole('button', { name: '记下' }));
 
-    expect(onSubmit).toHaveBeenCalledWith({ kind: 'income', amountCents: 10000, note: '' });
+    expect(onSubmit).toHaveBeenCalledWith({ kind: 'income', amountCents: 10000, note: '', tag: '' });
   });
 
   test('输入框会清掉非数字字符并限制两位小数', async () => {

@@ -9,18 +9,21 @@
 - 页面顶部是**一行**：左边当月支出 / 收入 / 结余合计，右边是时间块——上面年份（左右箭头逐年翻），
   下面月份下拉（默认当前月，点一下才展开 12 个月，选完自动收起）。
 - 记录按**设备本地日期**分组：组标题 `YYYY-MM-DD`，组与组之间留一段空白；行内时间只显示 `HH:mm`。
-- 右下角「记一笔」打开表单：支出 / 收入二选一、金额（数字键盘、最多两位小数）、备注（可空）。
+- 右下角「记一笔」打开表单：支出 / 收入二选一、金额（数字键盘、最多两位小数）、备注（可空）、标签（可空）。
 - 保存后**立即**出现在列表里，不需要刷新。
+- 有标签的记录在时间旁边用**小字胶囊**展示标签（带标签图标）；没有标签就不显示。
 - 列表行**左滑复制、右滑删除**，一次滑动只露一侧：
-  - 复制＝以**当前时间**再记一条，金额、备注、方向都不变（然后切到当前月，保证看得见）；
+  - 复制＝以**当前时间**再记一条，金额、备注、标签、方向都不变（然后切到当前月，保证看得见）；
   - 删除＝原生二次确认后真删（记账没有快照、没有联动数据，不做软删除）。
-- 记账条目进入 JSON 备份；备份格式从 **v3 升到 v4**，旧备份里没有 `ledgerEntries` 时按空数组处理。
-- 新增迁移 **v8** 建 `ledger_entries` 表；新增 Maestro 流程 `15`，真实模拟器上跑通
+- 记账条目进入 JSON 备份；v8 时备份格式从 **v3 升到 v4**，v9 加标签后再升到 **v5**。
+  旧备份里没有 `ledgerEntries` 时按空数组处理，没有 `tag` 时按「没有标签」处理。
+- 新增迁移 **v8** 建 `ledger_entries` 表，**v9** 给它加 `tag` 列；新增 Maestro 流程 `15`，真实模拟器上跑通
   「记一笔 → 左滑复制 → 右滑删除两条收尾」。
 
-## 2. 数据模型（v8）
+## 2. 数据模型（v8 + v9）
 
 ```sql
+-- v8
 CREATE TABLE ledger_entries (
   id           TEXT    PRIMARY KEY NOT NULL,
   kind         TEXT    NOT NULL CHECK (kind IN ('expense', 'income')),
@@ -32,6 +35,9 @@ CREATE TABLE ledger_entries (
 );
 
 CREATE INDEX idx_ledger_entries_occurred_at ON ledger_entries(occurred_at DESC);
+
+-- v9：只加一列，旧行自动是 NULL（= 没有标签）
+ALTER TABLE ledger_entries ADD COLUMN tag TEXT CHECK (tag IS NULL OR length(tag) <= 30);
 ```
 
 对应的 TypeScript 类型（`src/domain/models.ts`）：
@@ -44,7 +50,10 @@ export interface LedgerEntry {
   kind: LedgerKind;
   /** 正整数，单位「分」；支出 / 收入由 kind 区分，金额本身不带符号 */
   amountCents: number;
+  /** 备注：补充说明，可空 */
   note?: string;
+  /** 标签：这笔账属于什么类别（例如「通勤」「餐饮」），可空 */
+  tag?: string;
   occurredAt: IsoDateTime;
   recordedAt: IsoDateTime;
 }
@@ -54,6 +63,11 @@ export interface LedgerEntry {
 界面输入的是元（`3.6`），`src/domain/money.ts` 负责 `元文本 → 整数分` 与反向展示；
 数据库与仓储只认整数分。金额上限 `999,999,999.99` 元（`MAX_LEDGER_AMOUNT_CENTS`），
 挡住手滑输入一长串数字。
+
+**为什么标签是单值、可空、最多 30 字**：标签是**分类**，备注是**补充说明**——
+「早高峰」可以写在备注里，「通勤」放在标签里。一条账只有一个标签，账单统计时不会
+一笔钱同时落进多个类别；30 字是列表胶囊还能看清的上限。`trim()` 后为空就存 `NULL`，
+读回来是 `undefined`。以后若要多标签，得把列改成 JSON，并同时决定统计是否允许重复计入。
 
 **为什么没有 `updated_at` / `deleted_at`**：记账条目是不可变事实，没有编辑入口；删除就是真删。
 因此备份合并时它也按「不可篡改」处理：同 id 只保留本地，不拿备份覆盖（与事件记录同一原则）。
@@ -87,10 +101,10 @@ return { from: start.toISOString(), until: end.toISOString() };
 | --- | --- |
 | `src/app/(tabs)/ledger.tsx` | 页面：加载当月、顶部合计 + 年 / 月、按天分组、记一笔、左滑复制 / 右滑删除、错误与空状态 |
 | `src/features/ledger/MonthPicker.tsx` | 右侧时间块：年份箭头 + 月份下拉浮层（只收 `value` / `onChange`） |
-| `src/features/ledger/LedgerEntryRow.tsx` | 一行账：备注（没备注用「支出 / 收入」）、本地时间、带符号金额、左滑复制 / 右滑删除 |
-| `src/features/ledger/LedgerEntryForm.tsx` | 底部表单：方向胶囊、金额输入、备注、提交 / 取消 |
+| `src/features/ledger/LedgerEntryRow.tsx` | 一行账：备注（没备注用「支出 / 收入」）、本地时间、标签小字胶囊、带符号金额、左滑复制 / 右滑删除 |
+| `src/features/ledger/LedgerEntryForm.tsx` | 底部表单：方向胶囊、金额输入、备注、标签、提交 / 取消 |
 | `src/features/ledger/format.ts` | 展示文案、按天分组与当月合计（纯函数） |
-| `src/features/ledger/month.ts` | 年月状态、月份区间、标签（纯函数） |
+| `src/features/ledger/month.ts` | 年月状态、月份区间（纯函数） |
 
 ### 4.1 记一笔
 
@@ -100,6 +114,8 @@ return { from: start.toISOString(), until: end.toISOString() };
 - 真正提交时再用 `parseAmountToCents` + `requireLedgerAmountCents` 判断；空串 / `.` / 多个小数点 /
   超过两位小数都会得到「请输入大于 0 的金额」或仓储的校验错误。
 - 备注 `trim()` 后为空就存 `NULL`，读回来是 `undefined`，列表不会出现一行空白。
+- 标签同样 `trim()` 后为空就存 `NULL`；`maxLength=30`，仓储再用 `requireLedgerTag` 兜一次。
+- 表单内容放进 `ScrollView`，小屏 + 键盘弹出时字段可滚动，底部「取消 / 记下」始终可见。
 
 ### 4.2 左滑复制、右滑删除
 
@@ -132,30 +148,43 @@ return { from: start.toISOString(), until: end.toISOString() };
 - 每组最后一行多留 `spacing.lg` 的底部空白，下一组日期标题再出现，视觉上就是「一组、空一段、下一组」。
 - 月末跨时区仍然按本地日期算，和 `monthRangeIso` 用同一个时区口径。
 
-## 5. 备份格式 v4
+### 4.4 标签与账单分类
 
-- `BACKUP_FORMAT_VERSION` 从 `3` 升到 `4`，`BackupData` 新增 `ledgerEntries: LedgerEntry[]`。
+- 列表行的标签是**小字胶囊**：`pricetag-outline` 图标 + `caption` 字号，放在时间右边；
+  标签太长时单行截断，不把金额挤走。
+- 账单分析（`features/ledger/bills.ts` 的 `ledgerCategory`）**优先用标签**；
+  没有标签才回落到备注原文；两者都空归入「未分类」。
+  这样「备注写细节、标签写类别」时，统计口径是稳定的。
+- 删除确认里也会带上标签（`金额 · 备注 · 标签`），避免删错同名记录。
+
+## 5. 备份格式 v5
+
+- v8 时 `BACKUP_FORMAT_VERSION` 从 `3` 升到 `4`，`BackupData` 新增 `ledgerEntries: LedgerEntry[]`；
+  v9 给记账加 `tag` 后再从 `4` 升到 `5`。
 - 解析沿用严格守卫：`kind` 只认 `expense` / `income`；`amountCents` 必须是正整数且不超上限；
-  `note` 可空、最多 100 字符；`occurredAt` ≤ `recordedAt`；错误带路径
-  （`data.ledgerEntries[0].amountCents`）。
-- **旧备份兼容**：缺失的集合按空处理，所以 v3 及更早的备份导入后只是没有账，不会报错。
+  `note` 可空、最多 100 字符；`tag` 可空、最多 30 字符；`occurredAt` ≤ `recordedAt`；
+  错误带路径（`data.ledgerEntries[0].tag`）。
+- **旧备份兼容**：缺失的集合按空处理（v3 及更早的备份只是没有账）；
+  v4 备份缺失 `tag` 字段按「没有标签」解析，不会报错。
 - 合并按「不可变事实」：同 id 保留本地，新 id 追加；`ledgerEntries` 参与稳定排序与重复 id 体检。
 - 导入在同一个独占事务里删 / 写**八张表**（原来七张 + `ledger_entries`），
-  并核对行数与 `PRAGMA foreign_key_check`；失败整体回滚。
+  并核对行数与 `PRAGMA foreign_key_check`；失败整体回滚。`tag` 是列，不是新表。
 
 ## 6. 测试与验收
 
 - 纯函数：`domain/__tests__/money-test.ts`、`features/ledger/__tests__/month-test.ts`、`format-test.ts`
   （含按本地日期分组）。
-- 仓储：`repositories/__tests__/ledgerEntryRepository-test.ts`（真实内存 SQLite：整数分、备注 trim、
-  倒序、本地时区月边界、非法金额 / 方向 / 备注 / 未来时间、真删与 `NotFoundError`）。
-- 组件：`monthPicker-test`、`ledgerEntryRow-test`、`ledgerEntryForm-test`（RNTL，不连数据库）。
-- 备份：`domain/__tests__/backup-test.ts` 增加记账往返、逐字段拒绝、合并与重复 id；
-  `backupRepository-test.ts` 的导出 / 导入 / 计数覆盖第八张表。
+- 仓储：`repositories/__tests__/ledgerEntryRepository-test.ts`（真实内存 SQLite：整数分、备注 / 标签 trim、
+  倒序、本地时区月边界、非法金额 / 方向 / 备注 / 标签 / 未来时间、真删与 `NotFoundError`）。
+- 组件：`monthPicker-test`、`ledgerEntryRow-test`、`ledgerEntryForm-test`（RNTL，不连数据库；
+  覆盖标签胶囊与标签输入）。
+- 备份：`domain/__tests__/backup-test.ts` 增加记账往返、v4 旧备份缺 `tag`、逐字段拒绝、合并与重复 id；
+  `backupRepository-test.ts` 的导出 / 导入 / 计数覆盖第八张表与标签。
 - 端到端：`.maestro/flows/15-ledger.yaml`。真实模拟器上跑过：
   记一笔 `3.6` / 备注 `Maestro记账` → 左滑点「复制」→ 月合计从 `-¥3.60` 变 `-¥7.20` →
   **右滑**点「删除」删两条（原生二次确认）→ 列表里不再有这条备注，自产自销。
   整跑 **16/16，11m48s**（2026-11-05；单跑 `15` 见 `.maestro/README.md`）。
+  **标签的端到端还没单独跑**，目前由仓储 / 备份 / 组件测试覆盖。
 
 ## 7. 已知取舍
 
@@ -170,3 +199,5 @@ return { from: start.toISOString(), until: end.toISOString() };
 - **同一天的多条记录不折叠**：按天分组只加日期标题，不把同一天的记录收进一张可折叠卡；
   每天条数通常不多，折叠会多一次点击。
 - **按月加载，不做跨月分页**：一个月的数据量有限；若单月达到数万条，需要再给列表加分页 / 窗口。
+- **标签是单值**：一条账只有一个标签，够用于分类；多标签会让「一笔支出属于几个类别」的统计口径
+  变得含糊，等真有需求再一起设计。

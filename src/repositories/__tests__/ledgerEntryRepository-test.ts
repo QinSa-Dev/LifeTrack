@@ -19,24 +19,26 @@ describe('LedgerEntryRepository', () => {
     db.close();
   });
 
-  it('记一笔后能读回，金额是整数分、备注去掉首尾空白', async () => {
+  it('记一笔后能读回，金额是整数分、备注与标签去掉首尾空白', async () => {
     const created = await ledger.create(
-      { kind: 'expense', amountCents: 360, note: '  上班地铁  ' },
+      { kind: 'expense', amountCents: 360, note: '  上班地铁  ', tag: '  通勤  ' },
       '2026-11-05T08:00:00.000Z',
     );
 
     expect(created.kind).toBe('expense');
     expect(created.amountCents).toBe(360);
     expect(created.note).toBe('上班地铁');
+    expect(created.tag).toBe('通勤');
     expect(created.occurredAt).toBe('2026-11-05T08:00:00.000Z');
     expect(created.recordedAt).toBe('2026-11-05T08:00:00.000Z');
 
     expect(await ledger.list()).toEqual([created]);
   });
 
-  it('省略备注时读回 undefined，而不是 null', async () => {
+  it('省略备注与标签时读回 undefined，而不是 null', async () => {
     const created = await ledger.create({ kind: 'income', amountCents: 10000 }, '2026-11-05T08:00:00.000Z');
     expect(created.note).toBeUndefined();
+    expect(created.tag).toBeUndefined();
     expect(await ledger.list()).toEqual([created]);
   });
 
@@ -77,6 +79,23 @@ describe('LedgerEntryRepository', () => {
     expect(november.map((e) => e.id)).not.toContain(atBoundary.id);
   });
 
+  it('年份范围按本地年份取最早与最晚；没有数据时是 null', async () => {
+    const now = new Date(2026, 10, 5, 12).toISOString();
+    await ledger.create(
+      { kind: 'expense', amountCents: 100, occurredAt: new Date(2024, 2, 1, 8).toISOString() },
+      now,
+    );
+    await ledger.create(
+      { kind: 'expense', amountCents: 200, occurredAt: new Date(2026, 0, 1, 0, 30).toISOString() },
+      now,
+    );
+
+    expect(await ledger.yearBounds()).toEqual({ earliestYear: 2024, latestYear: 2026 });
+
+    await db.runAsync('DELETE FROM ledger_entries');
+    expect(await ledger.yearBounds()).toBeNull();
+  });
+
   it('金额必须大于 0 且为整数分', async () => {
     const now = '2026-11-05T08:00:00.000Z';
     await expect(ledger.create({ kind: 'expense', amountCents: 0 }, now)).rejects.toThrow(ValidationError);
@@ -84,7 +103,7 @@ describe('LedgerEntryRepository', () => {
     await expect(ledger.create({ kind: 'expense', amountCents: 3.6 }, now)).rejects.toThrow(ValidationError);
   });
 
-  it('方向不合法、备注过长、发生时间晚于录入时间都拒绝', async () => {
+  it('方向不合法、备注 / 标签过长、发生时间晚于录入时间都拒绝', async () => {
     const now = '2026-11-05T08:00:00.000Z';
     await expect(
       // @ts-expect-error 故意传非法方向，验证运行时校验
@@ -92,6 +111,9 @@ describe('LedgerEntryRepository', () => {
     ).rejects.toThrow(ValidationError);
     await expect(
       ledger.create({ kind: 'expense', amountCents: 100, note: 'x'.repeat(101) }, now),
+    ).rejects.toThrow(ValidationError);
+    await expect(
+      ledger.create({ kind: 'expense', amountCents: 100, tag: 'x'.repeat(31) }, now),
     ).rejects.toThrow(ValidationError);
     await expect(
       ledger.create({ kind: 'expense', amountCents: 100, occurredAt: '2026-11-06T08:00:00.000Z' }, now),

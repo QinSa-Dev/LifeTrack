@@ -68,8 +68,9 @@ describe('列表文案', () => {
     expect(formatLedgerTime('不是时间')).toBe('不是时间');
   });
 
-  test('删除确认说清金额与标题', () => {
+  test('删除确认说清金额、标题与标签', () => {
     expect(describeLedgerEntry(makeEntry())).toBe('-¥3.60 · 上班地铁');
+    expect(describeLedgerEntry(makeEntry({ tag: '通勤' }))).toBe('-¥3.60 · 上班地铁 · 通勤');
   });
 });
 

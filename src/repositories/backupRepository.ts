@@ -265,12 +265,13 @@ export class BackupRepository {
 
     for (const entry of data.ledgerEntries) {
       await txn.runAsync(
-        `INSERT INTO ledger_entries (id, kind, amount_cents, note, occurred_at, recorded_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ledger_entries (id, kind, amount_cents, note, tag, occurred_at, recorded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         entry.id,
         entry.kind,
         entry.amountCents,
         entry.note ?? null,
+        entry.tag ?? null,
         entry.occurredAt,
         entry.recordedAt,
       );

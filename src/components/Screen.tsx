@@ -74,6 +74,8 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: palette.background,
+    // 页头里的下拉（年份 / 月份）要能盖住下面的滚动内容
+    zIndex: 10,
   },
   headerContent: {
     paddingTop: spacing.xs,

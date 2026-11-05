@@ -300,7 +300,13 @@ export interface LedgerEntry {
   kind: LedgerKind;
   /** 金额，单位为分；恒为正整数 */
   amountCents: number;
+  /** 备注：补充说明，可空 */
   note?: string;
+  /**
+   * 标签：这笔账属于什么类别（例如「通勤」「餐饮」），可空。
+   * 与备注分开：备注可以写细节，标签用于归类和账单分析。
+   */
+  tag?: string;
   occurredAt: IsoDateTime;
   recordedAt: IsoDateTime;
 }

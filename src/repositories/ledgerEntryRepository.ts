@@ -22,6 +22,7 @@ import {
   requireLedgerAmountCents,
   requireLedgerKind,
   requireLedgerNote,
+  requireLedgerTag,
   requireNotFuture,
   type LedgerEntryInput,
 } from '@/domain/validation';
@@ -31,11 +32,12 @@ interface LedgerRow {
   kind: string;
   amount_cents: number;
   note: string | null;
+  tag: string | null;
   occurred_at: string;
   recorded_at: string;
 }
 
-const SELECT_COLUMNS = 'id, kind, amount_cents, note, occurred_at, recorded_at';
+const SELECT_COLUMNS = 'id, kind, amount_cents, note, tag, occurred_at, recorded_at';
 
 function toLedgerKind(value: unknown): LedgerKind {
   if (!isLedgerKind(value)) {
@@ -50,6 +52,7 @@ function toLedgerEntry(row: LedgerRow): LedgerEntry {
     kind: toLedgerKind(row.kind),
     amountCents: row.amount_cents,
     note: row.note ?? undefined,
+    tag: row.tag ?? undefined,
     occurredAt: row.occurred_at,
     recordedAt: row.recorded_at,
   };
@@ -106,6 +109,30 @@ export class LedgerEntryRepository {
   }
 
   /**
+   * 有记账数据的年份范围（给账单页的年份下拉）。
+   * 用最早 / 最晚一条的发生时间换算成**本地年份**；没有数据时返回 null。
+   */
+  async yearBounds(): Promise<{ earliestYear: number; latestYear: number } | null> {
+    return guard('读取记账年份范围', async () => {
+      const row = await this.db.getFirstAsync<{ earliest: string | null; latest: string | null }>(
+        'SELECT MIN(occurred_at) AS earliest, MAX(occurred_at) AS latest FROM ledger_entries',
+      );
+      if (!row?.earliest || !row.latest) {
+        return null;
+      }
+      const earliestYear = new Date(row.earliest).getFullYear();
+      const latestYear = new Date(row.latest).getFullYear();
+      if (!Number.isInteger(earliestYear) || !Number.isInteger(latestYear)) {
+        return null;
+      }
+      return {
+        earliestYear: Math.min(earliestYear, latestYear),
+        latestYear: Math.max(earliestYear, latestYear),
+      };
+    });
+  }
+
+  /**
    * 记一笔。`occurredAt` 省略就是「现在」；左滑复制也走这里，
    * 由调用方把发生时间设成当前时刻。
    */
@@ -120,15 +147,17 @@ export class LedgerEntryRepository {
       const kind = requireLedgerKind(input.kind);
       const amountCents = requireLedgerAmountCents(input.amountCents);
       const note = requireLedgerNote(input.note);
+      const tag = requireLedgerTag(input.tag);
       const id = newId();
 
       await this.db.runAsync(
-        `INSERT INTO ledger_entries (id, kind, amount_cents, note, occurred_at, recorded_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ledger_entries (id, kind, amount_cents, note, tag, occurred_at, recorded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         id,
         kind,
         amountCents,
         note ?? null,
+        tag ?? null,
         occurredAt,
         recordedAt,
       );
@@ -138,6 +167,7 @@ export class LedgerEntryRepository {
         kind,
         amountCents,
         note,
+        tag,
         occurredAt,
         recordedAt,
       };

@@ -39,6 +39,16 @@ export function monthRangeIso(value: YearMonth): { from: string; until: string }
   return { from: start.toISOString(), until: end.toISOString() };
 }
 
+/**
+ * 把某一年换成 UTC 时间区间 `[from, until)`，规则同 `monthRangeIso`：
+ * 用**本地零点**切年，东八区 1 月 1 日凌晨的账不会被算到上一年。
+ */
+export function yearRangeIso(year: number): { from: string; until: string } {
+  const start = new Date(year, 0, 1, 0, 0, 0, 0);
+  const end = new Date(year + 1, 0, 1, 0, 0, 0, 0);
+  return { from: start.toISOString(), until: end.toISOString() };
+}
+
 export function yearLabel(value: YearMonth): string {
   return `${value.year} 年`;
 }

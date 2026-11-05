@@ -125,8 +125,13 @@ export interface LedgerEntryInput {
   kind: LedgerKind;
   amountCents: number;
   note?: string;
+  /** 标签：可空；账单分析优先按标签归类 */
+  tag?: string;
   occurredAt?: string;
 }
+
+/** 记账标签的长度上限（数据库 CHECK 与界面输入共用同一个数字）。 */
+export const MAX_LEDGER_TAG_LENGTH = 30;
 
 /** 周期实例的输入（创建与更新共用）。`endDate` 省略表示仍在进行中。 */
 export interface CycleInstanceInput {
@@ -296,6 +301,15 @@ export function requireLedgerNote(value: string | undefined | null): string | un
     throw new ValidationError('备注最多 100 个字符');
   }
   return note;
+}
+
+/** 标签：可空；短标签，列表里用小字展示，也用于账单归类。 */
+export function requireLedgerTag(value: string | undefined | null): string | undefined {
+  const tag = optionalText(value);
+  if (tag !== undefined && tag.length > MAX_LEDGER_TAG_LENGTH) {
+    throw new ValidationError(`标签最多 ${MAX_LEDGER_TAG_LENGTH} 个字符`);
+  }
+  return tag;
 }
 
 /** ISO-8601 带时区时间戳，例如 2026-10-19T07:30:00.000Z。 */

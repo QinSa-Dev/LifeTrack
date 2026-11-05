@@ -86,5 +86,6 @@ export function summarizeLedger(entries: readonly Pick<LedgerEntry, 'kind' | 'am
 
 /** 删除确认里说清删的是哪一笔。 */
 export function describeLedgerEntry(entry: LedgerEntry): string {
-  return `${formatLedgerAmount(entry.kind, entry.amountCents)} · ${ledgerEntryTitle(entry)}`;
+  const tag = entry.tag?.trim();
+  return `${formatLedgerAmount(entry.kind, entry.amountCents)} · ${ledgerEntryTitle(entry)}${tag ? ` · ${tag}` : ''}`;
 }

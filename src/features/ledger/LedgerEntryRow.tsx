@@ -40,7 +40,7 @@ function clampOffset(value: number): number {
  *
  * 两个动作分在两侧，一次滑动只会露出一个，减少「想复制却点到删除」。
  * 复制是这个功能最常见的动作：每天同一趟地铁、同一份早餐，
- * 金额和备注都不变，只是时间变成了现在，所以不弹表单，点一下就好。
+ * 金额、备注、标签都不变，只是时间变成了现在，所以不弹表单，点一下就好。
  *
  * 手势用内置的 `PanResponder` + `Animated`，不额外引入手势库：
  * 只在明显的横向滑动（`|dx| > 8` 且比纵向大）时接管，
@@ -97,6 +97,7 @@ export function LedgerEntryRow({ entry, onCopy, onDelete }: LedgerEntryRowProps)
 
   const title = ledgerEntryTitle(entry);
   const amount = formatLedgerAmount(entry.kind, entry.amountCents);
+  const tag = entry.tag?.trim();
   const { translateX, panResponder, settle } = swipe;
 
   const act = (action: () => void) => () => {
@@ -144,9 +145,19 @@ export function LedgerEntryRow({ entry, onCopy, onDelete }: LedgerEntryRowProps)
           <AppText variant="body" numberOfLines={1}>
             {title}
           </AppText>
-          <AppText variant="caption" color={palette.textMuted}>
-            {formatLedgerTime(entry.occurredAt)}
-          </AppText>
+          <View style={styles.metaRow}>
+            <AppText variant="caption" color={palette.textMuted}>
+              {formatLedgerTime(entry.occurredAt)}
+            </AppText>
+            {tag ? (
+              <View style={styles.tag}>
+                <Ionicons name="pricetag-outline" size={10} color={palette.primary} />
+                <AppText variant="caption" color={palette.primary} numberOfLines={1} style={styles.tagText}>
+                  {tag}
+                </AppText>
+              </View>
+            ) : null}
+          </View>
         </View>
         <AppText variant="subtitle" color={entry.kind === 'expense' ? palette.danger : palette.success}>
           {amount}
@@ -201,5 +212,25 @@ const styles = StyleSheet.create({
   texts: {
     flexShrink: 1,
     gap: 2,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  tag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    flexShrink: 1,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: radius.pill,
+    backgroundColor: palette.primarySoft,
+  },
+  tagText: {
+    flexShrink: 1,
+    fontSize: 11,
+    lineHeight: 14,
   },
 });

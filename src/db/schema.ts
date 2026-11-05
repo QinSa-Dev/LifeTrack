@@ -624,6 +624,21 @@ export const MIGRATION_V8_LEDGER: Migration = {
   ],
 };
 
+/**
+ * v9：记账标签。
+ *
+ * 备注是「补充说明」，标签是「分类」——例如备注写「早高峰」，标签选「通勤」。
+ * 标签可空；账单分析优先按标签归类，没有标签再回落到备注。
+ *
+ * 只加一列，旧行自动是 NULL（= 没有标签），不需要回填；
+ * 30 字符上限在 SQL 与校验层各兜一次。
+ */
+export const MIGRATION_V9_LEDGER_TAG: Migration = {
+  version: 9,
+  name: 'ledger_entry_tag',
+  statements: [`ALTER TABLE ledger_entries ADD COLUMN tag TEXT CHECK (tag IS NULL OR length(tag) <= 30);`],
+};
+
 /** 全部迁移，顺序即执行顺序。 */
 export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V1_BASELINE,
@@ -634,6 +649,7 @@ export const MIGRATIONS: readonly Migration[] = [
   MIGRATION_V6_CYCLE_AS_EVENT_KIND,
   MIGRATION_V7_CUSTOM_FIELDS,
   MIGRATION_V8_LEDGER,
+  MIGRATION_V9_LEDGER_TAG,
 ];
 
 /** 当前应用支持的 schema 版本。 */

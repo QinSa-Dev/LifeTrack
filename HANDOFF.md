@@ -13,26 +13,24 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 
 - 分支：`main`；工作区干净。
 - 最新提交：用 `git log -1` 查看
-- schema 版本：**v8**（`PRAGMA user_version = 8`）。最近三次迁移：
-  1. **v6 —— 周期不再是独立实体**：`cycle_definitions` 整表并入 `event_definitions`（新增 `cycle_mode`
-     与两个平均长度列），周期实例 / 每日记录的外键改指 `event_definitions`；
-     类型 CHECK 收敛为 `kind IN ('counter','cycle')`；**「单位」变「属性」且可多条**；
-     **快捷选项合并成「属性 + 取值」**。
-  2. **v7 —— 全局「标签」退出**，换成每个事件自己的**带类型字段**（`event_definition_fields`，
+- schema 版本：**v9**（`PRAGMA user_version = 9`）。最近三次迁移：
+  1. **v7 —— 全局「标签」退出**，换成每个事件自己的**带类型字段**（`event_definition_fields`，
      记录里的 `snapshot_tag_ids` → `snapshot_fields` + `field_values`）。
-  3. **v8 —— 记账**：新增 `ledger_entries`（金额存整数「分」、方向 `expense` / `income`、
+  2. **v8 —— 记账**：新增 `ledger_entries`（金额存整数「分」、方向 `expense` / `income`、
      备注可空且 ≤100 字、发生时间索引）。
+  3. **v9 —— 记账标签**：`ledger_entries.tag`（可空、≤30 字）。备注是补充说明，标签用于分类；
+     账单分析优先按标签归类，没有标签再回落到备注。
   历史记录里的 `quantity` 类型**保留不动**（展示 / 统计 / 导入继续接受它）。
   此后的统计、回收站、导入导出、周期增强、月视图、时间轴改版、设置项归拢、统计趋势改版、
   自定义字段、接入 EAS、内置模板事件、提示文案精简、分组管理收进「事件」页、时间轴筛选与排序、
   界面框架收口（固定页头 / 时间轴工具条 / 深链返回兜底）、周期自动循环启动懒补齐、
-  底部导航顺序与默认页都没有再新增迁移（直到记账的 v8）。
+  底部导航顺序与默认页都没有再新增迁移；直到 v8 加记账、v9 给记账加标签。
 - 验证状态（全部真实跑过）：
 
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 51 个套件 / 650 个用例通过（含组件测试 11 个套件 / 57 个用例）
+npm test             # 54 个套件 / 686 个用例通过（含组件测试 11 个套件 / 57 个用例）
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（js bundle 3.2MB；本次只改 JS，无新增原生依赖）
 npx expo-doctor      # 13 个旧依赖 patch 版本漂移（SDK 58 的 patch 已往前走了；本次未升级，与功能改动无关）
@@ -151,6 +149,7 @@ src/theme/         设计令牌
 | v6 | `cycle_definitions` 并入 `event_definitions`；`attribute`/`unit` → `attributes`（JSON 数组文本） | **周期是事件类型的一种**：重建 `event_definitions`（加 `cycle_mode` + 两个平均长度列，CHECK `(kind = 'cycle') = (cycle_mode IS NOT NULL)`、`kind IN ('counter','cycle')`），把老周期定义按原 id 折成 `kind = 'cycle'`、`cycle_mode` 兜底 `'manual'`，`quantity` 折成 `counter`、`unit` 包成 `attributes`；`quick_options.label`/`unit` 合成 `attribute`；记录的 `unit`/`snapshot_unit` → `attributes`/`snapshot_attributes`；周期实例 / 记录的外键改指 `event_definitions`；最后 `DROP TABLE cycle_definitions`。属性 JSON 一律用 SQLite `json_array()` 生成（不手拼字符串） |
 | v7 | 新增 `event_definition_fields`；删 `tags` / `event_definition_tags`；重建 `event_records`（`snapshot_tag_ids` → `snapshot_fields` + `field_values`） | **「标签」退出，换成每个事件自己的带类型字段**：`event_definition_fields` 有 `kind CHECK (kind IN ('single','multi','time','range'))`、`options` JSON、`ON DELETE CASCADE`；**只有计数型定义**才把旧的标签折成一条名为「标签」的多选字段，候选值 = 挂着的标签 ∪ 记录快照里出现过的标签（兜住历史值）；`up()` 里逐行读改写重建 `event_records`（`CREATE event_records_new` → `INSERT ... SELECT` → `DROP` → `RENAME` → 重建索引），把每条记录的 `snapshot_tag_ids` 算成字段取值；最后先 `DROP event_definition_tags` 再 `DROP tags`（顺序反了会被外键挡住）。id 用 `migrationUuid()`，`up()` 不依赖会演进的业务代码 |
 | v8 | `ledger_entries` + `idx_ledger_entries_occurred_at` | **记账与事件记录是两套事实**：金额用整数 `amount_cents`（分）避免浮点累加误差；`kind CHECK (kind IN ('expense','income'))`、`amount_cents > 0`、备注 `NULL` 或 ≤100 字；发生时间 / 录入时间都是 ISO 文本，**发生时间 ≤ 录入时间在仓储层校验**（与事件记录同一条规则）；没有外键、没有软删除，删除即真删 |
+| v9 | `ledger_entries.tag`（`ALTER TABLE ADD COLUMN`） | **标签是分类，备注是补充说明**：记账表单与列表多一个可选标签，`NULL` 或 ≤30 字；旧行自动为 NULL = 没有标签；账单分析优先按标签归类，没有标签再回落到备注；备份格式同步升到 v5 |
 
 `MIGRATIONS` 在 `src/db/schema.ts`，`LATEST_SCHEMA_VERSION` 自动推导。新增结构 = 追加一个新 `Migration`，
 然后同步更新 `src/db/__tests__/migrations-test.ts` 里对版本号与 `applied` 的断言。
@@ -334,9 +333,11 @@ src/theme/         设计令牌
    - **删除是真删**：没有快照、没有联动数据，界面负责原生二次确认（`Alert.alert`）。
    - **左滑复制、右滑删除**用 RN 自带的 `PanResponder` + `Animated`，不新增依赖；
      一次滑动只露一侧，已展开时反向滑动只收起、不直接换到另一侧，减少误触。
-     复制以**当前时间**再记一条（金额 / 备注 / 方向照抄），如果当前不在本月就自动切到本月，
+     复制以**当前时间**再记一条（金额 / 备注 / 标签 / 方向照抄），如果当前不在本月就自动切到本月，
      避免「点了没反应」。
-   - **备份格式升到 v4**：`ledgerEntries` 进入 `BackupData`；旧备份缺失该集合按空数组解析；
+   - **标签是分类，备注是补充说明**：标签可空（≤30 字），列表在时间旁用小字胶囊展示；
+     账单分析优先按标签归类，没有标签再回落到备注。
+   - **备份格式升到 v5**：`ledgerEntries` 增加可选 `tag`；旧 v4 备份缺失该字段按「没有标签」解析；
      合并按「不可变事实」处理（同 id 保留本地、新 id 追加），导入同样在独占事务里核对八张表的行数。
 27. **记账页的「年 / 月」是页面状态，不是持久偏好**：默认当前月（设备本地时区），
    顶部一行左侧是当月合计，右侧是时间块：上「年」、下「月」；年箭头只平移年、月份下拉只换月。
@@ -455,9 +456,9 @@ src/theme/         设计令牌
   第一版试跑点到了别人那一行的「删除」。颜色 / 排序的保留仍只有 `renameGroupInput` 单测；
   「删分组后事件回到未分组」由 `eventDefinitionRepository-test` 的 SET NULL 用例兜底。
 - ✅ **记账（第五个标签页）已落地并真手点过**（2026-11-05）：新增 v8 迁移 `ledger_entries`；
-  页面顶部一行：左边当月支出 / 收入 / 结余，右边年 / 月份下拉；列表按天分组；「记一笔」用数字键盘记金额 + 备注，保存立即出现；
+  页面顶部一行：左边当月支出 / 收入 / 结余，右边年 / 月份下拉；列表按天分组；「记一笔」用数字键盘记金额 + 备注 + 标签，保存立即出现；
   左滑只露「复制」、右滑只露「删除」——复制以当前时间再记一条并切到本月，删除走原生二次确认后真删。
-  备份格式升到 v4（旧备份缺 `ledgerEntries` 按空数组），导入同样在事务里核对第八张表。
+  备份格式升到 v5（v9 给记账加 `tag`；旧 v4 备份缺 `tag` 按没有标签、缺 `ledgerEntries` 按空数组），导入同样在事务里核对第八张表。
   端到端流程 `15` 单独跑通：`3.6 / Maestro记账` → 左滑复制 → 合计从 `-¥3.60` 变 `-¥7.20` →
   右滑删除两条收尾。走读见 `docs/learning/22-ledger.md`。
 - ❌ 筛选与排序的**界面**这次点过了（`11`），但它覆盖的只是主干：
@@ -568,18 +569,20 @@ src/theme/         设计令牌
 
 走读：`docs/learning/21-custom-tab-order-and-default-tab.md`；端到端：`.maestro/flows/14`。
 
-### 9.8 记账（✅ 已完成，v8）
+### 9.8 记账（✅ 已完成，v8 + v9 标签）
 
 用户要的是「快速记一笔 + 按月回看 + 左滑复制」：
 
 - 第五个标签页「记账」，默认当前月；顶部一行左边是当月支出 / 收入 / 结余，
   右边是时间：上「年」、下「月」，月份点开才在下方浮层展开 12 个月。
-- 「记一笔」：支出 / 收入、金额（数字键盘、最多两位小数）、备注；保存立即出现在当月列表。
+- 「记一笔」：支出 / 收入、金额（数字键盘、最多两位小数）、备注、标签；保存立即出现在当月列表。
 - 列表按**设备本地日期**分组（`YYYY-MM-DD`），组与组之间留空白；行内时间只显示 `HH:mm`。
+- 有标签的记录在时间旁边用**小字胶囊**展示标签（带标签图标），没有标签就不显示。
 - **左滑只露「复制」、右滑只露「删除」**，一次滑动不会同时出现两个动作，未激活的一侧对读屏隐藏。
-  复制以**当前时间**再记一条（金额 / 备注 / 方向照抄），删除是原生二次确认后的真删。
+  复制以**当前时间**再记一条（金额 / 备注 / 标签 / 方向照抄），删除是原生二次确认后的真删。
 - 金额只存整数分（`amount_cents`），避免浮点误差；按月查询把本地时区区间下推 SQL。
-- 备份格式 v4；旧备份没有 `ledgerEntries` 按空数组，导入事务里核对八张表。
+- **账单分析优先按标签归类**，没有标签再回落到备注；两者都空归入「未分类」。
+- 备份格式 v5；旧 v4 备份没有 `tag` 按「没有标签」处理，导入事务里核对八张表。
 
 走读：`docs/learning/22-ledger.md`；端到端：`.maestro/flows/15`。
 

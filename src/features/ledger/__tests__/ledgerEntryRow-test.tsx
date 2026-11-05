@@ -26,6 +26,12 @@ describe('<LedgerEntryRow />', () => {
     expect(screen.getByText(/^\d{2}:\d{2}$/)).toBeOnTheScreen();
   });
 
+  test('有标签时在时间旁边用小字展示出来', async () => {
+    await render(<LedgerEntryRow entry={makeEntry({ tag: '通勤' })} onCopy={() => {}} onDelete={() => {}} />);
+
+    expect(screen.getByText('通勤')).toBeOnTheScreen();
+  });
+
   test('没有备注时用方向当标题，收入带正号', async () => {
     await render(
       <LedgerEntryRow

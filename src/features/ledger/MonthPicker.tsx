@@ -13,7 +13,7 @@ export interface MonthPickerProps {
 }
 
 /**
- * 记账页右上角的「年 / 月」选择：上面是年，下面是月。
+ * 记账页左上角的「年 / 月」选择：上面是年，下面是月。
  *
  * 年和月份是两件事：年箭头只平移年（保留月份），月份下拉只换月（保留年份）。
  * 月份默认显示当前月，点一下才在下方展开 12 个月，选完自动收起。
@@ -87,11 +87,11 @@ export function MonthPicker({ value, onChange }: MonthPickerProps) {
 const styles = StyleSheet.create({
   container: {
     position: 'relative',
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
     zIndex: 30,
   },
   timeBlock: {
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
     gap: 2,
   },
   yearRow: {
@@ -115,7 +115,7 @@ const styles = StyleSheet.create({
   dropdown: {
     position: 'absolute',
     top: '100%',
-    right: 0,
+    left: 0,
     marginTop: spacing.sm,
     width: 280,
     flexDirection: 'row',
