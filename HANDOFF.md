@@ -31,7 +31,7 @@ LifeTrack 是一个**本地优先**的生活记录 App：记录事件（计数 /
 ```bash
 npm run typecheck    # 通过
 npm run lint         # 通过（0 error / 0 warning）
-npm test             # 41 个套件 / 586 个用例通过（含组件测试 5 个套件 / 30 个用例）
+npm test             # 44 个套件 / 601 个用例通过（含组件测试 8 个套件 / 45 个用例）
 npm run format:check # 通过
 npx expo export --platform ios   # 通过（js bundle 3.2MB；本次只改 JS，无新增原生依赖）
 npx expo-doctor      # 13 个旧依赖 patch 版本漂移（SDK 58 的 patch 已往前走了；本次未升级，与功能改动无关）
@@ -342,11 +342,12 @@ src/theme/         设计令牌
 
 ## 8. 已验证 vs 未验证
 
-- ✅ **静态检查、586 个用例**（仓储 / 纯函数跑真实内存 SQLite，界面跑 RNTL 组件测试）、iOS 打包。
-- ✅ **组件级测试已起步**（2026-11-04）：`@testing-library/react-native`，5 个套件 / 30 个用例，
-  覆盖 `Button`、`RecordRow`、`RecordGroupRow`、`TimelineQueryPanel`、`MonthCalendar`；
-  不连数据库、不启动模拟器。写法、边界与「RNTL 14 的 `render` / `fireEvent` 必须 `await`」的坑见
-  `docs/learning/20-component-testing.md`。
+- ✅ **静态检查、601 个用例**（仓储 / 纯函数跑真实内存 SQLite，界面跑 RNTL 组件测试）、iOS 打包。
+- ✅ **组件级测试已起步**（2026-11-04，2026-11-05 补第二批）：`@testing-library/react-native`，
+  8 个套件 / 45 个用例，覆盖 `Button`、`RecordRow`、`RecordGroupRow`、`TimelineQueryPanel`、
+  `MonthCalendar`、`FieldValuePicker`、`UndoBar`、`SymptomStatsCard`；
+  不连数据库、不启动模拟器。写法、边界与「RNTL 14 的 `render` / `fireEvent` 必须 `await`」、
+  「受控组件要自己 `rerender`」的坑见 `docs/learning/20-component-testing.md`。
 - ✅ **本机 iOS 模拟器实机运行**（iPhone 16e / iOS 26.3 / Expo Go）：**4 个标签页** + 回收站 +
   记录页 + 周期实例页都正常渲染真实 SQLite 数据，Metro 无 JS 报错。明细见 `README.md`
   的「本机 iOS 模拟器实机运行」一节。
@@ -533,9 +534,10 @@ src/theme/         设计令牌
 第二阶段的功能项到此清零。剩下的不是「再做一项功能」，而是：
 
 - **真机验证**：iOS 真机 / Android（见第 8 节）。
-- **组件级测试**：已起步（5 个套件 / 30 个用例，见第 8 节与 `docs/learning/20`），
-  但带数据库的页面与原生交互仍没有；下一批候选是 `FieldValuePicker`、合并行展开后的子行顺序、
-  表单校验分支。
+- **组件级测试**：已起步（8 个套件 / 45 个用例，见第 8 节与 `docs/learning/20`），
+  但带数据库的页面与原生交互仍没有；下一批候选是事件定义表单的校验分支（先把校验抽成纯函数，
+  或替掉 `useReadyDatabase` 依赖）、`GroupManager` 的改名 / 键盘提交、
+  时间轴展开后的子行顺序（数据层已由 `groupRecords-test` 兜底）。
 - 第 10 节里记在案的技术债，按真机反馈挑，不要顺手全改。
 
 ### 提交与验证习惯
@@ -563,7 +565,7 @@ src/theme/         设计令牌
   分组行的「改名 / 删除」已经试过更轻的一条路：`Button.accessibilityLabel` 带上分组名
   （可见文字仍只有「改名 / 删除」，见流程 `13`）；要给【+1】补上下文可以照这个做法，
   但先想清楚与「+1 是通用标识」的产品取舍。
-- **组件级测试只覆盖了纯展示组件**：`npm test` 现在含 RNTL（5 个套件 / 30 个用例），
+- **组件级测试只覆盖了纯展示组件**：`npm test` 现在含 RNTL（8 个套件 / 45 个用例），
   但带数据库的页面（分组管理、表单、详情、回收站、设置）、导航、`Alert` / 文件选择 / 分享
   仍未覆盖；这一层刻意不连数据库，跨过这条线就该交给 Maestro。
   新写组件测试记得 `render` / `fireEvent` **每一处都 `await`**（RNTL 14 是异步的，漏掉会报
@@ -694,7 +696,7 @@ src/theme/         设计令牌
 ```bash
 git status                 # 应干净
 npm install                # 若 node_modules 不全
-npm run verify             # 应为：41 套件 / 586 用例通过
+npm run verify             # 应为：44 套件 / 601 用例通过
 npx expo export --platform ios   # 应能打包
 npm start                  # Expo Go 扫码（或走下面的自动流程）
 

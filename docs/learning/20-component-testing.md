@@ -4,8 +4,9 @@
 
 **现在可以做什么**
 
-- 用 `npm test` 跑组件测试：**5 个套件 / 30 个用例**，和原有单元测试一起约 2 秒跑完。
-- 覆盖五块界面规则：通用按钮、时间轴单条记录行、合并行、筛选与排序面板、周期月视图。
+- 用 `npm test` 跑组件测试：**8 个套件 / 45 个用例**，和原有单元测试一起约 3 秒跑完。
+- 覆盖八块界面规则：通用按钮、时间轴单条记录行、合并行、筛选与排序面板、周期月视图、
+  自定义字段取值、撤销提示条、症状统计卡片。
 - 只跑其中一块：`npm test -- src/features/records/__tests__/recordRow-test.tsx`。
 
 **解决了什么问题**
@@ -38,6 +39,9 @@
 | `src/features/records/__tests__/recordGroupRow-test.tsx` | `RecordGroupRow` | 合并摘要、展开 / 收起、逐条内容、+1 抄最近一条、定义已删、禁用 |
 | `src/features/records/__tests__/timelineQueryPanel-test.tsx` | `TimelineQueryPanel` | 事件名 / 类型 / 来源 / 分组 / 排序各改一项时只动自己，三颗「全部」互不串台，选中态 |
 | `src/features/cycles/__tests__/monthCalendar-test.tsx` | `MonthCalendar` | 月份与星期表头、区间内可点、区间外禁用、今天 / 选中态、记录标记、翻月按钮 |
+| `src/features/records/__tests__/fieldValuePicker-test.tsx` | `FieldValuePicker` | 单选互斥、多选叠加、时间点输入、时间段两头各改一头、清空回到空数组 |
+| `src/features/records/__tests__/undoBar-test.tsx` | `UndoBar` | 撤销 / 关闭两个出口、撤销中改文案并双双禁用 |
+| `src/features/cycles/__tests__/symptomStatsCard-test.tsx` | `SymptomStatsCard` | 无记录 / 有记录无症 / 按天数排序与百分比 / 只列前 N 种 / 软删除不计入 |
 | `src/features/records/__tests__/fixtures.ts` | 测试夹具 | 固定时间戳 + `makeRecord` / `makeGroup`；不是测试文件，不会被 `testMatch` 当用例 |
 
 ## 3. 涉及哪些技术概念
@@ -131,6 +135,23 @@ Cannot find module 'expo-asset' from 'node_modules/expo-font/build/FontLoader.js
 
 没有一条断言依赖字号、颜色或内部 state；改样式不会误伤。
 
+### 3.6 受控组件：断言回调之后要自己「把值送回去」
+
+`FieldValuePicker`、`TimelineQueryPanel` 这类组件都是**受控**的：点一下只调 `onChange`，
+界面会不会变取决于调用方。组件测试里如果不 `rerender`，下一次点击仍按**初始 props** 算，
+例如「多选先加一个再删掉刚加的」就会得到意料之外的结果。写法：
+
+```tsx
+await fireEvent.press(screen.getByRole('button', { name: '一般' }));
+expect(onChange).toHaveBeenLastCalledWith(['好', '一般']);
+
+// 受控组件：把回调结果重新交给它，界面才会更新
+await screen.rerender(<FieldValuePicker field={field} values={['好', '一般']} onChange={onChange} />);
+```
+
+只想验证「这一下提交什么」时，单独断言 `onChange` 就够了；要验证「选中的胶囊真的变了」，
+就必须补这一次 `rerender`。
+
 ## 4. 覆盖范围与边界
 
 | 测试文件 | 用例 | 覆盖的行为 |
@@ -140,6 +161,9 @@ Cannot find module 'expo-asset' from 'node_modules/expo-font/build/FontLoader.js
 | `recordGroupRow-test.tsx` | 7 | 合并摘要、展开 / 收起、子内容条件渲染、【+1】取最近一条 |
 | `timelineQueryPanel-test.tsx` | 8 | 五类筛选与排序的局部更新、无分组时的隐藏、选中态 |
 | `monthCalendar-test.tsx` | 6 | 网格与表头、区间边界、今天 / 选中、记录标记、翻月 |
+| `fieldValuePicker-test.tsx` | 7 | 单选 / 多选 / 时间点 / 时间段的取值与回调 |
+| `undoBar-test.tsx` | 3 | 两个出口互不串台、撤销中改为「撤销中…」并禁用 |
+| `symptomStatsCard-test.tsx` | 5 | 三种空态、按天数排序与百分比、只列前 N 种、软删除不计入 |
 
 **仍未覆盖**
 
@@ -149,13 +173,15 @@ Cannot find module 'expo-asset' from 'node_modules/expo-font/build/FontLoader.js
 - 加载中 / 错误态 / 空状态在真实页面里的组合。
 - 样式与布局（没有快照，也不打算用快照替代行为断言）。
 
-下一批候选：`FieldValuePicker`（四种字段控件的取值与回调）、
-`RecordRow` 的「合并行展开后子行顺序」、事件定义表单的校验分支。
+下一批候选：事件定义表单的校验分支（需要先解决 `useReadyDatabase` 的依赖，
+或把校验抽成纯函数）、`GroupManager` 的「改名要带全字段」与键盘提交、
+`RecordRow` / `RecordGroupRow` 在时间轴里展开后的子行顺序（数据层已由
+`groupRecords-test` 兜底）。
 
 ## 5. 怎么跑
 
 ```bash
-npm test                                  # 全部：41 个套件 / 586 个用例
+npm test                                  # 全部：44 个套件 / 601 个用例
 npm test -- src/components/__tests__      # 只跑组件测试
 npm run verify                            # typecheck + lint + test
 npm run format:check                      # 提交前
