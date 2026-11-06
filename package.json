@@ -1,6 +1,6 @@
 {
   "name": "lifetrack",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
@@ -16,7 +16,9 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "verify": "npm run typecheck && npm run lint && npm run test",
-    "doctor": "expo-doctor"
+    "doctor": "expo-doctor",
+    "preversion": "npm run verify",
+    "version": "node scripts/sync-version.mjs && git add app.json"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",

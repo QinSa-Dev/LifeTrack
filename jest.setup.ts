@@ -15,3 +15,12 @@ jest.mock('@expo/vector-icons/Ionicons', () => {
     },
   };
 });
+
+/**
+ * 组件里用 `useSafeAreaInsets` 给底部安全区留白；单测没有真的 SafeAreaProvider，
+ * 官方 mock 会让它回落到全 0 的 insets，同时仍保留 `SafeAreaView` 等真实实现。
+ */
+jest.mock(
+  'react-native-safe-area-context',
+  () => require('react-native-safe-area-context/jest/mock').default,
+);

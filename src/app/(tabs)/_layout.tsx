@@ -2,24 +2,25 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import {
-  NavigationPreferencesProvider,
-  useNavigationPreferences,
-} from '@/features/navigation/NavigationPreferencesProvider';
+import { useNavigationPreferences } from '@/features/navigation/NavigationPreferencesProvider';
 import {
   TAB_ROUTE_HREFS,
   TAB_ROUTE_LABELS,
   type NavigationPreferences,
   type TabRoute,
 } from '@/features/navigation/navigationPreferences';
-import { palette } from '@/theme';
+import { palette, radius, spacing } from '@/theme';
 
 type IoniconName = ComponentProps<typeof Ionicons>['name'];
 type IconBase = 'time' | 'wallet' | 'stats-chart' | 'albums' | 'settings';
 
 const ACTIVE_COLOR = palette.primary;
 const INACTIVE_COLOR = palette.textMuted;
+
+/** 悬浮标签栏的固定内容高度（不含底部安全区留白） */
+const TAB_BAR_HEIGHT = 56;
 
 /** 每个标签的图标；顺序由用户偏好决定，这里只放不随顺序变的东西。 */
 const TAB_META: Record<TabRoute, { icon: IconBase }> = {
@@ -64,6 +65,7 @@ function TabsNavigator() {
 function TabNavigator({ preferences }: { preferences: NavigationPreferences }) {
   const router = useRouter();
   const pathname = usePathname();
+  const insets = useSafeAreaInsets();
   const [initialPathname] = useState(pathname);
   const [launchTarget] = useState(() => TAB_ROUTE_HREFS[preferences.defaultTab]);
   const appliedDefault = useRef(false);
@@ -98,8 +100,30 @@ function TabNavigator({ preferences }: { preferences: NavigationPreferences }) {
           headerTitleStyle: { fontSize: 17, fontWeight: '600', color: palette.text },
           tabBarActiveTintColor: ACTIVE_COLOR,
           tabBarInactiveTintColor: INACTIVE_COLOR,
-          tabBarStyle: { backgroundColor: palette.surface, borderTopColor: palette.border },
+          /*
+           * 全面屏两侧的机身圆角会把贴着屏幕边缘的标签栏咬掉一块；
+           * 改成左右留边、悬浮在底部安全区之上的圆角条，圆角、Home 指示条都不会再压到图标。
+           * 高度写成固定值，避免默认高度把底部安全区也算进去、再叠加 margin 之后过高。
+           */
+          tabBarStyle: {
+            height: TAB_BAR_HEIGHT,
+            paddingTop: 0,
+            paddingBottom: 0,
+            marginHorizontal: spacing.md,
+            marginBottom: Math.max(insets.bottom, spacing.lg),
+            borderRadius: radius.lg,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: palette.border,
+            backgroundColor: palette.surface,
+            shadowColor: '#000000',
+            shadowOpacity: 0.06,
+            shadowRadius: 10,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 6,
+          },
           tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+          // 默认把图标顶在上沿；高度改成 56 之后让「图标 + 文字」整组居中
+          tabBarItemStyle: { justifyContent: 'center' },
         }}
       >
         {preferences.order.map((route) => (
@@ -129,11 +153,7 @@ function TabNavigator({ preferences }: { preferences: NavigationPreferences }) {
 }
 
 export default function TabsLayout() {
-  return (
-    <NavigationPreferencesProvider>
-      <TabsNavigator />
-    </NavigationPreferencesProvider>
-  );
+  return <TabsNavigator />;
 }
 
 const styles = StyleSheet.create({

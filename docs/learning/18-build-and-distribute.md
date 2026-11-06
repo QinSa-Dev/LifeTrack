@@ -100,8 +100,20 @@ eas build -p android --profile preview
   且**不需要开发服务器**；Android 显式指定 `buildType: apk`（默认会出 AAB，AAB 只能走 Play）。
 - `production`：上架用（AAB + 自动递增版本号），现在不用。
 
-`cli.appVersionSource: "remote"` 表示版本号由 EAS 远程管理，本地 `app.json` 不用手动改
-`android.versionCode`。
+`cli.appVersionSource: "remote"` 表示**开发构建号**由 EAS 远程管理，本地 `app.json` 不用手动改
+`android.versionCode`；`preview` 也开了 `autoIncrement`，所以每次出包的 versionCode 都会加一，
+手机上能直接覆盖安装，也能在构建列表里分清先后。
+
+**用户可见的版本号**（「设置 → 关于」显示的那个）不走 EAS 远程，而是 `package.json` 的
+`version`。发版时用：
+
+```bash
+npm version patch   # 或 minor / major
+git push --follow-tags
+```
+
+它会先跑 `npm run verify`，再把新版本号写进 `app.json` 的 `expo.version`，最后自动提交并打
+`vX.Y.Z` tag；同一版本要补一条 [`CHANGELOG.md`](../../CHANGELOG.md)。
 
 ## 6. 路线 B：iPhone + 免费 Apple ID（本机 Xcode）
 
@@ -248,6 +260,21 @@ iOS 侧要么本机签、要么花钱签。
 ### 问题：Android 安装时提示「未知来源 / 不允许安装」
 
 **正常**：APK 不是从 Play 来的。在弹窗里允许「来自此来源」即可。
+
+### 问题：`Build request failed. Make sure you are using the latest eas-cli version.` + `Network error: request to https://api.expo.dev/graphql failed, reason: read ETIMEDOUT`
+
+**不是代码编译错误**：上传已经成功（`✔ Uploaded to EAS`），卡在最后「创建构建」那一步的网络请求上。
+先确认不是本地代码的问题：
+
+```bash
+npx expo export --platform android --output-dir /tmp/check   # 能出 bundle 就说明代码没问题
+curl -m 20 -X POST https://api.expo.dev/graphql \
+  -H 'Content-Type: application/json' -d '{"query":"{ __typename }"}'   # 应返回 HTTP 200
+```
+
+- 能连上：**直接重跑同一条 `eas build` 命令**即可，EAS 侧没有生成构建，不会重复扣额度。
+- 还是超时：换网络 / 关掉 VPN 或代理再试；本机工具链齐全时也可以走
+  `npx eas-cli@latest build -p android --profile preview --local`（在本地 Gradle 构建，不上传云构建请求）。
 
 ### 问题：`eas build` 一直排队
 

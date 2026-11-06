@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppText, Button, Chip, TextField } from '@/components';
 import type { LedgerKind } from '@/domain/models';
 import { formatCents, parseAmountToCents, sanitizeAmountInput } from '@/domain/money';
 import { MAX_LEDGER_TAG_LENGTH } from '@/domain/validation';
+import { useKeyboardOverlap } from '@/features/common/useKeyboardOverlap';
 import { palette, radius, spacing } from '@/theme';
 
 export interface LedgerEntryFormValues {
@@ -49,6 +51,8 @@ export function LedgerEntryForm({
   const [tag, setTag] = useState(initialValues?.tag ?? '');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const insets = useSafeAreaInsets();
+  const { overlap, onLayout } = useKeyboardOverlap();
 
   const submit = async () => {
     const amountCents = parseAmountToCents(amountText);
@@ -67,15 +71,27 @@ export function LedgerEntryForm({
   };
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.root}>
+    <Modal
+      visible
+      transparent
+      animationType="slide"
+      statusBarTranslucent
+      navigationBarTranslucent
+      onRequestClose={onClose}
+    >
+      {/*
+        键盘弹出时把整张表单顶到键盘上方。Android 的 Modal 是独立窗口，系统不再替你
+        `adjustResize`，`KeyboardAvoidingView` 在窗口里也算不对，所以由 `useKeyboardOverlap`
+        自己按「容器底边 - 键盘顶边」让位。
+      */}
+      <View style={[styles.root, { paddingBottom: overlap }]} onLayout={onLayout}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="关闭"
           onPress={onClose}
           style={styles.backdrop}
         />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { paddingBottom: Math.max(insets.bottom, spacing.xl) }]}>
           <ScrollView
             bounces={false}
             keyboardShouldPersistTaps="handled"
@@ -134,7 +150,7 @@ export function LedgerEntryForm({
             />
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
@@ -157,7 +173,6 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radius.lg,
     borderTopRightRadius: radius.lg,
     padding: spacing.lg,
-    paddingBottom: spacing.xl,
     gap: spacing.md,
     // 小屏 + 键盘弹出时，表单内容在 ScrollView 里滚动，操作按钮始终可见。
     maxHeight: '100%',
